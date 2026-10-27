@@ -69,12 +69,19 @@ token scheme does not replace it.
 
 | Constant | Value | Where |
 |---|---|---|
-| `MAX_REQUEST_BODY_BYTES` | 6 MiB (default; orchestrator reports its actual value in `ingress.DescribeResponse`) | request body |
+| `MAX_REQUEST_BODY_BYTES` | 6 MiB (default; orchestrator reports its actual value in `ingress.DescribeResponse`) | request body; see below |
 | Heartbeat interval | 5 s (default; orchestrator dictates it in `RegisterResponse`) | fleet |
 | Worker liveness | 3 missed heartbeats | fleet |
 | Module size | reported in `control.DescribeResponse.max_module_bytes` | uploads |
 | Artifact chunk | ≤ 1 MiB | `GetArtifact` |
 | Stderr tail | ≤ 64 KiB, truncated from the front | `ExecutionSummary` |
+
+A frontend **must** enforce `max_request_body_bytes` (from `Describe`) itself and answer 413
+without calling the orchestrator. The orchestrator also checks: a body over the limit but within
+the transport's message cap is refused with `REQUEST_TOO_LARGE`; a body far over the limit is
+refused by the transport's message cap before it is decoded, with a bare `resource_exhausted` and
+no `ErrorInfo`. A frontend that receives that untyped error from `Invoke` must treat it as a 413
+too, never as a 500.
 
 ## Invocation semantics
 

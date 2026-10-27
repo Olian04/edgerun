@@ -29,9 +29,11 @@ var abiPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{0,31}$`)
 // Config configures the services.
 type Config struct {
 	Store *store.Store
-	// Poke is called after every write that the invoke path caches (routes,
-	// versions, environment), so this process serves the change at once.
-	Poke func()
+	// Refresh is called, and waited for, after every write the invoke path
+	// caches (routes, deployed versions, environment). A client that deploys
+	// and then immediately sends a request to this orchestrator therefore sees
+	// its own change; other instances catch up within their refresh interval.
+	Refresh func(ctx context.Context)
 	// MaxModuleBytes bounds an uploaded module. Default 32 MiB.
 	MaxModuleBytes uint64
 	// AliveWithin is how recently a worker must have heartbeated to be alive.
@@ -51,8 +53,8 @@ func New(cfg Config) *Service {
 	if cfg.AliveWithin == 0 {
 		cfg.AliveWithin = 15 * time.Second
 	}
-	if cfg.Poke == nil {
-		cfg.Poke = func() {}
+	if cfg.Refresh == nil {
+		cfg.Refresh = func(context.Context) {}
 	}
 	if cfg.Version == "" {
 		cfg.Version = "dev"
@@ -103,7 +105,7 @@ func (f functions) DeleteFunction(ctx context.Context, r *connect.Request[contro
 	if err := f.s.cfg.Store.DeleteFunction(ctx, r.Msg.GetFunctionId()); err != nil {
 		return nil, f.s.fail(err)
 	}
-	f.s.cfg.Poke()
+	f.s.cfg.Refresh(ctx)
 	return connect.NewResponse(&controlv1.DeleteFunctionResponse{}), nil
 }
 
@@ -122,7 +124,7 @@ func (f functions) CreateVersion(ctx context.Context, r *connect.Request[control
 		return nil, f.s.fail(err)
 	}
 	if m.GetActivate() {
-		f.s.cfg.Poke()
+		f.s.cfg.Refresh(ctx)
 	}
 	return connect.NewResponse(&controlv1.CreateVersionResponse{Version: v}), nil
 }
@@ -140,7 +142,7 @@ func (f functions) ActivateVersion(ctx context.Context, r *connect.Request[contr
 	if err != nil {
 		return nil, f.s.fail(err)
 	}
-	f.s.cfg.Poke()
+	f.s.cfg.Refresh(ctx)
 	return connect.NewResponse(&controlv1.ActivateVersionResponse{Function: fn}), nil
 }
 
@@ -151,7 +153,7 @@ func (f functions) SetEnv(ctx context.Context, r *connect.Request[controlv1.SetE
 	if err := f.s.cfg.Store.SetEnv(ctx, r.Msg.GetFunctionId(), r.Msg.GetEntry()); err != nil {
 		return nil, f.s.fail(err)
 	}
-	f.s.cfg.Poke()
+	f.s.cfg.Refresh(ctx)
 	return connect.NewResponse(&controlv1.SetEnvResponse{}), nil
 }
 
@@ -159,7 +161,7 @@ func (f functions) DeleteEnv(ctx context.Context, r *connect.Request[controlv1.D
 	if err := f.s.cfg.Store.DeleteEnv(ctx, r.Msg.GetFunctionId(), r.Msg.GetName()); err != nil {
 		return nil, f.s.fail(err)
 	}
-	f.s.cfg.Poke()
+	f.s.cfg.Refresh(ctx)
 	return connect.NewResponse(&controlv1.DeleteEnvResponse{}), nil
 }
 
@@ -180,7 +182,7 @@ func (r routes) CreateRoute(ctx context.Context, req *connect.Request[controlv1.
 	if err != nil {
 		return nil, r.s.fail(err)
 	}
-	r.s.cfg.Poke()
+	r.s.cfg.Refresh(ctx)
 	return connect.NewResponse(&controlv1.CreateRouteResponse{Route: route}), nil
 }
 
@@ -196,7 +198,7 @@ func (r routes) DeleteRoute(ctx context.Context, req *connect.Request[controlv1.
 	if err := r.s.cfg.Store.DeleteRoute(ctx, req.Msg.GetRouteId()); err != nil {
 		return nil, r.s.fail(err)
 	}
-	r.s.cfg.Poke()
+	r.s.cfg.Refresh(ctx)
 	return connect.NewResponse(&controlv1.DeleteRouteResponse{}), nil
 }
 

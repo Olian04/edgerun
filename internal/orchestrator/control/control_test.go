@@ -45,7 +45,7 @@ func newRig(t *testing.T, tweak func(*control.Config)) *rig {
 	t.Helper()
 	pokes := &atomic.Int32{}
 	cfg := control.Config{
-		Store: orchtest.Store(t), Poke: func() { pokes.Add(1) }, MaxModuleBytes: 1 << 10,
+		Store: orchtest.Store(t), Refresh: func(context.Context) { pokes.Add(1) }, MaxModuleBytes: 1 << 10,
 		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	if tweak != nil {
