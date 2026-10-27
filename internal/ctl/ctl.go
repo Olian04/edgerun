@@ -21,6 +21,7 @@ import (
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
 	controlv1 "github.com/Olian04/edgerun/gen/edgerun/control/v1"
 	"github.com/Olian04/edgerun/internal/admin"
+	"github.com/Olian04/edgerun/internal/egress/policy"
 )
 
 const usage = `edgerunctl manages an edgerun orchestrator through its control protocol.
@@ -39,6 +40,9 @@ usage: edgerunctl [--url URL] [--token TOKEN] <command> [arguments]
   env NAME                        list a function's environment
   set NAME KEY VALUE [--secret]   set an environment variable
   unset NAME KEY                  delete an environment variable
+  egress NAME                     list the network destinations a function may reach (none by default)
+  allow NAME DEST...              let a function reach DEST: host, *.domain, or address, with :port if not 80/443
+  deny NAME DEST...               stop letting a function reach DEST
   workers                         list workers
   invocations [--function NAME] [--limit N]
 
@@ -122,6 +126,12 @@ func (c *client) run(cmd string, args []string) error {
 		return c.set(args)
 	case "unset":
 		return c.unset(args)
+	case "egress":
+		return c.egress(args)
+	case "allow":
+		return c.allow(args, true)
+	case "deny":
+		return c.allow(args, false)
 	case "workers":
 		return c.workers()
 	case "invocations":
@@ -393,6 +403,69 @@ func (c *client) set(args []string) error {
 		return err
 	}
 	fmt.Fprintf(c.out, "%s: set %s\n", f.Name, positional[1])
+	return nil
+}
+
+func (c *client) egress(args []string) error {
+	if err := wantArgs(args, 1, "egress NAME"); err != nil {
+		return err
+	}
+	f, err := c.function(args[0])
+	if err != nil {
+		return err
+	}
+	if len(f.EgressAllow) == 0 {
+		fmt.Fprintf(c.out, "%s may reach nothing\n", f.Name)
+		return nil
+	}
+	for _, e := range f.EgressAllow {
+		fmt.Fprintln(c.out, e)
+	}
+	return nil
+}
+
+// allow adds destinations to a function's list, or with add false removes them.
+func (c *client) allow(args []string, add bool) error {
+	verb := "allow"
+	if !add {
+		verb = "deny"
+	}
+	if len(args) < 2 {
+		return usageError("usage: edgerunctl " + verb + " NAME DEST...")
+	}
+	f, err := c.function(args[0])
+	if err != nil {
+		return err
+	}
+	list := append([]string{}, f.EgressAllow...)
+	if add {
+		list = append(list, args[1:]...)
+	} else {
+		drop := map[string]bool{}
+		for _, a := range args[1:] {
+			canon, err := policy.Canonical([]string{a})
+			if err != nil {
+				return usageError(err.Error())
+			}
+			drop[canon[0]] = true
+		}
+		kept := list[:0]
+		for _, e := range list {
+			if !drop[e] {
+				kept = append(kept, e)
+			}
+		}
+		list = kept
+	}
+	updated, err := c.c.SetEgress(c.ctx, f.Id, list)
+	if err != nil {
+		return err
+	}
+	if len(updated.EgressAllow) == 0 {
+		fmt.Fprintf(c.out, "%s may reach nothing\n", f.Name)
+	} else {
+		fmt.Fprintf(c.out, "%s may reach: %s\n", f.Name, strings.Join(updated.EgressAllow, ", "))
+	}
 	return nil
 }
 

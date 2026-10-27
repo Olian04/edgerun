@@ -21,6 +21,7 @@ const (
 	DeployPath      webui.PageID[FnArgs]       = "/function/{id}/deploy"
 	EnvNewPath      webui.PageID[FnArgs]       = "/function/{id}/env/new"
 	SecretNewPath   webui.PageID[FnArgs]       = "/function/{id}/secret/new"
+	EgressNewPath   webui.PageID[FnArgs]       = "/function/{id}/network/new"
 	RoutesPath      webui.PageID[webui.NoArgs] = "/route"
 	NewRoutePath    webui.PageID[RouteNewArgs] = "/route/new"
 	WorkersPath     webui.PageID[webui.NoArgs] = "/worker"
@@ -66,7 +67,7 @@ func App(cfg Config) webui.App {
 		Brand: webui.Brand{Name: "edgerun"},
 		Pages: webui.Pages{
 			u.overviewPage(),
-			u.functionsPage(), u.newFunctionPage(), u.functionPage(), u.deployPage(), u.envNewPage(false), u.envNewPage(true),
+			u.functionsPage(), u.newFunctionPage(), u.functionPage(), u.deployPage(), u.envNewPage(false), u.envNewPage(true), u.egressNewPage(),
 			u.routesPage(), u.newRoutePage(),
 			u.workersPage(), u.invocationsPage(),
 		},

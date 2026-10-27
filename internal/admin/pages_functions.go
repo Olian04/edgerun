@@ -4,11 +4,15 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net"
+	"strconv"
+	"strings"
 
 	"connectrpc.com/connect"
 
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
 	controlv1 "github.com/Olian04/edgerun/gen/edgerun/control/v1"
+	"github.com/Olian04/edgerun/internal/egress/policy"
 	"github.com/Olian04/edgerun/internal/wagi"
 	"github.com/Olian04/webui/pkg/webui"
 )
@@ -140,6 +144,7 @@ func (u *ui) functionPage() webui.Page[FnArgs] {
 					webui.Link[FnArgs, FnArgs]{Label: "Deploy a version", Role: webui.RolePrimary, Page: DeployPath, Args: sameArgs},
 					webui.Link[FnArgs, FnArgs]{Label: "Add a variable", Page: EnvNewPath, Args: sameArgs},
 					webui.Link[FnArgs, FnArgs]{Label: "Add a secret", Page: SecretNewPath, Args: sameArgs},
+					webui.Link[FnArgs, FnArgs]{Label: "Allow a destination", Page: EgressNewPath, Args: sameArgs},
 					webui.Link[FnArgs, RouteNewArgs]{Label: "Add a route", Page: NewRoutePath,
 						Args: func(_ context.Context, a FnArgs) RouteNewArgs { return RouteNewArgs{Function: a.ID} }},
 				},
@@ -172,6 +177,7 @@ func (u *ui) functionPage() webui.Page[FnArgs] {
 			webui.Tabs{Panels: []webui.Tab{
 				{Label: "Versions", Body: u.versionsTable()},
 				{Label: "Environment", Body: u.envTable()},
+				{Label: "Network", Body: u.egressTable()},
 				{Label: "Routes", Body: u.routesTable("Routes to this function", func(ctx context.Context) string { return webui.ArgsOf[FnArgs](ctx).ID })},
 				{Label: "Invocations", Body: u.invocationsTable("Invocations", 10, func(ctx context.Context) string { return webui.ArgsOf[FnArgs](ctx).ID })},
 			}},
@@ -311,7 +317,7 @@ func (u *ui) deployPage() webui.Page[FnArgs] {
 					// The orchestrator is ABI-agnostic, so it cannot tell a broken upload
 					// from a module. The UI knows wagi-1 is WebAssembly, and a file that is
 					// not one would go live and fail every request.
-					if d.ABI == wagi.ABI && !bytes.HasPrefix(d.Module.Data, wasmMagic) {
+					if (d.ABI == wagi.ABI || d.ABI == wagi.ABI2) && !bytes.HasPrefix(d.Module.Data, wasmMagic) {
 						return webui.Reject(webui.Field[deployForm](module, "this does not look like a WebAssembly module: it must start with \\0asm")), nil
 					}
 					fid := webui.ArgsOf[FnArgs](ctx).ID
@@ -440,3 +446,112 @@ func (u *ui) envNewPage(secret bool) webui.Page[FnArgs] {
 
 // wasmMagic opens every WebAssembly binary.
 var wasmMagic = []byte("\x00asm")
+
+// --- network ------------------------------------------------------------------------
+
+type egressRow struct{ Entry, Match, Port string }
+
+var (
+	egressEntry = webui.String[egressRow]{Label: "Destination", Load: func(r egressRow) string { return r.Entry }}
+	egressMatch = webui.String[egressRow]{Label: "Matches", NoSort: true, Load: func(r egressRow) string { return r.Match }}
+	egressPort  = webui.String[egressRow]{Label: "Port", NoSort: true, Load: func(r egressRow) string { return r.Port }}
+)
+
+func describeRule(entry string) egressRow {
+	row := egressRow{Entry: entry, Match: "that host", Port: "80 for http, 443 for https"}
+	r, err := policy.ParseRule(entry)
+	if err != nil {
+		return row
+	}
+	switch {
+	case r.Wildcard:
+		row.Match = "any host under it, not the domain itself"
+	case net.ParseIP(r.Host) != nil:
+		row.Match = "that address"
+	}
+	if r.Port != 0 {
+		row.Port = strconv.Itoa(r.Port)
+	}
+	return row
+}
+
+func (u *ui) egressTable() webui.Table[egressRow] {
+	return webui.Table[egressRow]{
+		Title: "Network",
+		Desc: "Where this function may send requests. Closed by default: with nothing listed it can reach nothing. " +
+			"Only modules built for the wagi-2 ABI can use the network at all.",
+		Key: func(r egressRow) string { return r.Entry },
+		Rows: func(ctx context.Context) ([]egressRow, error) {
+			f, err := u.c.Function(ctx, webui.ArgsOf[FnArgs](ctx).ID)
+			if err != nil {
+				return nil, err
+			}
+			rows := make([]egressRow, len(f.EgressAllow))
+			for i, e := range f.EgressAllow {
+				rows[i] = describeRule(e)
+			}
+			return rows, nil
+		},
+		Columns: []webui.Accessor[egressRow]{egressEntry, egressMatch, egressPort},
+		Actions: []webui.Action[egressRow]{{
+			Label: "Remove", Role: webui.RoleDestructive, Guard: editGuard[egressRow],
+			Confirm: "Stop allowing this destination?",
+			Run: func(ctx context.Context, r egressRow) (webui.Outcome, error) {
+				fid := webui.ArgsOf[FnArgs](ctx).ID
+				f, err := u.c.Function(ctx, fid)
+				if err != nil {
+					return failed(err)
+				}
+				keep := make([]string, 0, len(f.EgressAllow))
+				for _, e := range f.EgressAllow {
+					if e != r.Entry {
+						keep = append(keep, e)
+					}
+				}
+				if _, err := u.c.SetEgress(ctx, fid, keep); err != nil {
+					return failed(err)
+				}
+				return webui.Success("Removed " + r.Entry), nil
+			},
+		}},
+	}
+}
+
+type egressForm struct{ Entry string }
+
+func (u *ui) egressNewPage() webui.Page[FnArgs] {
+	entry := webui.String[egressForm]{
+		Label: "Destination", Placeholder: "api.example.com",
+		Help: "A host name (api.example.com), every host under a domain (*.example.com), or an address (192.0.2.7). " +
+			"Add :port for a port other than 80 (http) and 443 (https).",
+		Rules: webui.StringRules{Required: true, MaxLen: 262},
+		Load:  func(e egressForm) string { return e.Entry }, Store: func(e *egressForm, v string) { e.Entry = v },
+	}
+	return webui.Page[FnArgs]{
+		Path:  EgressNewPath,
+		Guard: editPageGuard[FnArgs],
+		Body: webui.Form[egressForm]{
+			Title:  "Allow a destination",
+			Load:   func(context.Context) (egressForm, error) { return egressForm{}, nil },
+			Fields: []webui.Accessor[egressForm]{entry},
+			Submit: webui.Action[egressForm]{
+				Label: "Allow", Role: webui.RolePrimary, Guard: editGuard[egressForm],
+				Run: func(ctx context.Context, e egressForm) (webui.Outcome, error) {
+					fid := webui.ArgsOf[FnArgs](ctx).ID
+					f, err := u.c.Function(ctx, fid)
+					if err != nil {
+						return failed(err)
+					}
+					_, err = u.c.SetEgress(ctx, fid, append(append([]string{}, f.EgressAllow...), strings.TrimSpace(e.Entry)))
+					if err == nil {
+						return webui.Success("Allowed " + strings.TrimSpace(e.Entry)).Then(webui.Open(ctx, FunctionPath, FnArgs{ID: fid})), nil
+					}
+					if connect.CodeOf(err) == connect.CodeInvalidArgument {
+						return webui.Reject(webui.Field[egressForm](entry, explain(err))), nil
+					}
+					return failed(err)
+				},
+			},
+		},
+	}
+}

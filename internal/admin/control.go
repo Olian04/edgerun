@@ -265,6 +265,16 @@ func (c *Control) DeleteEnv(ctx context.Context, fid, name string) error {
 	return err
 }
 
+// SetEgress replaces the function's network allow list and returns the function
+// with the list in canonical form.
+func (c *Control) SetEgress(ctx context.Context, fid string, allow []string) (*controlv1.Function, error) {
+	r, err := c.fn.SetEgress(ctx, connect.NewRequest(&controlv1.SetEgressRequest{FunctionId: fid, Allow: allow}))
+	if err != nil {
+		return nil, err
+	}
+	return r.Msg.Function, nil
+}
+
 func (c *Control) CreateRoute(ctx context.Context, host, prefix, fid string) (*controlv1.Route, error) {
 	r, err := c.rt.CreateRoute(ctx, connect.NewRequest(&controlv1.CreateRouteRequest{HostPattern: host, PathPrefix: prefix, FunctionId: fid}))
 	if err != nil {

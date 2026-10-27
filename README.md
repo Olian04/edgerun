@@ -2,16 +2,18 @@
 
 An edge function runtime written in Go. Functions are WebAssembly modules run under wazero;
 Postgres is the system of record; the admin UI is built with
-[webui](https://github.com/Olian04/webui).
+[webui](https://github.com/Olian04/webui). Functions have no network until their operator lists
+the destinations they may reach, and then they reach them only through a network service.
 
 The defining property is **swappability**: the frontend, orchestrator and worker are separate
 programs that know each other only through strict, versioned protocols. Replace any one of them
 (different language, different sandbox) and the others cannot tell, as long as the protocol is
-kept. The end-to-end tests prove it by swapping the real worker for a hand-written fake.
+kept. Every role that implements a protocol has a conformance suite that judges it from outside, and
+the end-to-end tests swap the real worker for a hand-written fake.
 
 ```
- client ──HTTP──▶ frontend ──ingress.v1──▶ orchestrator ──worker.v1──▶ worker (wazero)
-                                              ▲   ▲  │
+ client ──HTTP──▶ frontend ──ingress.v1──▶ orchestrator ──worker.v1──▶ worker (wazero) ──egress.v1──▶ network service ──▶ the internet
+                                              ▲   ▲  │                                                       
                          admin UI / CLI ─control.v1┘  └─ worker.v1 (worker dials in)
                                                   ▼
                                               Postgres
@@ -22,6 +24,7 @@ kept. The end-to-end tests prove it by swapping the real worker for a hand-writt
 | frontend | `cmd/frontend` | terminates HTTP, forwards requests | orchestrator |
 | orchestrator | `cmd/orchestrator` | routing, scheduling, all persistent state | Postgres, workers |
 | worker | `cmd/worker` | executes WASM modules under limits | orchestrator |
+| network service | `cmd/egress` | makes guests' outbound requests, for allowed destinations only | the internet |
 | admin | `cmd/admin` | operator UI (webui) | orchestrator |
 | CLI | `cmd/edgerunctl` | scripted operator access | orchestrator |
 
@@ -42,6 +45,13 @@ That builds everything, starts a private Postgres and one of each component, and
 
 ```sh
 curl -H 'Host: hello.localhost' 'http://127.0.0.1:18000/?name=you'     # Howdy, you!
+```
+
+The stack also runs a network service and a `fetch` function that uses it:
+
+```sh
+curl -H 'Host: fetch.localhost' 'http://127.0.0.1:18000/?url=http://127.0.0.1:18081/healthz'   # allowed: 200
+curl -H 'Host: fetch.localhost' 'http://127.0.0.1:18000/?url=http://127.0.0.1:19090/healthz'   # not listed: 403
 ```
 
 Open <http://127.0.0.1:19090/> and sign in as `alice` / `admin` (or `bob` / `viewer`, read-only).
@@ -73,6 +83,26 @@ edgerunctl activate greeter 1                      # rollback is just activating
 ```
 
 Then `curl -H 'Host: greeter.localhost' http://127.0.0.1:18000/`. `edgerunctl` with no arguments lists every command. The admin UI does the same things.
+
+### Giving a function a network
+
+A function reaches nothing by default. Build it for the `wagi-2` ABI (the same as `wagi-1`, plus an
+`edgerun_http` host module; see [`examples/fetch`](examples/fetch)), deploy it as `wagi-2`, and list where
+it may go:
+
+```sh
+GOOS=wasip1 GOARCH=wasm go build -o fetch.wasm ./examples/fetch
+edgerunctl create fetch
+edgerunctl deploy fetch fetch.wasm --abi wagi-2 --activate
+edgerunctl allow fetch api.example.com '*.cdn.example.com' 192.0.2.7:8443   # host, *.domain, or address[:port]
+edgerunctl egress fetch                                                      # what it may reach
+edgerunctl deny fetch api.example.com
+```
+
+Without a port an entry matches only the scheme's default (80, 443). The list belongs to the function, not to a
+version, and applies to the next invocation. Whatever the list says, the network service refuses loopback,
+private, link-local (cloud metadata), multicast and other non-public addresses unless its operator allows a
+range with `--allow-network`. The rules are in [`docs/protocol.md`](docs/protocol.md), "Network access".
 
 ## Configuration
 
@@ -107,8 +137,20 @@ The orchestrator is stateless: run as many as you like against one database.
 | `--execution-token` | `EDGERUN_EXECUTION_TOKEN` | | Required of the orchestrator. |
 | `--max-concurrency` | `EDGERUN_WORKER_MAX_CONCURRENCY` | `8` | Further requests get `NO_CAPACITY` at once; nothing queues. |
 | `--compilation-cache-dir` | `EDGERUN_WORKER_COMPILATION_CACHE_DIR` | | Keeps compiled code across restarts. The first compile of a module costs about a second; later ones ~25 ms. |
+| `--egress-url` | `EDGERUN_EGRESS_URL` | | The network service for guests' outbound requests. Without one, guests have no network and the worker offers `wagi-1` only. |
+| `--egress-token` | `EDGERUN_EGRESS_TOKEN` | | Presented to the network service. |
 | `--label key=value` | | | Repeatable. |
 | `--drain-timeout` | | `30s` | On SIGTERM a worker stops taking work, finishes what it has, deregisters. |
+
+### egress (the network service)
+
+| Flag | Environment | Default | |
+|---|---|---|---|
+| `--listen` | `EDGERUN_EGRESS_LISTEN` | `:8090` | |
+| `--token` | `EDGERUN_EGRESS_TOKEN` | | Presented by workers. |
+| `--allow-network` | `EDGERUN_EGRESS_ALLOW_NETWORKS` | | A CIDR range it may connect to although it refuses it by default (repeatable; comma-separated in the variable). Put it where the network is, and open only what functions need. |
+| `--max-request-bytes` | | 1 MiB | Largest request body it forwards. |
+| `--max-response-bytes` | | 4 MiB | Largest response body it returns. |
 
 ### frontend
 
@@ -148,15 +190,17 @@ error taxonomy and the frontend's HTTP mapping, deadlines, retry rules, capabili
 limits and the guest ABI. To write your own frontend, orchestrator or worker, start there.
 
 `internal/e2e` shows what a replacement must do: `swap_test.go` runs the unchanged orchestrator
-against a worker written from scratch against `worker.v1`, and `conformance/worker` is a black-box
-suite that any worker implementation can be run against.
+against a worker written from scratch against `worker.v1`. And every role has a black-box suite,
+`conformance/{frontend,orchestrator,worker,egress}`, that starts the implementation, plays everything around
+it and judges what crosses the wire: pass it and you can replace the in-repo component. See "Conformance"
+in [`docs/protocol.md`](docs/protocol.md).
 
 ## Development
 
 ```sh
 make generate     # regenerate gen/ from proto/
 make proto-check  # lint, breaking-change check, generated code is fresh
-make test         # needs PostgreSQL binaries, or EDGERUN_TEST_DATABASE_URL (a superuser DSN)
+make test         # needs PostgreSQL binaries, or EDGERUN_TEST_DATABASE_URL (a superuser DSN); includes every conformance suite
 make build
 ```
 
@@ -170,16 +214,19 @@ without a Docker daemon available, so it is **untested**; treat it as a starting
 
 ## Limits and known gaps
 
-- **webui is pre-1.0** and pinned to an exact version. It is confined to one binary, so replacing
-  it touches nothing else.
-- Guests have **no network** (WASI preview 1 has no sockets) and their response is buffered by the
-  worker before it is streamed. Neither needs a protocol change to lift.
+- Guests' network is HTTP and HTTPS only (no raw sockets, no WebSockets), buffered (a request up to 1 MiB, a
+  response up to 4 MiB, at most 16 requests an invocation), and redirects are the guest's to follow. It exists
+  only for `wagi-2` modules; a Go guest needs `//go:wasmimport` to reach it (see `examples/fetch`).
 - The worker enforces deadlines by checking them in compiled code, which slows a tight loop several
   times over. That is the price of reliably stopping a spinning guest.
 - The orchestrator proxies every response, so it is on the data path. It is stateless and scales
   horizontally; a lease-based direct path would be `ingress.v2`.
-- Only the worker has a conformance suite; the orchestrator and frontend are covered by the
-  end-to-end tests but not yet by a suite a foreign implementation could run.
+- The conformance suites are Go packages you give a `Launch` function; there is no stand-alone runner for an
+  implementation in another language yet. A few rules cannot be judged from outside (a name that resolves to
+  both a public and a forbidden address needs control of DNS) and are covered by the reference
+  implementation's own tests.
+- The admin UI's auto-reload is the browser reloading a page every few seconds, and only on pages without
+  forms.
 
 ## License
 

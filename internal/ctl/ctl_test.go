@@ -112,6 +112,27 @@ func TestTheWholeLifecycleFromTheCommandLine(t *testing.T) {
 		t.Error("unset did not remove the variable")
 	}
 
+	// Closed by default, opened by the operator, closed again.
+	if out := r.mustRun("egress", "hello"); !strings.Contains(out, "may reach nothing") {
+		t.Errorf("egress of a new function: %q", out)
+	}
+	if out := r.mustRun("allow", "hello", "API.Example.com", "*.cdn.example.com:8443"); !strings.Contains(out, "*.cdn.example.com:8443, api.example.com") {
+		t.Errorf("allow: %q", out)
+	}
+	if out := r.mustRun("allow", "hello", "192.0.2.7"); !strings.Contains(out, "192.0.2.7") || !strings.Contains(out, "api.example.com") {
+		t.Errorf("allow adds to the list: %q", out)
+	}
+	if out := r.mustRun("deny", "hello", "api.EXAMPLE.com"); strings.Contains(out, "api.example.com") || !strings.Contains(out, "192.0.2.7") {
+		t.Errorf("deny: %q", out)
+	}
+	if out := r.mustRun("egress", "hello"); !strings.Contains(out, "*.cdn.example.com:8443") || strings.Contains(out, "api.example.com") {
+		t.Errorf("egress: %q", out)
+	}
+	r.mustRun("deny", "hello", "192.0.2.7", "*.cdn.example.com:8443")
+	if out := r.mustRun("egress", "hello"); !strings.Contains(out, "may reach nothing") {
+		t.Errorf("after denying everything: %q", out)
+	}
+
 	// Output a person (or a script) can read.
 	if out := r.mustRun("workers"); !strings.HasPrefix(out, "ENDPOINT") {
 		t.Errorf("workers: %q", out)

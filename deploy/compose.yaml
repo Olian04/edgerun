@@ -15,6 +15,7 @@ x-tokens: &tokens
   EDGERUN_WORKER_TOKEN: change-me-worker
   EDGERUN_ADMIN_TOKEN: change-me-admin
   EDGERUN_EXECUTION_TOKEN: change-me-execution
+  EDGERUN_EGRESS_TOKEN: change-me-egress
 
 services:
   postgres:
@@ -37,13 +38,23 @@ services:
       EDGERUN_ORCHESTRATOR_LISTEN: ":8080"
     depends_on: { postgres: { condition: service_healthy } }
 
+  # The only component that talks to the network on guests' behalf. It refuses
+  # private and loopback addresses; add EDGERUN_EGRESS_ALLOW_NETWORKS (CIDR
+  # ranges) to let functions reach something inside your own network.
+  egress:
+    build: { context: .., dockerfile: deploy/Dockerfile, args: { CMD: egress } }
+    environment:
+      <<: *tokens
+      EDGERUN_EGRESS_LISTEN: ":8090"
+
   worker:
     build: { context: .., dockerfile: deploy/Dockerfile, args: { CMD: worker } }
     environment:
       <<: *tokens
       EDGERUN_ORCHESTRATOR_URL: http://orchestrator:8080
       EDGERUN_WORKER_ADVERTISE_URL: http://worker:9000
-    depends_on: [orchestrator]
+      EDGERUN_EGRESS_URL: http://egress:8090
+    depends_on: [orchestrator, egress]
     deploy: { replicas: 1 } # scale freely: workers register themselves
 
   frontend:

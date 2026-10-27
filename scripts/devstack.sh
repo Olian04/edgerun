@@ -20,11 +20,13 @@ FRONTEND_PORT="${FRONTEND_PORT:-18000}"
 HEALTH_PORT="${HEALTH_PORT:-18081}"
 WORKER_PORT="${WORKER_PORT:-19000}"
 ADMIN_PORT="${ADMIN_PORT:-19090}"
+EGRESS_PORT="${EGRESS_PORT:-18090}"
 
 INGRESS_TOKEN=dev-ingress-token
 WORKER_TOKEN=dev-worker-token
 ADMIN_TOKEN=dev-admin-token
 EXEC_TOKEN=dev-execution-token
+EGRESS_TOKEN=dev-egress-token
 # 32 bytes, base64: dev only.
 SECRET_KEY=ZGV2LW9ubHktc2VjcmV0LWtleS0zMi1ieXRlcyEhISE=
 
@@ -36,7 +38,7 @@ pg_bin() {
 as_pg() { if [ "$(id -u)" = 0 ]; then runuser -u postgres -- "$@"; else "$@"; fi; }
 
 stop() {
-  for p in admin frontend worker orchestrator; do
+  for p in admin frontend worker egress orchestrator; do
     if [ -f "$RUN/$p.pid" ]; then
       kill "$(cat "$RUN/$p.pid")" 2>/dev/null || true
       rm -f "$RUN/$p.pid"
@@ -54,8 +56,9 @@ start() {
   stop
 
   echo "==> building"
-  (cd "$ROOT" && go build -o "$BIN/" ./cmd/orchestrator ./cmd/worker ./cmd/frontend ./cmd/admin ./cmd/edgerunctl \
-    && GOOS=wasip1 GOARCH=wasm CGO_ENABLED=0 go build -trimpath -o "$DIR/hello.wasm" ./examples/hello)
+  (cd "$ROOT" && go build -o "$BIN/" ./cmd/orchestrator ./cmd/worker ./cmd/frontend ./cmd/admin ./cmd/egress ./cmd/edgerunctl \
+    && GOOS=wasip1 GOARCH=wasm CGO_ENABLED=0 go build -trimpath -o "$DIR/hello.wasm" ./examples/hello \
+    && GOOS=wasip1 GOARCH=wasm CGO_ENABLED=0 go build -trimpath -o "$DIR/fetch.wasm" ./examples/fetch)
 
   echo "==> PostgreSQL"
   if [ "$(id -u)" = 0 ]; then mkdir -p "$DIR" && chown postgres:postgres "$DIR" "$RUN" 2>/dev/null || true; chmod 755 "$DIR"; fi
@@ -74,7 +77,15 @@ start() {
     nohup "$BIN/orchestrator" >"$LOG/orchestrator.log" 2>&1 & echo $! >"$RUN/orchestrator.pid"
   wait_http "http://127.0.0.1:$ORCH_PORT/healthz" orchestrator
 
+  # The network service guests' requests go through. It refuses private and
+  # loopback addresses unless told otherwise; the demo function fetches from
+  # this machine, so loopback is allowed here. Do not do that anywhere real.
+  EDGERUN_EGRESS_LISTEN="127.0.0.1:$EGRESS_PORT" EDGERUN_EGRESS_TOKEN=$EGRESS_TOKEN EDGERUN_EGRESS_ALLOW_NETWORKS=127.0.0.0/8 \
+    nohup "$BIN/egress" >"$LOG/egress.log" 2>&1 & echo $! >"$RUN/egress.pid"
+  wait_http "http://127.0.0.1:$EGRESS_PORT/healthz" egress
+
   EDGERUN_ORCHESTRATOR_URL="http://127.0.0.1:$ORCH_PORT" EDGERUN_WORKER_TOKEN=$WORKER_TOKEN EDGERUN_EXECUTION_TOKEN=$EXEC_TOKEN \
+  EDGERUN_EGRESS_URL="http://127.0.0.1:$EGRESS_PORT" EDGERUN_EGRESS_TOKEN=$EGRESS_TOKEN \
   EDGERUN_WORKER_LISTEN="127.0.0.1:$WORKER_PORT" EDGERUN_WORKER_ADVERTISE_URL="http://127.0.0.1:$WORKER_PORT" \
     nohup "$BIN/worker" >"$LOG/worker.log" 2>&1 & echo $! >"$RUN/worker.pid"
 
@@ -94,6 +105,13 @@ start() {
     "$BIN/edgerunctl" route hello.localhost / hello >/dev/null
     "$BIN/edgerunctl" set hello GREETING Howdy >/dev/null
   fi
+  if ! "$BIN/edgerunctl" functions | grep -q '^fetch '; then
+    "$BIN/edgerunctl" create fetch >/dev/null
+    "$BIN/edgerunctl" deploy fetch "$DIR/fetch.wasm" --abi wagi-2 --activate >/dev/null
+    "$BIN/edgerunctl" route fetch.localhost / fetch >/dev/null
+    # Closed by default: the function may reach only what is listed here.
+    "$BIN/edgerunctl" allow fetch "127.0.0.1:$HEALTH_PORT" >/dev/null
+  fi
 
   cat <<MSG
 
@@ -101,6 +119,8 @@ edgerun is running.
 
   Admin UI      http://127.0.0.1:$ADMIN_PORT/          sign in: alice / admin   (viewer: bob / viewer)
   Try it        curl -H 'Host: hello.localhost' 'http://127.0.0.1:$FRONTEND_PORT/?name=you'
+  The network   curl -H 'Host: fetch.localhost' 'http://127.0.0.1:$FRONTEND_PORT/?url=http://127.0.0.1:$HEALTH_PORT/healthz'   (allowed)
+                curl -H 'Host: fetch.localhost' 'http://127.0.0.1:$FRONTEND_PORT/?url=http://127.0.0.1:$ADMIN_PORT/healthz'    (not listed: 403)
   CLI           EDGERUN_URL=http://127.0.0.1:$ORCH_PORT EDGERUN_ADMIN_TOKEN=$ADMIN_TOKEN $BIN/edgerunctl functions
   Logs          $LOG  (PostgreSQL: $DIR/postgres.log)
   Stop          scripts/devstack.sh stop

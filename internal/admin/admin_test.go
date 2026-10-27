@@ -2,6 +2,7 @@ package admin_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -262,7 +263,7 @@ func TestAViewerCanLookButNotChange(t *testing.T) {
 	}
 	// Pages that only exist to change things are refused, with the reason.
 	for _, path := range []string{"/admin/function/new", "/admin/function/" + fn.Id + "/deploy", "/admin/route/new",
-		"/admin/function/" + fn.Id + "/env/new", "/admin/function/" + fn.Id + "/secret/new"} {
+		"/admin/function/" + fn.Id + "/env/new", "/admin/function/" + fn.Id + "/secret/new", "/admin/function/" + fn.Id + "/network/new"} {
 		if p := b.get(path); p.status != http.StatusForbidden || !p.has(t, "read-only") {
 			t.Errorf("%s: %d, want 403 with the reason", path, p.status)
 		}
@@ -414,5 +415,54 @@ func TestOnlyReadOnlyPagesReloadThemselves(t *testing.T) {
 	resp.Body.Close()
 	if resp.Header.Get("Refresh") != "" {
 		t.Error("a redirect to sign-in must not carry Refresh")
+	}
+}
+
+// A function reaches nothing until an operator says where; the Network tab is
+// where they say it.
+func TestOperatorOpensAndClosesTheNetwork(t *testing.T) {
+	r := newRig(t)
+	fn, err := r.ctl.CreateFunction(ctx, "talker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := r.browser()
+	b.signIn("alice", "alice-pw")
+	tab := "/admin/function/" + fn.Id + "?tabs.tab=network"
+
+	if p := b.get(tab); p.status != 200 || !p.has(t, "Closed by default") {
+		t.Fatalf("the network tab of a new function: %d, and it must say the function reaches nothing", p.status)
+	}
+
+	allow := formWith(t, b.get("/admin/function/"+fn.Id+"/network/new").body, "Allow", "")
+	if p := b.submit(t, allow, map[string]string{"Destination": "not a host!"}); p.status != http.StatusUnprocessableEntity || !p.has(t, "allow entry") {
+		t.Errorf("a malformed destination: %d, want it refused with the reason", p.status)
+	}
+	if p := b.submit(t, allow, map[string]string{"Destination": "*"}); p.status != http.StatusUnprocessableEntity {
+		t.Errorf("a bare wildcard: %d, want it refused: a list names destinations", p.status)
+	}
+	if got, _ := r.ctl.Function(ctx, fn.Id); len(got.EgressAllow) != 0 {
+		t.Fatalf("a refused destination was stored: %v", got.EgressAllow)
+	}
+
+	if p := b.submit(t, allow, map[string]string{"Destination": "API.Example.com"}); p.status != 200 {
+		t.Fatalf("allowing a host: %d", p.status)
+	}
+	b.submit(t, allow, map[string]string{"Destination": "*.cdn.example.com:8443"})
+	b.submit(t, allow, map[string]string{"Destination": "192.0.2.7"})
+	if got, _ := r.ctl.Function(ctx, fn.Id); fmt.Sprint(got.EgressAllow) != "[*.cdn.example.com:8443 192.0.2.7 api.example.com]" {
+		t.Fatalf("stored list = %v, want the canonical form", got.EgressAllow)
+	}
+	p := b.get(tab)
+	for _, want := range []string{"api.example.com", "*.cdn.example.com:8443", "192.0.2.7", "any host under it", "that address", "8443"} {
+		if !p.has(t, want) {
+			t.Errorf("the network tab does not show %q", want)
+		}
+	}
+
+	rm := formWith(t, p.body, "Remove", "api.example.com")
+	b.post(rm.action, rm.values(t, nil))
+	if got, _ := r.ctl.Function(ctx, fn.Id); fmt.Sprint(got.EgressAllow) != "[*.cdn.example.com:8443 192.0.2.7]" {
+		t.Errorf("after removing one: %v", got.EgressAllow)
 	}
 }
