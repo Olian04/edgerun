@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"sync"
 	"testing"
+	"time"
 
 	workerconf "github.com/Olian04/edgerun/conformance/worker"
 	"github.com/Olian04/edgerun/internal/worker/app"
@@ -32,8 +33,15 @@ func TestConformance(t *testing.T) {
 			stop := func() {
 				once.Do(func() {
 					cancel()
-					if err := <-done; err != nil {
-						t.Errorf("worker exited with error: %v", err)
+					// A worker that cannot be stopped must fail the suite,
+					// not hang it (e.g. a guest that ignores its deadline).
+					select {
+					case err := <-done:
+						if err != nil {
+							t.Errorf("worker exited with error: %v", err)
+						}
+					case <-time.After(90 * time.Second):
+						t.Errorf("worker did not exit within 90s of being asked to stop")
 					}
 				})
 			}

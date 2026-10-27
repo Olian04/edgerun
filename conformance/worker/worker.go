@@ -61,8 +61,10 @@ type Target struct {
 	// worker is expected to register on its own. The returned stop requests a
 	// graceful shutdown (what SIGTERM means for the worker: drain, finish
 	// in-flight work, deregister, exit) and blocks until the worker has
-	// exited. Launch must arrange for stop to run at the end of the test if
-	// the suite has not already called it.
+	// exited, or reports a test failure if it has not within a bounded time:
+	// it must never block forever, or a broken worker hangs the suite instead
+	// of failing it. Launch must arrange for stop to run at the end of the
+	// test if the suite has not already called it.
 	Launch func(t testing.TB, env Env) (stop func())
 }
 
