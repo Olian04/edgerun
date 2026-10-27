@@ -456,10 +456,14 @@ type Invocation struct {
 	// HTTP status the function answered with; 0 if it never answered.
 	Status uint32 `protobuf:"varint,8,opt,name=status,proto3" json:"status,omitempty"`
 	// Set when the platform (not the function) failed the invocation.
-	ErrorReason     v1.ErrorReason `protobuf:"varint,9,opt,name=error_reason,json=errorReason,proto3,enum=edgerun.common.v1.ErrorReason" json:"error_reason,omitempty"`
-	DurationMicros  uint64         `protobuf:"varint,10,opt,name=duration_micros,json=durationMicros,proto3" json:"duration_micros,omitempty"`
-	PeakMemoryBytes uint64         `protobuf:"varint,11,opt,name=peak_memory_bytes,json=peakMemoryBytes,proto3" json:"peak_memory_bytes,omitempty"`
-	// Tail of the guest's stderr, truncated.
+	ErrorReason v1.ErrorReason `protobuf:"varint,9,opt,name=error_reason,json=errorReason,proto3,enum=edgerun.common.v1.ErrorReason" json:"error_reason,omitempty"`
+	// Execution time as reported by the worker; if the worker never reported
+	// one, the time the orchestrator observed.
+	DurationMicros  uint64 `protobuf:"varint,10,opt,name=duration_micros,json=durationMicros,proto3" json:"duration_micros,omitempty"`
+	PeakMemoryBytes uint64 `protobuf:"varint,11,opt,name=peak_memory_bytes,json=peakMemoryBytes,proto3" json:"peak_memory_bytes,omitempty"`
+	// Tail of the guest's stderr, truncated. For an invocation that failed
+	// before the worker could report, the error message instead (for a trapped
+	// function that message ends with the guest's stderr tail).
 	Stderr        []byte                 `protobuf:"bytes,12,opt,name=stderr,proto3" json:"stderr,omitempty"`
 	StartTime     *timestamppb.Timestamp `protobuf:"bytes,13,opt,name=start_time,json=startTime,proto3" json:"start_time,omitempty"`
 	unknownFields protoimpl.UnknownFields

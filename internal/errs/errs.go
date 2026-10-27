@@ -49,11 +49,11 @@ func Invalid(format string, args ...any) *connect.Error {
 	return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf(format, args...))
 }
 
-// Reason extracts the ErrorReason from err, or UNSPECIFIED if it carries none.
-func Reason(err error) commonv1.ErrorReason {
+// Info extracts the ErrorInfo detail from err, or nil if it carries none.
+func Info(err error) *commonv1.ErrorInfo {
 	var ce *connect.Error
 	if !errors.As(err, &ce) {
-		return commonv1.ErrorReason_ERROR_REASON_UNSPECIFIED
+		return nil
 	}
 	for _, d := range ce.Details() {
 		v, verr := d.Value()
@@ -61,8 +61,16 @@ func Reason(err error) commonv1.ErrorReason {
 			continue
 		}
 		if info, ok := v.(*commonv1.ErrorInfo); ok {
-			return info.GetReason()
+			return info
 		}
+	}
+	return nil
+}
+
+// Reason extracts the ErrorReason from err, or UNSPECIFIED if it carries none.
+func Reason(err error) commonv1.ErrorReason {
+	if info := Info(err); info != nil {
+		return info.GetReason()
 	}
 	return commonv1.ErrorReason_ERROR_REASON_UNSPECIFIED
 }

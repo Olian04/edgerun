@@ -83,9 +83,13 @@ message Invocation {
   uint32 status = 8;
   // Set when the platform (not the function) failed the invocation.
   edgerun.common.v1.ErrorReason error_reason = 9;
+  // Execution time as reported by the worker; if the worker never reported
+  // one, the time the orchestrator observed.
   uint64 duration_micros = 10;
   uint64 peak_memory_bytes = 11;
-  // Tail of the guest's stderr, truncated.
+  // Tail of the guest's stderr, truncated. For an invocation that failed
+  // before the worker could report, the error message instead (for a trapped
+  // function that message ends with the guest's stderr tail).
   bytes stderr = 12;
   google.protobuf.Timestamp start_time = 13;
 }
