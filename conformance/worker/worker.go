@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -38,8 +39,11 @@ const (
 
 	abi = "wagi-1"
 	// roomy covers the first invocation, which compiles the guest (seconds
-	// under the race detector).
-	roomy = 90 * time.Second
+	// under the race detector). Once one invocation has succeeded the worker
+	// is warm and ordinary calls get steady: a broken worker then fails the
+	// suite in minutes rather than hanging each remaining group for ages.
+	roomy  = 90 * time.Second
+	steady = 30 * time.Second
 )
 
 // Env tells the worker under test how to reach the suite.
@@ -88,6 +92,8 @@ func Run(t *testing.T, target Target) {
 		client: workerv1connect.NewExecutionServiceClient(&http.Client{Transport: budgetTransport{}}, reg.Endpoint),
 	}
 
+	h.budget.Store(int64(roomy))
+
 	t.Run("Registration", h.registration)
 	t.Run("Heartbeats", h.heartbeats)
 	t.Run("Authentication", h.authentication)
@@ -96,7 +102,14 @@ func Run(t *testing.T, target Target) {
 	t.Run("Summary", h.summary)
 	t.Run("ABIMismatch", h.abiMismatch)
 	t.Run("Artifacts", h.artifacts)
-	t.Run("Deadline", h.deadline)
+	// A worker that does not stop a runaway guest is in an unknown state: its
+	// slots stay occupied, and a spinning guest can even wedge the whole
+	// process (the Go runtime cannot preempt native JIT code, so every garbage
+	// collection waits for it). Nothing after this point can be trusted, so
+	// stop here instead of reporting a cascade of meaningless failures.
+	if !t.Run("Deadline", h.deadline) {
+		t.Fatal("deadline enforcement failed: the worker is in an unknown state, skipping the remaining groups")
+	}
 	t.Run("Traps", h.traps)
 	t.Run("MemoryLimit", h.memoryLimit)
 	t.Run("ResponseLimit", h.responseLimit)
@@ -109,6 +122,7 @@ func Run(t *testing.T, target Target) {
 }
 
 type harness struct {
+	budget atomic.Int64 // default per-call budget in ns; roomy until the first success
 	orch   *fakeOrchestrator
 	reg    registration
 	good   string
@@ -206,7 +220,7 @@ func (h *harness) call(t *testing.T, inv invocation) outcome {
 		inv.method = "GET"
 	}
 	if inv.timeout == 0 {
-		inv.timeout = roomy
+		inv.timeout = time.Duration(h.budget.Load())
 	}
 	// The budget is what the worker is told (Connect-Timeout-Ms, see
 	// budgetTransport); the local guard is longer, so the worker's own typed
@@ -270,6 +284,9 @@ func (h *harness) call(t *testing.T, inv invocation) outcome {
 		}
 	}
 	out.err, out.elapsed = st.Err(), time.Since(start)
+	if out.err == nil {
+		h.budget.Store(int64(steady)) // the worker has compiled and run a module
+	}
 	if out.err == nil && (out.head == nil || !sawSummary) {
 		t.Errorf("protocol violation: stream ended OK without head and summary (head=%v summary=%v)", out.head != nil, sawSummary)
 	}
