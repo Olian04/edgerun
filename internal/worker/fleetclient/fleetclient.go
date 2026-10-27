@@ -81,6 +81,14 @@ func (c *Client) Run(ctx context.Context) error {
 	}
 }
 
+// WorkerID returns the id the orchestrator assigned, or "" before the first
+// registration has completed.
+func (c *Client) WorkerID() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.workerID
+}
+
 // Deregister tells the orchestrator this worker is leaving. Best effort.
 func (c *Client) Deregister(ctx context.Context) error {
 	c.mu.Lock()

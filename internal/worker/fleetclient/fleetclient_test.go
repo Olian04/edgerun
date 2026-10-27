@@ -165,10 +165,9 @@ func TestPokeHeartbeatsImmediately(t *testing.T) {
 func TestDeregister(t *testing.T) {
 	f := &fakeFleet{interval: time.Hour}
 	c, _, _ := setup(t, f, &source{})
-	if err := c.Deregister(context.Background()); err != nil {
-		t.Fatal(err) // before registration: nothing to do
-	}
-	eventually(t, "registration", func() bool { r, _ := f.snapshot(); return r == 1 })
+	// Wait for the client's own view: the server counting a registration does
+	// not mean the client has received its id yet.
+	eventually(t, "the client to hold its worker id", func() bool { return c.WorkerID() == "w1" })
 	if err := c.Deregister(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -176,5 +175,19 @@ func TestDeregister(t *testing.T) {
 	defer f.mu.Unlock()
 	if len(f.deregistered) != 1 || f.deregistered[0] != "w1" {
 		t.Errorf("deregistered = %v", f.deregistered)
+	}
+}
+
+func TestDeregisterBeforeRegistrationIsANoOp(t *testing.T) {
+	f := &fakeFleet{interval: time.Hour}
+	c := New(Config{Fleet: nil, Source: &source{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}) // never started
+	if c.WorkerID() != "" {
+		t.Error("a client that never registered has no id")
+	}
+	if err := c.Deregister(context.Background()); err != nil {
+		t.Errorf("nothing to deregister must not be an error (and must not call the orchestrator): %v", err)
+	}
+	if len(f.deregistered) != 0 {
+		t.Error("unexpected deregistration")
 	}
 }
