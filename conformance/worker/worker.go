@@ -34,6 +34,7 @@ import (
 const (
 	workerToken    = "conformance-worker-token"
 	executionToken = "conformance-execution-token"
+	egressToken    = "conformance-egress-token"
 	maxConcurrency = 2
 	heartbeatEvery = 100 * time.Millisecond
 
@@ -57,6 +58,11 @@ type Env struct {
 	ExecutionToken string
 	// MaxConcurrency is the number of invocations the worker must run at once.
 	MaxConcurrency uint32
+	// EgressURL and EgressToken are the network service the worker may use for
+	// guests' outbound requests (a fake the suite hosts), and the credential it
+	// must present. A worker that offers wagi-2 uses them; one that does not
+	// has no network to offer, and ignores them.
+	EgressURL, EgressToken string
 }
 
 // Target starts the implementation under test.
@@ -77,10 +83,13 @@ func Run(t *testing.T, target Target) {
 	wasm := guest.Build(t)
 	orch := newFakeOrchestrator(t, workerToken, heartbeatEvery)
 	good := orch.addBlob(wasm)
+	netGood := orch.addBlob(guest.BuildNet(t))
+	egress := newFakeEgress(t)
 
 	stop := target.Launch(t, Env{
 		OrchestratorURL: orch.url(), WorkerToken: workerToken,
 		ExecutionToken: executionToken, MaxConcurrency: maxConcurrency,
+		EgressURL: egress.srv.URL, EgressToken: egressToken,
 	})
 	orch.waitFor(t, "the worker to register", 60*time.Second, func() bool { return len(orch.registrations) > 0 })
 
@@ -88,7 +97,7 @@ func Run(t *testing.T, target Target) {
 	reg := orch.registrations[0]
 	orch.mu.Unlock()
 	h := &harness{
-		orch: orch, reg: reg, good: good, stop: stop,
+		orch: orch, reg: reg, good: good, netGood: netGood, egress: egress, stop: stop,
 		client: workerv1connect.NewExecutionServiceClient(&http.Client{Transport: budgetTransport{}}, reg.Endpoint),
 	}
 
@@ -115,6 +124,7 @@ func Run(t *testing.T, target Target) {
 	t.Run("ResponseLimit", h.responseLimit)
 	t.Run("ABIViolations", h.abiViolations)
 	t.Run("RealTimeAndEntropy", h.timeAndEntropy)
+	t.Run("Network", h.network)
 	t.Run("Capacity", h.capacity)
 	t.Run("ReregistersWhenForgotten", h.reregister)
 	// Must stay last: it shuts the worker down.
@@ -126,8 +136,12 @@ type harness struct {
 	orch   *fakeOrchestrator
 	reg    registration
 	good   string
-	stop   func()
-	client workerv1connect.ExecutionServiceClient
+	// netGood is the digest of the network test guest, and egress the fake
+	// network service the worker was told to use.
+	netGood string
+	egress  *fakeEgress
+	stop    func()
+	client  workerv1connect.ExecutionServiceClient
 }
 
 // budgetHeader carries an invocation's wall-clock budget from call to
@@ -159,6 +173,8 @@ var canonicalCode = map[commonv1.ErrorReason]connect.Code{
 	commonv1.ErrorReason_ERROR_REASON_RESPONSE_TOO_LARGE: connect.CodeResourceExhausted,
 	commonv1.ErrorReason_ERROR_REASON_ARTIFACT_NOT_FOUND: connect.CodeNotFound,
 	commonv1.ErrorReason_ERROR_REASON_INTERNAL:           connect.CodeInternal,
+	commonv1.ErrorReason_ERROR_REASON_EGRESS_DENIED:      connect.CodePermissionDenied,
+	commonv1.ErrorReason_ERROR_REASON_EGRESS_FAILED:      connect.CodeUnavailable,
 }
 
 // reasonOf extracts the ErrorInfo reason from a Connect error.
@@ -205,7 +221,8 @@ type invocation struct {
 	limits              *commonv1.Limits
 	env                 []*commonv1.EnvVar
 	timeout             time.Duration
-	token               *string // nil: the correct token; pointer to "": none
+	token               *string  // nil: the correct token; pointer to "": none
+	egress              []string // the function's network allow list
 }
 
 func (h *harness) call(t *testing.T, inv invocation) outcome {
@@ -232,7 +249,7 @@ func (h *harness) call(t *testing.T, inv invocation) outcome {
 
 	req := connect.NewRequest(&workerv1.ExecuteRequest{
 		InvocationId: "conformance-" + t.Name(), ArtifactDigest: inv.digest, Abi: inv.abi,
-		Limits: inv.limits, Env: inv.env,
+		Limits: inv.limits, Env: inv.env, EgressAllow: inv.egress,
 		Request: &commonv1.HttpRequest{
 			Method: inv.method, Host: "conformance.test", Path: inv.path, RawQuery: inv.query,
 			Body: []byte(inv.body), RemoteAddr: "192.0.2.1:1234",
