@@ -12,6 +12,7 @@ package snapshot
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -31,9 +32,14 @@ type Cache struct {
 	aliveWithin time.Duration
 	log         *slog.Logger
 
-	routes  atomic.Pointer[router.Table]
-	workers atomic.Pointer[[]store.Worker]
-	poke    chan struct{}
+	// refreshing makes refreshes take turns. Without it a refresh that read the
+	// database before a write could store its answer after the writer's own
+	// refresh had stored the newer one, and the writer would be served a view
+	// that does not include its own change.
+	refreshing sync.Mutex
+	routes     atomic.Pointer[router.Table]
+	workers    atomic.Pointer[[]store.Worker]
+	poke       chan struct{}
 }
 
 // New returns an empty cache; call Refresh before serving.
@@ -46,8 +52,11 @@ func New(src Source, aliveWithin time.Duration, log *slog.Logger) *Cache {
 }
 
 // Refresh reloads routes and workers. Each is replaced only if its load
-// succeeded; the first error is returned.
+// succeeded; the first error is returned. Refreshes take turns, so a refresh
+// that starts after another finishes always has the last word.
 func (c *Cache) Refresh(ctx context.Context) error {
+	c.refreshing.Lock()
+	defer c.refreshing.Unlock()
 	var first error
 	if entries, err := c.src.LoadRouting(ctx); err != nil {
 		first = err

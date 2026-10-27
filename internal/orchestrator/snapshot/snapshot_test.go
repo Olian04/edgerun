@@ -152,3 +152,58 @@ func TestPokeRefreshesPromptlyAndCoalesces(t *testing.T) {
 		t.Errorf("100 pokes caused %d loads: they must coalesce", n)
 	}
 }
+
+// slowSource lets a test hold one load half-way, the way a slow database does.
+type slowSource struct {
+	fakeSource
+	hold chan struct{} // when non-nil, the next LoadRouting reads, then waits for it to close
+}
+
+func (s *slowSource) LoadRouting(ctx context.Context) ([]store.RouteEntry, error) {
+	rs, err := s.fakeSource.LoadRouting(ctx) // reads what the database holds now
+	s.mu.Lock()
+	hold := s.hold
+	s.hold = nil
+	s.mu.Unlock()
+	if hold != nil {
+		<-hold
+	}
+	return rs, err
+}
+
+// A refresh that began before a write must not be able to overwrite the view of
+// a refresh that began after it: the writer is promised to see its own change.
+func TestAnEarlierRefreshCannotOverwriteALaterOne(t *testing.T) {
+	src := &slowSource{fakeSource: fakeSource{routes: []store.RouteEntry{{RouteID: "r1", HostPattern: "a.com", PathPrefix: "/", FunctionName: "old"}}}}
+	c := New(src, time.Second, quiet)
+
+	// The background refresh reads the old state and is slow to finish.
+	hold := make(chan struct{})
+	src.set(func() { src.hold = hold })
+	bg := make(chan struct{})
+	go func() { c.Refresh(context.Background()); close(bg) }()
+	for { // wait until it has read
+		src.mu.Lock()
+		read, held := src.loads, src.hold == nil
+		src.mu.Unlock()
+		if read > 0 && held {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	// A write lands, and its author refreshes, as control.v1 does.
+	src.set(func() {
+		src.routes = []store.RouteEntry{{RouteID: "r2", HostPattern: "a.com", PathPrefix: "/", FunctionName: "new"}}
+	})
+	writer := make(chan struct{})
+	go func() { c.Refresh(context.Background()); close(writer) }()
+	time.Sleep(50 * time.Millisecond) // the writer's refresh is under way, or waiting its turn
+
+	close(hold) // now the slow background refresh finishes
+	<-bg
+	<-writer
+	if r := c.Route("a.com", "/"); r == nil || r.FunctionName != "new" {
+		t.Errorf("the view is %+v after both refreshes: a stale read overwrote the writer's own change", r)
+	}
+}
