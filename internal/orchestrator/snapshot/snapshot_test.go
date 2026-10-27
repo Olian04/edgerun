@@ -123,3 +123,32 @@ func TestRunRefreshesUntilCancelled(t *testing.T) {
 		t.Fatal("Run did not stop on cancel")
 	}
 }
+
+func TestPokeRefreshesPromptlyAndCoalesces(t *testing.T) {
+	src := &fakeSource{}
+	c := New(src, time.Second, quiet)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go c.Run(ctx, time.Hour) // the tick will never fire: only a poke can refresh
+
+	src.set(func() {
+		src.routes = []store.RouteEntry{{RouteID: "r", HostPattern: "a.com", PathPrefix: "/", FunctionName: "new"}}
+	})
+	for range 100 {
+		c.Poke() // must never block, however many arrive
+	}
+	deadline := time.After(5 * time.Second)
+	for c.Route("a.com", "/") == nil {
+		select {
+		case <-deadline:
+			t.Fatal("a poke did not trigger a refresh")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+	src.mu.Lock()
+	n := src.loads
+	src.mu.Unlock()
+	if n > 5 {
+		t.Errorf("100 pokes caused %d loads: they must coalesce", n)
+	}
+}

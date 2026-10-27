@@ -33,11 +33,12 @@ type Cache struct {
 
 	routes  atomic.Pointer[router.Table]
 	workers atomic.Pointer[[]store.Worker]
+	poke    chan struct{}
 }
 
 // New returns an empty cache; call Refresh before serving.
 func New(src Source, aliveWithin time.Duration, log *slog.Logger) *Cache {
-	c := &Cache{src: src, aliveWithin: aliveWithin, log: log}
+	c := &Cache{src: src, aliveWithin: aliveWithin, log: log, poke: make(chan struct{}, 1)}
 	c.routes.Store(router.New(nil))
 	empty := []store.Worker{}
 	c.workers.Store(&empty)
@@ -63,7 +64,18 @@ func (c *Cache) Refresh(ctx context.Context) error {
 	return first
 }
 
-// Run refreshes every interval until ctx is done.
+// Poke asks Run to refresh now instead of at the next tick. It never blocks,
+// and pokes that arrive while one is pending coalesce into it. Writers call it
+// so that a change made through this process is visible at once; other
+// orchestrator instances catch up within one interval.
+func (c *Cache) Poke() {
+	select {
+	case c.poke <- struct{}{}:
+	default:
+	}
+}
+
+// Run refreshes every interval, and whenever poked, until ctx is done.
 func (c *Cache) Run(ctx context.Context, every time.Duration) {
 	t := time.NewTicker(every)
 	defer t.Stop()
@@ -71,13 +83,14 @@ func (c *Cache) Run(ctx context.Context, every time.Duration) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-c.poke: // a writer in this process wants its change visible now
 		case <-t.C:
-			rctx, cancel := context.WithTimeout(ctx, every*4)
-			if err := c.Refresh(rctx); err != nil && ctx.Err() == nil {
-				c.log.Warn("snapshot refresh failed; serving the previous view", "error", err)
-			}
-			cancel()
 		}
+		rctx, cancel := context.WithTimeout(ctx, every*4)
+		if err := c.Refresh(rctx); err != nil && ctx.Err() == nil {
+			c.log.Warn("snapshot refresh failed; serving the previous view", "error", err)
+		}
+		cancel()
 	}
 }
 
