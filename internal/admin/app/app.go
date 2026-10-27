@@ -24,6 +24,7 @@ type Config struct {
 	Users           []auth.User
 	SessionKey      []byte
 	SecureCookies   bool
+	AutoRefresh     time.Duration // Read-only pages reload this often; 0 is off.
 	ShutdownTimeout time.Duration // Default 30s.
 	Log             *slog.Logger
 }
@@ -54,7 +55,7 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 	}
 	h, err := admin.Handler(admin.HandlerConfig{
 		Control: admin.NewControl(http.DefaultClient, cfg.OrchestratorURL, cfg.AdminToken),
-		Users:   cfg.Users, SessionKey: cfg.SessionKey, SecureCookies: cfg.SecureCookies, Log: cfg.Log,
+		Users:   cfg.Users, SessionKey: cfg.SessionKey, SecureCookies: cfg.SecureCookies, AutoRefresh: cfg.AutoRefresh, Log: cfg.Log,
 	})
 	if err != nil {
 		return nil, err

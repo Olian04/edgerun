@@ -44,7 +44,7 @@ func workerState_(w *controlv1.WorkerStatus) string {
 func (u *ui) workersTable(title string) webui.Table[workerRow] {
 	return webui.Table[workerRow]{
 		Title: title,
-		Desc:  "Workers register themselves and heartbeat; one that stops heartbeating is unresponsive and receives no work. Use Refresh to update.",
+		Desc:  "Workers register themselves and heartbeat; one that stops heartbeating is unresponsive and receives no work.",
 		Rows: func(ctx context.Context) ([]workerRow, error) {
 			ws, err := u.c.Workers(ctx)
 			if err != nil {

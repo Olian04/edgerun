@@ -71,7 +71,7 @@ func newRig(t *testing.T) *rig {
 		users = append(users, us...)
 	}
 	ctl := admin.NewControl(http.DefaultClient, "http://"+orch.Addr(), adminToken)
-	h, err := admin.Handler(admin.HandlerConfig{Control: ctl, Users: users, SessionKey: auth.NewSessionKey(), Log: quiet})
+	h, err := admin.Handler(admin.HandlerConfig{Control: ctl, Users: users, SessionKey: auth.NewSessionKey(), AutoRefresh: 7 * time.Second, Log: quiet})
 	if err != nil {
 		t.Fatal(err)
 	}

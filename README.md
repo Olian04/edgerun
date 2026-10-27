@@ -131,6 +131,7 @@ The orchestrator is stateless: run as many as you like against one database.
 | `--users` | `EDGERUN_ADMIN_USERS` | | `name:role:bcrypt-hash` entries separated by `;`; role is `admin` or `viewer`. Make a hash with `admin hash-password`. |
 | `--session-key` | `EDGERUN_ADMIN_SESSION_KEY` | random | base64 of 32+ bytes. Set it to keep sessions across restarts or share them between instances. |
 | `--secure-cookies` | | off | Set when served over HTTPS. |
+| `--auto-refresh` | | `10s` | The read-only pages (overview, workers, invocations) reload themselves this often, server-side via the `Refresh` header; pages with forms never do. `0` disables. |
 
 webui has no authentication of its own, so the admin binary puts its own login in front of it:
 bcrypt passwords, signed expiring session cookies, a per-IP login limiter, and a read-only role.
@@ -177,7 +178,6 @@ without a Docker daemon available, so it is **untested**; treat it as a starting
   times over. That is the price of reliably stopping a spinning guest.
 - The orchestrator proxies every response, so it is on the data path. It is stateless and scales
   horizontally; a lease-based direct path would be `ingress.v2`.
-- The admin UI has no live refresh (webui polls, and we use a Refresh button).
 - Only the worker has a conformance suite; the orchestrator and frontend are covered by the
   end-to-end tests but not yet by a suite a foreign implementation could run.
 

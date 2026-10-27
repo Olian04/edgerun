@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/Olian04/edgerun/internal/admin/app"
 	"github.com/Olian04/edgerun/internal/admin/auth"
@@ -41,6 +42,7 @@ func main() {
 	flag.StringVar(&users, "users", env("EDGERUN_ADMIN_USERS", ""), "operators: name:role:bcrypt-hash entries separated by ';' (role is admin or viewer)")
 	flag.StringVar(&key, "session-key", env("EDGERUN_ADMIN_SESSION_KEY", ""), "base64 of 32+ random bytes that sign sessions; random per start if unset")
 	flag.BoolVar(&cfg.SecureCookies, "secure-cookies", false, "mark the session cookie Secure (set when served over HTTPS)")
+	flag.DurationVar(&cfg.AutoRefresh, "auto-refresh", 10*time.Second, "reload the read-only pages (overview, workers, invocations) this often; 0 disables")
 	flag.Parse()
 	cfg.Log = slog.New(slog.NewJSONHandler(os.Stderr, nil))
 

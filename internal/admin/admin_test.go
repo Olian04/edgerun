@@ -383,3 +383,36 @@ func TestFleetAndInvocationsAreVisible(t *testing.T) {
 		t.Error("the function's invocations tab should list its records")
 	}
 }
+
+// Views reload themselves; anything with a form on it must not, because a
+// reload would throw away what someone is typing.
+func TestOnlyReadOnlyPagesReloadThemselves(t *testing.T) {
+	r := newRig(t)
+	fn, _ := r.ctl.CreateFunction(ctx, "reloads")
+	b := r.browser()
+	b.signIn("alice", "alice-pw")
+
+	for _, path := range []string{"/admin/", "/admin/worker", "/admin/invocation"} {
+		if got := b.get(path).header.Get("Refresh"); got != "7" {
+			t.Errorf("%s: Refresh = %q, want 7", path, got)
+		}
+	}
+	for _, path := range []string{
+		"/admin/function", "/admin/function/new", "/admin/function/" + fn.Id,
+		"/admin/function/" + fn.Id + "/deploy", "/admin/route", "/admin/route/new", "/admin/missing",
+	} {
+		if got := b.get(path).header.Get("Refresh"); got != "" {
+			t.Errorf("%s reloads itself (Refresh = %q) and would discard what is being typed", path, got)
+		}
+	}
+	// A page that did not render (here: signed out, so redirected) is not reloaded.
+	anon := r.browser()
+	resp, err := anon.noRedirect().Get(r.site.URL + "/admin/worker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.Header.Get("Refresh") != "" {
+		t.Error("a redirect to sign-in must not carry Refresh")
+	}
+}
