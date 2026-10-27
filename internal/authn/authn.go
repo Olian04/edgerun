@@ -28,6 +28,9 @@ func (v Verifier) scopeOf(h http.Header) (string, bool) {
 		return "", false
 	}
 	presented := []byte(auth[len(bearer):])
+	if len(presented) == 0 {
+		return "", false // never let an empty credential match an empty token
+	}
 	var scope string
 	var found bool
 	for token, s := range v {
