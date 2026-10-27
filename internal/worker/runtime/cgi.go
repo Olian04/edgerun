@@ -9,21 +9,14 @@ import (
 	"strings"
 
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
+	"github.com/Olian04/edgerun/internal/wagi"
 )
 
 // ABI is the guest ABI this package implements. See docs/protocol.md.
-const ABI = "wagi-1"
+const ABI = wagi.ABI
 
 // KV is one environment variable.
 type KV struct{ Name, Value string }
-
-// reserved are the CGI variables the worker sets itself; user variables may
-// not shadow them.
-var reserved = map[string]bool{
-	"GATEWAY_INTERFACE": true, "SERVER_PROTOCOL": true, "REQUEST_METHOD": true,
-	"SERVER_NAME": true, "PATH_INFO": true, "QUERY_STRING": true,
-	"REMOTE_ADDR": true, "CONTENT_LENGTH": true, "CONTENT_TYPE": true,
-}
 
 // Env builds the guest environment: CGI variables first, then user variables.
 // It rejects user variables that would shadow a CGI variable or corrupt the
@@ -68,10 +61,10 @@ func Env(req *commonv1.HttpRequest, user []*commonv1.EnvVar) ([]KV, error) {
 	}
 
 	for _, u := range user {
-		if !validEnvName(u.GetName()) {
+		if !wagi.ValidEnvName(u.GetName()) {
 			return nil, fmt.Errorf("invalid environment variable name %q", u.GetName())
 		}
-		if reserved[u.GetName()] || strings.HasPrefix(u.GetName(), "HTTP_") {
+		if wagi.ReservedEnvName(u.GetName()) {
 			return nil, fmt.Errorf("environment variable %q collides with a reserved CGI variable", u.GetName())
 		}
 		if strings.ContainsRune(u.GetValue(), 0) {
@@ -80,20 +73,6 @@ func Env(req *commonv1.HttpRequest, user []*commonv1.EnvVar) ([]KV, error) {
 		env = append(env, KV{u.GetName(), u.GetValue()})
 	}
 	return env, nil
-}
-
-func validEnvName(s string) bool {
-	if s == "" {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		ok := c == '_' || c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || i > 0 && c >= '0' && c <= '9'
-		if !ok {
-			return false
-		}
-	}
-	return true
 }
 
 // ParseResponse parses a guest's stdout: header lines, a blank line, the body.
