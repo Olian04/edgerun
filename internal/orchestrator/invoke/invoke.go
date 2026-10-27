@@ -289,8 +289,10 @@ func (s *Service) translate(ctx context.Context, err error) error {
 		return errs.New(info.GetReason(), "%s", info.GetMessage())
 	}
 	// Our own deadline can expire before the worker's typed error arrives
-	// (docs/protocol.md): that is still DEADLINE_EXCEEDED.
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+	// (docs/protocol.md), and the worker's deadline can fire before our timer
+	// does: a deadline error from either side means the budget is spent, and
+	// that is DEADLINE_EXCEEDED whoever noticed first.
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) || connect.CodeOf(err) == connect.CodeDeadlineExceeded {
 		return errs.New(commonv1.ErrorReason_ERROR_REASON_DEADLINE_EXCEEDED, "deadline exceeded")
 	}
 	if errors.Is(err, context.Canceled) || connect.CodeOf(err) == connect.CodeCanceled {

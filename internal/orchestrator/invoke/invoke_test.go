@@ -555,6 +555,22 @@ func TestOurOwnDeadlineIsDeadlineExceeded(t *testing.T) {
 	}
 }
 
+func TestWorkersBareDeadlineErrorIsDeadlineExceededEvenBeforeOurTimer(t *testing.T) {
+	// Deterministic version of a race seen under load: the worker's deadline
+	// error (no ErrorInfo) can arrive before this process's own timer has
+	// fired. The orchestrator's context is nowhere near expiry here.
+	bare := func(context.Context, *workerv1.ExecuteRequest, *connect.ServerStream[workerv1.ExecuteResponse]) error {
+		return connect.NewError(connect.CodeDeadlineExceeded, errors.New("context deadline exceeded"))
+	}
+	ep, fw := startWorker(t, bare, execToken)
+	e := newEnv(t, []store.RouteEntry{route("sha256:" + strings.Repeat("a", 64))}, []store.Worker{worker(ep)}, nil)
+	res := e.invoke("a.com", "/", "", 0)
+	wantReason(t, res.err, commonv1.ErrorReason_ERROR_REASON_DEADLINE_EXCEEDED)
+	if fw.callCount() != 1 {
+		t.Errorf("a deadline error must not be retried: %d calls", fw.callCount())
+	}
+}
+
 func TestDefaultTimeoutWhenNoDeadlineIsSent(t *testing.T) {
 	hang := func(ctx context.Context, _ *workerv1.ExecuteRequest, _ *connect.ServerStream[workerv1.ExecuteResponse]) error {
 		<-ctx.Done()
