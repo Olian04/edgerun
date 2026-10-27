@@ -170,7 +170,7 @@ func (s *Service) Invoke(ctx context.Context, req *connect.Request[ingressv1.Inv
 
 	exec := &workerv1.ExecuteRequest{
 		InvocationId: rec.Id, ArtifactDigest: route.Version.Digest, Abi: route.Version.ABI,
-		Limits: route.Version.Limits, Env: route.Env, Request: r,
+		Limits: route.Version.Limits, Env: route.Env, Request: r, EgressAllow: route.Egress,
 	}
 	headSent := false
 	var lastErr error

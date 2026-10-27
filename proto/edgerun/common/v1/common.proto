@@ -95,6 +95,12 @@ enum ErrorReason {
   ERROR_REASON_ARTIFACT_NOT_FOUND = 8;
   // Anything else; the message is for operators, not for end users.
   ERROR_REASON_INTERNAL = 9;
+  // Egress: the destination is not on the caller's allow list, or is one the
+  // network service never reaches.
+  ERROR_REASON_EGRESS_DENIED = 10;
+  // Egress: the destination was allowed but could not be reached, or the
+  // exchange broke part-way.
+  ERROR_REASON_EGRESS_FAILED = 11;
 }
 
 // ErrorInfo is attached to every non-OK Connect error as a detail.

@@ -50,21 +50,29 @@ const (
 	ErrorReason_ERROR_REASON_ARTIFACT_NOT_FOUND ErrorReason = 8
 	// Anything else; the message is for operators, not for end users.
 	ErrorReason_ERROR_REASON_INTERNAL ErrorReason = 9
+	// Egress: the destination is not on the caller's allow list, or is one the
+	// network service never reaches.
+	ErrorReason_ERROR_REASON_EGRESS_DENIED ErrorReason = 10
+	// Egress: the destination was allowed but could not be reached, or the
+	// exchange broke part-way.
+	ErrorReason_ERROR_REASON_EGRESS_FAILED ErrorReason = 11
 )
 
 // Enum value maps for ErrorReason.
 var (
 	ErrorReason_name = map[int32]string{
-		0: "ERROR_REASON_UNSPECIFIED",
-		1: "ERROR_REASON_FUNCTION_NOT_FOUND",
-		2: "ERROR_REASON_NO_CAPACITY",
-		3: "ERROR_REASON_DEADLINE_EXCEEDED",
-		4: "ERROR_REASON_FUNCTION_TRAPPED",
-		5: "ERROR_REASON_ABI_MISMATCH",
-		6: "ERROR_REASON_REQUEST_TOO_LARGE",
-		7: "ERROR_REASON_RESPONSE_TOO_LARGE",
-		8: "ERROR_REASON_ARTIFACT_NOT_FOUND",
-		9: "ERROR_REASON_INTERNAL",
+		0:  "ERROR_REASON_UNSPECIFIED",
+		1:  "ERROR_REASON_FUNCTION_NOT_FOUND",
+		2:  "ERROR_REASON_NO_CAPACITY",
+		3:  "ERROR_REASON_DEADLINE_EXCEEDED",
+		4:  "ERROR_REASON_FUNCTION_TRAPPED",
+		5:  "ERROR_REASON_ABI_MISMATCH",
+		6:  "ERROR_REASON_REQUEST_TOO_LARGE",
+		7:  "ERROR_REASON_RESPONSE_TOO_LARGE",
+		8:  "ERROR_REASON_ARTIFACT_NOT_FOUND",
+		9:  "ERROR_REASON_INTERNAL",
+		10: "ERROR_REASON_EGRESS_DENIED",
+		11: "ERROR_REASON_EGRESS_FAILED",
 	}
 	ErrorReason_value = map[string]int32{
 		"ERROR_REASON_UNSPECIFIED":        0,
@@ -77,6 +85,8 @@ var (
 		"ERROR_REASON_RESPONSE_TOO_LARGE": 7,
 		"ERROR_REASON_ARTIFACT_NOT_FOUND": 8,
 		"ERROR_REASON_INTERNAL":           9,
+		"ERROR_REASON_EGRESS_DENIED":      10,
+		"ERROR_REASON_EGRESS_FAILED":      11,
 	}
 )
 
@@ -584,7 +594,7 @@ const file_edgerun_common_v1_common_proto_rawDesc = "" +
 	"\x12max_response_bytes\x18\x02 \x01(\x04R\x10maxResponseBytes\"]\n" +
 	"\tErrorInfo\x126\n" +
 	"\x06reason\x18\x01 \x01(\x0e2\x1e.edgerun.common.v1.ErrorReasonR\x06reason\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage*\xdd\x02\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage*\x9d\x03\n" +
 	"\vErrorReason\x12\x1c\n" +
 	"\x18ERROR_REASON_UNSPECIFIED\x10\x00\x12#\n" +
 	"\x1fERROR_REASON_FUNCTION_NOT_FOUND\x10\x01\x12\x1c\n" +
@@ -595,7 +605,10 @@ const file_edgerun_common_v1_common_proto_rawDesc = "" +
 	"\x1eERROR_REASON_REQUEST_TOO_LARGE\x10\x06\x12#\n" +
 	"\x1fERROR_REASON_RESPONSE_TOO_LARGE\x10\a\x12#\n" +
 	"\x1fERROR_REASON_ARTIFACT_NOT_FOUND\x10\b\x12\x19\n" +
-	"\x15ERROR_REASON_INTERNAL\x10\tB\xc5\x01\n" +
+	"\x15ERROR_REASON_INTERNAL\x10\t\x12\x1e\n" +
+	"\x1aERROR_REASON_EGRESS_DENIED\x10\n" +
+	"\x12\x1e\n" +
+	"\x1aERROR_REASON_EGRESS_FAILED\x10\vB\xc5\x01\n" +
 	"\x15com.edgerun.common.v1B\vCommonProtoP\x01Z9github.com/Olian04/edgerun/gen/edgerun/common/v1;commonv1\xa2\x02\x03ECX\xaa\x02\x11Edgerun.Common.V1\xca\x02\x11Edgerun\\Common\\V1\xe2\x02\x1dEdgerun\\Common\\V1\\GPBMetadata\xea\x02\x13Edgerun::Common::V1b\x06proto3"
 
 var (

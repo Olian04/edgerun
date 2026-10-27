@@ -15,6 +15,7 @@ import (
 	"github.com/tetratelabs/wazero/sys"
 
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
+	"github.com/Olian04/edgerun/internal/wagi"
 )
 
 const (
@@ -44,6 +45,9 @@ type Config struct {
 	CompiledModules int
 	// CompilationCacheDir persists compiled code across restarts if set.
 	CompilationCacheDir string
+	// Network makes guests' outbound requests. Without one the engine offers
+	// wagi-1 only; with one it offers wagi-2 as well.
+	Network Network
 }
 
 func (c *Config) setDefaults() {
@@ -87,6 +91,12 @@ type Invocation struct {
 	Request *commonv1.HttpRequest
 	Env     []*commonv1.EnvVar
 	Limits  *commonv1.Limits
+	// ABI the module was built for; empty means wagi-1.
+	ABI string
+	// EgressAllow is the network destinations the function may reach. Empty
+	// means none.
+	EgressAllow  []string
+	InvocationID string
 }
 
 // Result is the outcome of a completed invocation. The function answering with
@@ -126,6 +136,14 @@ func New(cfg Config) (*Engine, error) {
 		cache = wazero.NewCompilationCache()
 	}
 	return &Engine{cfg: cfg, cache: cache, buckets: map[uint64]*bucket{}}, nil
+}
+
+// ABIs lists the guest ABIs this engine can run.
+func (e *Engine) ABIs() []string {
+	if e.cfg.Network != nil {
+		return []string{ABI, ABI2}
+	}
+	return []string{ABI}
 }
 
 // Close releases all runtimes and cached code.
@@ -177,6 +195,12 @@ func (e *Engine) bucket(ctx context.Context, size uint64) (*bucket, error) {
 		_ = rt.Close(ctx)
 		return nil, fail(commonv1.ErrorReason_ERROR_REASON_INTERNAL, "instantiating WASI: %v", err)
 	}
+	if e.cfg.Network != nil {
+		if err := instantiateHTTP(ctx, rt); err != nil {
+			_ = rt.Close(ctx)
+			return nil, fail(commonv1.ErrorReason_ERROR_REASON_INTERNAL, "instantiating %s: %v", wagi.HTTPModule, err)
+		}
+	}
 	b := &bucket{rt: rt, limit: e.cfg.CompiledModules, mods: map[string]*modEntry{}, lru: list.New()}
 	e.buckets[size] = b
 	return b, nil
@@ -209,9 +233,23 @@ func (e *Engine) Run(ctx context.Context, inv Invocation) (*Result, error) {
 	if cerr := ctx.Err(); cerr != nil {
 		return nil, ctxFailure(cerr)
 	}
+	abi := inv.ABI
+	if abi == "" {
+		abi = ABI
+	}
+	// The module is checked against the ABI it was deployed as, here and not
+	// when it is compiled: the same bytes may be deployed as either.
+	if err := checkImports(cm, abi, e.cfg.Network != nil); err != nil {
+		return nil, err
+	}
 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	if abi == ABI2 {
+		runCtx = context.WithValue(runCtx, netKey{}, &netState{
+			net: e.cfg.Network, allow: inv.EgressAllow, id: inv.InvocationID, maxResp: maxOut,
+		})
+	}
 	stdout := &cappedBuffer{max: maxOut, onOverflow: cancel}
 	stderr := &tailBuffer{max: e.cfg.StderrTailBytes}
 	// wazero's defaults are deterministic stubs: a fixed random source, fake
@@ -254,7 +292,7 @@ func (e *Engine) Run(ctx context.Context, inv Invocation) (*Result, error) {
 
 	head, body, perr := ParseResponse(stdout.Bytes())
 	if perr != nil {
-		return nil, fail(commonv1.ErrorReason_ERROR_REASON_ABI_MISMATCH, "malformed %s response: %v", ABI, perr)
+		return nil, fail(commonv1.ErrorReason_ERROR_REASON_ABI_MISMATCH, "malformed %s response: %v", abi, perr)
 	}
 	return &Result{
 		Head: head, Body: body,
@@ -381,29 +419,39 @@ func (b *bucket) evictLocked() {
 	}
 }
 
-// compile compiles and validates a module against the wagi-1 ABI: a WASI
-// preview-1 command that imports nothing but WASI.
+// compile compiles a module and checks that it is a WASI command. Which
+// imports it may have depends on the ABI it is run as, and is checked then.
 func (b *bucket) compile(ctx context.Context, wasm []byte) (wazero.CompiledModule, error) {
 	cm, err := b.rt.CompileModule(ctx, wasm)
 	if err != nil {
 		return nil, fail(commonv1.ErrorReason_ERROR_REASON_ABI_MISMATCH, "invalid module: %v", err)
 	}
-	if err := validateABI(cm); err != nil {
+	if _, ok := cm.ExportedFunctions()["_start"]; !ok {
 		_ = cm.Close(ctx)
-		return nil, err
+		return nil, fail(commonv1.ErrorReason_ERROR_REASON_ABI_MISMATCH,
+			"module exports no _start: not a WASI command")
 	}
 	return cm, nil
 }
 
-func validateABI(cm wazero.CompiledModule) error {
-	if _, ok := cm.ExportedFunctions()["_start"]; !ok {
-		return fail(commonv1.ErrorReason_ERROR_REASON_ABI_MISMATCH,
-			"module exports no _start: not a WASI command (%s)", ABI)
+// checkImports checks a module against the ABI it is run as: wagi-1 imports
+// nothing but WASI, and wagi-2 may also import the edgerun_http host module.
+func checkImports(cm wazero.CompiledModule, abi string, haveNetwork bool) error {
+	allowed := map[string]bool{wasi_snapshot_preview1.ModuleName: true}
+	switch abi {
+	case ABI:
+	case ABI2:
+		if !haveNetwork {
+			return fail(commonv1.ErrorReason_ERROR_REASON_ABI_MISMATCH, "this worker has no network service, so it cannot run %s", ABI2)
+		}
+		allowed[wagi.HTTPModule] = true
+	default:
+		return fail(commonv1.ErrorReason_ERROR_REASON_ABI_MISMATCH, "unknown ABI %q", abi)
 	}
 	for _, f := range cm.ImportedFunctions() {
-		if mod, name, _ := f.Import(); mod != wasi_snapshot_preview1.ModuleName {
+		if mod, name, _ := f.Import(); !allowed[mod] {
 			return fail(commonv1.ErrorReason_ERROR_REASON_ABI_MISMATCH,
-				"module imports %s.%s; %s allows only %s", mod, name, ABI, wasi_snapshot_preview1.ModuleName)
+				"module imports %s.%s, which %s does not provide", mod, name, abi)
 		}
 	}
 	return nil

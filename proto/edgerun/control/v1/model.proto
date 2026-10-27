@@ -14,6 +14,10 @@ message Function {
   // Version that serves traffic. Empty until the first activation.
   string active_version_id = 3;
   google.protobuf.Timestamp create_time = 4;
+  // The destinations the function may reach over the network, in canonical
+  // form (see SetEgress). Empty: the function has no network. Closed by
+  // default, and only the operator opens it.
+  repeated string egress_allow = 5;
 }
 
 // FunctionVersion is immutable once created. Rolling back is activating an

@@ -24,6 +24,8 @@ type RouteEntry struct {
 	FunctionName string
 	// Version is nil when the function has no active version.
 	Version *VersionRef
+	// Egress is the function's network allow list; empty means no network.
+	Egress []string
 	// Env holds decrypted values: only the orchestrator ever sees them.
 	Env []*commonv1.EnvVar
 	// EnvErr is set if a secret could not be opened. Only this function is
@@ -46,7 +48,7 @@ func (s *Store) LoadRouting(ctx context.Context) ([]RouteEntry, error) {
 
 	rows, err := tx.Query(ctx, `SELECT r.id::text, r.host_pattern, r.path_prefix, f.id::text, f.name,
 			coalesce(v.id::text, ''), coalesce(v.artifact_digest, ''), coalesce(v.abi, ''),
-			coalesce(v.memory_limit_bytes, 0), coalesce(v.max_response_bytes, 0)
+			coalesce(v.memory_limit_bytes, 0), coalesce(v.max_response_bytes, 0), f.egress_allow
 		FROM routes r
 		JOIN functions f ON f.id = r.function_id
 		LEFT JOIN function_versions v ON v.id = f.active_version_id
@@ -60,7 +62,7 @@ func (s *Store) LoadRouting(ctx context.Context) ([]RouteEntry, error) {
 		var e RouteEntry
 		var vid, digest, abi string
 		var mem, resp int64
-		if err := rows.Scan(&e.RouteID, &e.HostPattern, &e.PathPrefix, &e.FunctionID, &e.FunctionName, &vid, &digest, &abi, &mem, &resp); err != nil {
+		if err := rows.Scan(&e.RouteID, &e.HostPattern, &e.PathPrefix, &e.FunctionID, &e.FunctionName, &vid, &digest, &abi, &mem, &resp, &e.Egress); err != nil {
 			rows.Close()
 			return nil, err
 		}

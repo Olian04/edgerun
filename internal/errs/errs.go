@@ -23,6 +23,8 @@ var codes = map[commonv1.ErrorReason]connect.Code{
 	commonv1.ErrorReason_ERROR_REASON_RESPONSE_TOO_LARGE: connect.CodeResourceExhausted,
 	commonv1.ErrorReason_ERROR_REASON_ARTIFACT_NOT_FOUND: connect.CodeNotFound,
 	commonv1.ErrorReason_ERROR_REASON_INTERNAL:           connect.CodeInternal,
+	commonv1.ErrorReason_ERROR_REASON_EGRESS_DENIED:      connect.CodePermissionDenied,
+	commonv1.ErrorReason_ERROR_REASON_EGRESS_FAILED:      connect.CodeUnavailable,
 }
 
 // Code returns the canonical Connect code for a reason.

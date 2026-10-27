@@ -19,6 +19,7 @@ import (
 	"github.com/Olian04/edgerun/gen/edgerun/worker/v1/workerv1connect"
 	"github.com/Olian04/edgerun/internal/authn"
 	"github.com/Olian04/edgerun/internal/worker/cache"
+	"github.com/Olian04/edgerun/internal/worker/egressclient"
 	"github.com/Olian04/edgerun/internal/worker/fleetclient"
 	"github.com/Olian04/edgerun/internal/worker/runtime"
 	"github.com/Olian04/edgerun/internal/worker/server"
@@ -39,6 +40,10 @@ type Config struct {
 	WorkerToken string
 	// ExecutionToken is required of the orchestrator on ExecutionService.
 	ExecutionToken string
+	// EgressURL is the network service guests' outbound requests go through,
+	// and EgressToken the credential presented to it. With none, guests have
+	// no network and the worker offers wagi-1 only.
+	EgressURL, EgressToken string
 
 	MaxConcurrency uint32
 	Labels         map[string]string
@@ -81,6 +86,9 @@ func (c *Config) validate() error {
 		return fmt.Errorf("orchestrator URL: %w", err)
 	}
 	// An empty token would match an empty credential; refuse it outright.
+	if c.EgressURL != "" && c.EgressToken == "" {
+		return errors.New("the egress token is required when an egress URL is set")
+	}
 	if c.WorkerToken == "" || c.ExecutionToken == "" {
 		return errors.New("both the worker token and the execution token are required")
 	}
@@ -111,7 +119,11 @@ func Run(ctx context.Context, cfg Config) error {
 		advertise = "http://" + addr.String()
 	}
 
-	engine, err := runtime.New(cfg.Runtime)
+	rtCfg := cfg.Runtime
+	if cfg.EgressURL != "" {
+		rtCfg.Network = egressclient.New(&http.Client{}, cfg.EgressURL, cfg.EgressToken)
+	}
+	engine, err := runtime.New(rtCfg)
 	if err != nil {
 		ln.Close()
 		return err
@@ -125,7 +137,7 @@ func Run(ctx context.Context, cfg Config) error {
 
 	info := &workerv1.WorkerInfo{
 		Implementation: implementation(cfg.Version),
-		Abis:           []string{runtime.ABI},
+		Abis:           engine.ABIs(),
 		MaxConcurrency: cfg.MaxConcurrency,
 		Labels:         cfg.Labels,
 	}

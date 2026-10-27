@@ -40,6 +40,11 @@ message ExecuteRequest {
   edgerun.common.v1.Limits limits = 4;
   repeated edgerun.common.v1.EnvVar env = 5;
   edgerun.common.v1.HttpRequest request = 6;
+  // The destinations the function may reach over the network, as host
+  // patterns (see the protocol docs). Empty means none: guests are closed off
+  // by default. A worker passes this list on with every outbound request the
+  // guest makes, and makes none if it is empty.
+  repeated string egress_allow = 7;
 }
 
 message ExecuteResponse {

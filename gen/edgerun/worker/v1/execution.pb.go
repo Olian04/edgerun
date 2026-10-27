@@ -113,10 +113,15 @@ type ExecuteRequest struct {
 	ArtifactDigest string `protobuf:"bytes,2,opt,name=artifact_digest,json=artifactDigest,proto3" json:"artifact_digest,omitempty"`
 	// ABI the module was built for. A worker that does not support it answers
 	// ERROR_REASON_ABI_MISMATCH.
-	Abi           string          `protobuf:"bytes,3,opt,name=abi,proto3" json:"abi,omitempty"`
-	Limits        *v1.Limits      `protobuf:"bytes,4,opt,name=limits,proto3" json:"limits,omitempty"`
-	Env           []*v1.EnvVar    `protobuf:"bytes,5,rep,name=env,proto3" json:"env,omitempty"`
-	Request       *v1.HttpRequest `protobuf:"bytes,6,opt,name=request,proto3" json:"request,omitempty"`
+	Abi     string          `protobuf:"bytes,3,opt,name=abi,proto3" json:"abi,omitempty"`
+	Limits  *v1.Limits      `protobuf:"bytes,4,opt,name=limits,proto3" json:"limits,omitempty"`
+	Env     []*v1.EnvVar    `protobuf:"bytes,5,rep,name=env,proto3" json:"env,omitempty"`
+	Request *v1.HttpRequest `protobuf:"bytes,6,opt,name=request,proto3" json:"request,omitempty"`
+	// The destinations the function may reach over the network, as host
+	// patterns (see the protocol docs). Empty means none: guests are closed off
+	// by default. A worker passes this list on with every outbound request the
+	// guest makes, and makes none if it is empty.
+	EgressAllow   []string `protobuf:"bytes,7,rep,name=egress_allow,json=egressAllow,proto3" json:"egress_allow,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -189,6 +194,13 @@ func (x *ExecuteRequest) GetEnv() []*v1.EnvVar {
 func (x *ExecuteRequest) GetRequest() *v1.HttpRequest {
 	if x != nil {
 		return x.Request
+	}
+	return nil
+}
+
+func (x *ExecuteRequest) GetEgressAllow() []string {
+	if x != nil {
+		return x.EgressAllow
 	}
 	return nil
 }
@@ -369,14 +381,15 @@ const file_edgerun_worker_v1_execution_proto_rawDesc = "" +
 	"!edgerun/worker/v1/execution.proto\x12\x11edgerun.worker.v1\x1a\x1eedgerun/common/v1/common.proto\x1a\x1eedgerun/worker/v1/worker.proto\"\x11\n" +
 	"\x0fDescribeRequest\"E\n" +
 	"\x10DescribeResponse\x121\n" +
-	"\x04info\x18\x01 \x01(\v2\x1d.edgerun.worker.v1.WorkerInfoR\x04info\"\x8a\x02\n" +
+	"\x04info\x18\x01 \x01(\v2\x1d.edgerun.worker.v1.WorkerInfoR\x04info\"\xad\x02\n" +
 	"\x0eExecuteRequest\x12#\n" +
 	"\rinvocation_id\x18\x01 \x01(\tR\finvocationId\x12'\n" +
 	"\x0fartifact_digest\x18\x02 \x01(\tR\x0eartifactDigest\x12\x10\n" +
 	"\x03abi\x18\x03 \x01(\tR\x03abi\x121\n" +
 	"\x06limits\x18\x04 \x01(\v2\x19.edgerun.common.v1.LimitsR\x06limits\x12+\n" +
 	"\x03env\x18\x05 \x03(\v2\x19.edgerun.common.v1.EnvVarR\x03env\x128\n" +
-	"\arequest\x18\x06 \x01(\v2\x1e.edgerun.common.v1.HttpRequestR\arequest\"\xad\x01\n" +
+	"\arequest\x18\x06 \x01(\v2\x1e.edgerun.common.v1.HttpRequestR\arequest\x12!\n" +
+	"\fegress_allow\x18\a \x03(\tR\vegressAllow\"\xad\x01\n" +
 	"\x0fExecuteResponse\x129\n" +
 	"\x04head\x18\x01 \x01(\v2#.edgerun.common.v1.HttpResponseHeadH\x00R\x04head\x12\x16\n" +
 	"\x05chunk\x18\x02 \x01(\fH\x00R\x05chunk\x12?\n" +

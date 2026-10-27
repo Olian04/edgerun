@@ -165,6 +165,15 @@ func (f functions) DeleteEnv(ctx context.Context, r *connect.Request[controlv1.D
 	return connect.NewResponse(&controlv1.DeleteEnvResponse{}), nil
 }
 
+func (f functions) SetEgress(ctx context.Context, r *connect.Request[controlv1.SetEgressRequest]) (*connect.Response[controlv1.SetEgressResponse], error) {
+	fn, err := f.s.cfg.Store.SetEgress(ctx, r.Msg.GetFunctionId(), r.Msg.GetAllow())
+	if err != nil {
+		return nil, f.s.fail(err)
+	}
+	f.s.cfg.Refresh(ctx)
+	return connect.NewResponse(&controlv1.SetEgressResponse{Function: fn}), nil
+}
+
 func (f functions) ListEnv(ctx context.Context, r *connect.Request[controlv1.ListEnvRequest]) (*connect.Response[controlv1.ListEnvResponse], error) {
 	es, err := f.s.cfg.Store.ListEnv(ctx, r.Msg.GetFunctionId())
 	if err != nil {

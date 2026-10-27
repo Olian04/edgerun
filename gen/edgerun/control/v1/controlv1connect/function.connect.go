@@ -64,6 +64,9 @@ const (
 	FunctionServiceDeleteEnvProcedure = "/edgerun.control.v1.FunctionService/DeleteEnv"
 	// FunctionServiceListEnvProcedure is the fully-qualified name of the FunctionService's ListEnv RPC.
 	FunctionServiceListEnvProcedure = "/edgerun.control.v1.FunctionService/ListEnv"
+	// FunctionServiceSetEgressProcedure is the fully-qualified name of the FunctionService's SetEgress
+	// RPC.
+	FunctionServiceSetEgressProcedure = "/edgerun.control.v1.FunctionService/SetEgress"
 )
 
 // FunctionServiceClient is a client for the edgerun.control.v1.FunctionService service.
@@ -85,6 +88,14 @@ type FunctionServiceClient interface {
 	SetEnv(context.Context, *connect.Request[v1.SetEnvRequest]) (*connect.Response[v1.SetEnvResponse], error)
 	DeleteEnv(context.Context, *connect.Request[v1.DeleteEnvRequest]) (*connect.Response[v1.DeleteEnvResponse], error)
 	ListEnv(context.Context, *connect.Request[v1.ListEnvRequest]) (*connect.Response[v1.ListEnvResponse], error)
+	// SetEgress replaces the function's network allow list. Each entry is a host
+	// pattern: "example.com", "example.com:8443", "*.example.com" or an IP
+	// literal, optionally with a port. Without a port only the scheme's default
+	// (80 for http, 443 for https) matches. Entries are lower-cased, deduplicated
+	// and sorted; a malformed entry, a bare "*" and more than 64 entries are
+	// invalid_argument. An empty list closes the function off again. Whatever is
+	// listed here, the network service may still refuse a destination.
+	SetEgress(context.Context, *connect.Request[v1.SetEgressRequest]) (*connect.Response[v1.SetEgressResponse], error)
 }
 
 // NewFunctionServiceClient constructs a client for the edgerun.control.v1.FunctionService service.
@@ -158,6 +169,12 @@ func NewFunctionServiceClient(httpClient connect.HTTPClient, baseURL string, opt
 			connect.WithSchema(functionServiceMethods.ByName("ListEnv")),
 			connect.WithClientOptions(opts...),
 		),
+		setEgress: connect.NewClient[v1.SetEgressRequest, v1.SetEgressResponse](
+			httpClient,
+			baseURL+FunctionServiceSetEgressProcedure,
+			connect.WithSchema(functionServiceMethods.ByName("SetEgress")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -173,6 +190,7 @@ type functionServiceClient struct {
 	setEnv          *connect.Client[v1.SetEnvRequest, v1.SetEnvResponse]
 	deleteEnv       *connect.Client[v1.DeleteEnvRequest, v1.DeleteEnvResponse]
 	listEnv         *connect.Client[v1.ListEnvRequest, v1.ListEnvResponse]
+	setEgress       *connect.Client[v1.SetEgressRequest, v1.SetEgressResponse]
 }
 
 // CreateFunction calls edgerun.control.v1.FunctionService.CreateFunction.
@@ -225,6 +243,11 @@ func (c *functionServiceClient) ListEnv(ctx context.Context, req *connect.Reques
 	return c.listEnv.CallUnary(ctx, req)
 }
 
+// SetEgress calls edgerun.control.v1.FunctionService.SetEgress.
+func (c *functionServiceClient) SetEgress(ctx context.Context, req *connect.Request[v1.SetEgressRequest]) (*connect.Response[v1.SetEgressResponse], error) {
+	return c.setEgress.CallUnary(ctx, req)
+}
+
 // FunctionServiceHandler is an implementation of the edgerun.control.v1.FunctionService service.
 type FunctionServiceHandler interface {
 	CreateFunction(context.Context, *connect.Request[v1.CreateFunctionRequest]) (*connect.Response[v1.CreateFunctionResponse], error)
@@ -244,6 +267,14 @@ type FunctionServiceHandler interface {
 	SetEnv(context.Context, *connect.Request[v1.SetEnvRequest]) (*connect.Response[v1.SetEnvResponse], error)
 	DeleteEnv(context.Context, *connect.Request[v1.DeleteEnvRequest]) (*connect.Response[v1.DeleteEnvResponse], error)
 	ListEnv(context.Context, *connect.Request[v1.ListEnvRequest]) (*connect.Response[v1.ListEnvResponse], error)
+	// SetEgress replaces the function's network allow list. Each entry is a host
+	// pattern: "example.com", "example.com:8443", "*.example.com" or an IP
+	// literal, optionally with a port. Without a port only the scheme's default
+	// (80 for http, 443 for https) matches. Entries are lower-cased, deduplicated
+	// and sorted; a malformed entry, a bare "*" and more than 64 entries are
+	// invalid_argument. An empty list closes the function off again. Whatever is
+	// listed here, the network service may still refuse a destination.
+	SetEgress(context.Context, *connect.Request[v1.SetEgressRequest]) (*connect.Response[v1.SetEgressResponse], error)
 }
 
 // NewFunctionServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -313,6 +344,12 @@ func NewFunctionServiceHandler(svc FunctionServiceHandler, opts ...connect.Handl
 		connect.WithSchema(functionServiceMethods.ByName("ListEnv")),
 		connect.WithHandlerOptions(opts...),
 	)
+	functionServiceSetEgressHandler := connect.NewUnaryHandler(
+		FunctionServiceSetEgressProcedure,
+		svc.SetEgress,
+		connect.WithSchema(functionServiceMethods.ByName("SetEgress")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/edgerun.control.v1.FunctionService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case FunctionServiceCreateFunctionProcedure:
@@ -335,6 +372,8 @@ func NewFunctionServiceHandler(svc FunctionServiceHandler, opts ...connect.Handl
 			functionServiceDeleteEnvHandler.ServeHTTP(w, r)
 		case FunctionServiceListEnvProcedure:
 			functionServiceListEnvHandler.ServeHTTP(w, r)
+		case FunctionServiceSetEgressProcedure:
+			functionServiceSetEgressHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -382,4 +421,8 @@ func (UnimplementedFunctionServiceHandler) DeleteEnv(context.Context, *connect.R
 
 func (UnimplementedFunctionServiceHandler) ListEnv(context.Context, *connect.Request[v1.ListEnvRequest]) (*connect.Response[v1.ListEnvResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("edgerun.control.v1.FunctionService.ListEnv is not implemented"))
+}
+
+func (UnimplementedFunctionServiceHandler) SetEgress(context.Context, *connect.Request[v1.SetEgressRequest]) (*connect.Response[v1.SetEgressResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("edgerun.control.v1.FunctionService.SetEgress is not implemented"))
 }

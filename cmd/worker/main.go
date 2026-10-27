@@ -55,6 +55,8 @@ func main() {
 	flag.StringVar(&cfg.OrchestratorURL, "orchestrator-url", env("EDGERUN_ORCHESTRATOR_URL", ""), "orchestrator base URL")
 	flag.StringVar(&cfg.WorkerToken, "worker-token", env("EDGERUN_WORKER_TOKEN", ""), "token presented to the orchestrator")
 	flag.StringVar(&cfg.ExecutionToken, "execution-token", env("EDGERUN_EXECUTION_TOKEN", ""), "token required of the orchestrator")
+	flag.StringVar(&cfg.EgressURL, "egress-url", env("EDGERUN_EGRESS_URL", ""), "network service for guests' outbound requests (empty: guests have no network)")
+	flag.StringVar(&cfg.EgressToken, "egress-token", env("EDGERUN_EGRESS_TOKEN", ""), "token presented to the network service")
 	maxConc := flag.Uint("max-concurrency", envUint("EDGERUN_WORKER_MAX_CONCURRENCY", 8), "invocations run at once")
 	flag.DurationVar(&cfg.DrainTimeout, "drain-timeout", 30*time.Second, "how long to wait for in-flight work on shutdown")
 	flag.StringVar(&cfg.Runtime.CompilationCacheDir, "compilation-cache-dir", env("EDGERUN_WORKER_COMPILATION_CACHE_DIR", ""), "persist compiled code here across restarts")

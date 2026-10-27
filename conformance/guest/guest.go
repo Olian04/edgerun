@@ -5,41 +5,69 @@ package guest
 
 import (
 	"crypto/sha256"
-	_ "embed"
+	"embed"
 	"encoding/hex"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 )
 
-//go:embed testguest/main.go
-var source []byte
+//go:embed testguest/*.go
+var testguest embed.FS
 
-// Build returns the wasip1 module for the test guest. Builds are cached by
-// source hash under the user cache directory and are safe to run from
-// concurrently executing test binaries.
+//go:embed netguest/*.go
+var netguest embed.FS
+
+// Build returns the wasip1 module for the test guest (a wagi-1 module). Builds
+// are cached by source hash under the user cache directory and are safe to run
+// from concurrently executing test binaries.
 func Build(t testing.TB) []byte {
 	t.Helper()
-	sum := sha256.Sum256(source)
-	name := "testguest-" + hex.EncodeToString(sum[:6]) + ".wasm"
+	return build(t, testguest, "testguest")
+}
+
+// BuildNet returns the wasip1 module for the network test guest, a wagi-2
+// module that imports edgerun_http.
+func BuildNet(t testing.TB) []byte {
+	t.Helper()
+	return build(t, netguest, "netguest")
+}
+
+func build(t testing.TB, src embed.FS, dir string) []byte {
+	t.Helper()
+	files, err := fs.ReadDir(src, dir)
+	must(t, err)
+	h := sha256.New()
+	sources := map[string][]byte{}
+	for _, f := range files {
+		b, err := src.ReadFile(dir + "/" + f.Name())
+		must(t, err)
+		sources[f.Name()] = b
+		h.Write([]byte(f.Name()))
+		h.Write(b)
+	}
+	name := dir + "-" + hex.EncodeToString(h.Sum(nil)[:6]) + ".wasm"
 
 	cacheRoot, err := os.UserCacheDir()
 	if err != nil {
 		cacheRoot = os.TempDir()
 	}
-	dir := filepath.Join(cacheRoot, "edgerun-conformance")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	cacheDir := filepath.Join(cacheRoot, "edgerun-conformance")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 		t.Fatalf("guest: %v", err)
 	}
-	cached := filepath.Join(dir, name)
+	cached := filepath.Join(cacheDir, name)
 	if b, err := os.ReadFile(cached); err == nil {
 		return b
 	}
 
 	work := t.TempDir()
-	must(t, os.WriteFile(filepath.Join(work, "main.go"), source, 0o644))
-	must(t, os.WriteFile(filepath.Join(work, "go.mod"), []byte("module testguest\n\ngo 1.21\n"), 0o644))
+	for n, b := range sources {
+		must(t, os.WriteFile(filepath.Join(work, n), b, 0o644))
+	}
+	must(t, os.WriteFile(filepath.Join(work, "go.mod"), []byte("module "+dir+"\n\ngo 1.21\n"), 0o644))
 	out := filepath.Join(work, "out.wasm")
 	cmd := exec.Command("go", "build", "-trimpath", "-o", out, ".")
 	cmd.Dir = work
@@ -51,7 +79,7 @@ func Build(t testing.TB) []byte {
 	must(t, err)
 
 	// Publish atomically: another test binary may be doing the same.
-	tmp, err := os.CreateTemp(dir, "tmp-*")
+	tmp, err := os.CreateTemp(cacheDir, "tmp-*")
 	must(t, err)
 	_, werr := tmp.Write(b)
 	must(t, werr)

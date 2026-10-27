@@ -34,8 +34,12 @@ type Function struct {
 	// Version that serves traffic. Empty until the first activation.
 	ActiveVersionId string                 `protobuf:"bytes,3,opt,name=active_version_id,json=activeVersionId,proto3" json:"active_version_id,omitempty"`
 	CreateTime      *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=create_time,json=createTime,proto3" json:"create_time,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// The destinations the function may reach over the network, in canonical
+	// form (see SetEgress). Empty: the function has no network. Closed by
+	// default, and only the operator opens it.
+	EgressAllow   []string `protobuf:"bytes,5,rep,name=egress_allow,json=egressAllow,proto3" json:"egress_allow,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Function) Reset() {
@@ -92,6 +96,13 @@ func (x *Function) GetActiveVersionId() string {
 func (x *Function) GetCreateTime() *timestamppb.Timestamp {
 	if x != nil {
 		return x.CreateTime
+	}
+	return nil
+}
+
+func (x *Function) GetEgressAllow() []string {
+	if x != nil {
+		return x.EgressAllow
 	}
 	return nil
 }
@@ -595,13 +606,14 @@ var File_edgerun_control_v1_model_proto protoreflect.FileDescriptor
 
 const file_edgerun_control_v1_model_proto_rawDesc = "" +
 	"\n" +
-	"\x1eedgerun/control/v1/model.proto\x12\x12edgerun.control.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1eedgerun/common/v1/common.proto\x1a\x1eedgerun/worker/v1/worker.proto\"\x97\x01\n" +
+	"\x1eedgerun/control/v1/model.proto\x12\x12edgerun.control.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1eedgerun/common/v1/common.proto\x1a\x1eedgerun/worker/v1/worker.proto\"\xba\x01\n" +
 	"\bFunction\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12*\n" +
 	"\x11active_version_id\x18\x03 \x01(\tR\x0factiveVersionId\x12;\n" +
 	"\vcreate_time\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"createTime\"\xa4\x02\n" +
+	"createTime\x12!\n" +
+	"\fegress_allow\x18\x05 \x03(\tR\vegressAllow\"\xa4\x02\n" +
 	"\x0fFunctionVersion\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1f\n" +
 	"\vfunction_id\x18\x02 \x01(\tR\n" +

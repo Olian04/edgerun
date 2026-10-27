@@ -187,6 +187,7 @@ func (s *Server) run(ctx context.Context, m *workerv1.ExecuteRequest) (*runtime.
 	res, err := s.engine.Run(ctx, runtime.Invocation{
 		Digest: m.GetArtifactDigest(), Wasm: wasm,
 		Request: m.GetRequest(), Env: m.GetEnv(), Limits: m.GetLimits(),
+		ABI: m.GetAbi(), EgressAllow: m.GetEgressAllow(), InvocationID: m.GetInvocationId(),
 	})
 	if err == nil {
 		return res, nil

@@ -27,6 +27,15 @@ service FunctionService {
   rpc SetEnv(SetEnvRequest) returns (SetEnvResponse);
   rpc DeleteEnv(DeleteEnvRequest) returns (DeleteEnvResponse);
   rpc ListEnv(ListEnvRequest) returns (ListEnvResponse);
+
+  // SetEgress replaces the function's network allow list. Each entry is a host
+  // pattern: "example.com", "example.com:8443", "*.example.com" or an IP
+  // literal, optionally with a port. Without a port only the scheme's default
+  // (80 for http, 443 for https) matches. Entries are lower-cased, deduplicated
+  // and sorted; a malformed entry, a bare "*" and more than 64 entries are
+  // invalid_argument. An empty list closes the function off again. Whatever is
+  // listed here, the network service may still refuse a destination.
+  rpc SetEgress(SetEgressRequest) returns (SetEgressResponse);
 }
 
 message CreateFunctionRequest {
@@ -116,6 +125,16 @@ message DeleteEnvResponse {}
 
 message ListEnvRequest {
   string function_id = 1;
+}
+
+message SetEgressRequest {
+  string function_id = 1;
+  repeated string allow = 2;
+}
+
+message SetEgressResponse {
+  // The function with its canonical allow list.
+  Function function = 1;
 }
 
 message ListEnvResponse {

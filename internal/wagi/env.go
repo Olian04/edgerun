@@ -7,6 +7,12 @@ import "strings"
 // ABI is the name of this guest ABI.
 const ABI = "wagi-1"
 
+// ABI2 is wagi-1 plus outbound HTTP through the host module HTTPModule.
+const ABI2 = "wagi-2"
+
+// HTTPModule is the host module wagi-2 guests may import, besides WASI.
+const HTTPModule = "edgerun_http"
+
 // reserved are the CGI variables the worker sets itself; user-defined
 // variables may not shadow them.
 var reserved = map[string]bool{

@@ -14,14 +14,15 @@ import (
 
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
 	controlv1 "github.com/Olian04/edgerun/gen/edgerun/control/v1"
+	"github.com/Olian04/edgerun/internal/egress/policy"
 )
 
-const functionCols = `id::text, name, coalesce(active_version_id::text, ''), created_at`
+const functionCols = `id::text, name, coalesce(active_version_id::text, ''), created_at, egress_allow`
 
 func scanFunction(row pgx.Row) (*controlv1.Function, error) {
 	var f controlv1.Function
 	var created time.Time
-	if err := row.Scan(&f.Id, &f.Name, &f.ActiveVersionId, &created); err != nil {
+	if err := row.Scan(&f.Id, &f.Name, &f.ActiveVersionId, &created, &f.EgressAllow); err != nil {
 		return nil, err
 	}
 	f.CreateTime = timestamppb.New(created)
@@ -261,6 +262,26 @@ func (s *Store) ActivateVersion(ctx context.Context, functionID, versionID strin
 		return nil, notFound("function %s", fid)
 	case pgCode(err) == pgFKViolation:
 		return nil, notFound("version %s of function %s", vid, fid)
+	}
+	return f, err
+}
+
+// SetEgress replaces a function's network allow list with the canonical form
+// of allow (lower-cased, deduplicated, sorted). An empty list closes the
+// function off again.
+func (s *Store) SetEgress(ctx context.Context, functionID string, allow []string) (*controlv1.Function, error) {
+	fid, err := parseID("function", functionID)
+	if err != nil {
+		return nil, err
+	}
+	canon, err := policy.Canonical(allow)
+	if err != nil {
+		return nil, invalid("%v", err)
+	}
+	f, err := scanFunction(s.pool.QueryRow(ctx,
+		`UPDATE functions SET egress_allow = $2 WHERE id = $1 RETURNING `+functionCols, fid, canon))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, notFound("function %s", fid)
 	}
 	return f, err
 }

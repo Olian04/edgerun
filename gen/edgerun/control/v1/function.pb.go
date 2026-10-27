@@ -940,6 +940,103 @@ func (x *ListEnvRequest) GetFunctionId() string {
 	return ""
 }
 
+type SetEgressRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	FunctionId    string                 `protobuf:"bytes,1,opt,name=function_id,json=functionId,proto3" json:"function_id,omitempty"`
+	Allow         []string               `protobuf:"bytes,2,rep,name=allow,proto3" json:"allow,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetEgressRequest) Reset() {
+	*x = SetEgressRequest{}
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetEgressRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetEgressRequest) ProtoMessage() {}
+
+func (x *SetEgressRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetEgressRequest.ProtoReflect.Descriptor instead.
+func (*SetEgressRequest) Descriptor() ([]byte, []int) {
+	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *SetEgressRequest) GetFunctionId() string {
+	if x != nil {
+		return x.FunctionId
+	}
+	return ""
+}
+
+func (x *SetEgressRequest) GetAllow() []string {
+	if x != nil {
+		return x.Allow
+	}
+	return nil
+}
+
+type SetEgressResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The function with its canonical allow list.
+	Function      *Function `protobuf:"bytes,1,opt,name=function,proto3" json:"function,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetEgressResponse) Reset() {
+	*x = SetEgressResponse{}
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetEgressResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetEgressResponse) ProtoMessage() {}
+
+func (x *SetEgressResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetEgressResponse.ProtoReflect.Descriptor instead.
+func (*SetEgressResponse) Descriptor() ([]byte, []int) {
+	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *SetEgressResponse) GetFunction() *Function {
+	if x != nil {
+		return x.Function
+	}
+	return nil
+}
+
 type ListEnvResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Secret values are returned empty.
@@ -950,7 +1047,7 @@ type ListEnvResponse struct {
 
 func (x *ListEnvResponse) Reset() {
 	*x = ListEnvResponse{}
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[19]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -962,7 +1059,7 @@ func (x *ListEnvResponse) String() string {
 func (*ListEnvResponse) ProtoMessage() {}
 
 func (x *ListEnvResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[19]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -975,7 +1072,7 @@ func (x *ListEnvResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListEnvResponse.ProtoReflect.Descriptor instead.
 func (*ListEnvResponse) Descriptor() ([]byte, []int) {
-	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{19}
+	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *ListEnvResponse) GetEntries() []*EnvEntry {
@@ -1048,8 +1145,14 @@ const file_edgerun_control_v1_function_proto_rawDesc = "" +
 	"\x0eListEnvRequest\x12\x1f\n" +
 	"\vfunction_id\x18\x01 \x01(\tR\n" +
 	"functionId\"I\n" +
+	"\x10SetEgressRequest\x12\x1f\n" +
+	"\vfunction_id\x18\x01 \x01(\tR\n" +
+	"functionId\x12\x14\n" +
+	"\x05allow\x18\x02 \x03(\tR\x05allow\"M\n" +
+	"\x11SetEgressResponse\x128\n" +
+	"\bfunction\x18\x01 \x01(\v2\x1c.edgerun.control.v1.FunctionR\bfunction\"I\n" +
 	"\x0fListEnvResponse\x126\n" +
-	"\aentries\x18\x01 \x03(\v2\x1c.edgerun.control.v1.EnvEntryR\aentries2\xdd\a\n" +
+	"\aentries\x18\x01 \x03(\v2\x1c.edgerun.control.v1.EnvEntryR\aentries2\xb7\b\n" +
 	"\x0fFunctionService\x12g\n" +
 	"\x0eCreateFunction\x12).edgerun.control.v1.CreateFunctionRequest\x1a*.edgerun.control.v1.CreateFunctionResponse\x12^\n" +
 	"\vGetFunction\x12&.edgerun.control.v1.GetFunctionRequest\x1a'.edgerun.control.v1.GetFunctionResponse\x12d\n" +
@@ -1060,7 +1163,8 @@ const file_edgerun_control_v1_function_proto_rawDesc = "" +
 	"\x0fActivateVersion\x12*.edgerun.control.v1.ActivateVersionRequest\x1a+.edgerun.control.v1.ActivateVersionResponse\x12O\n" +
 	"\x06SetEnv\x12!.edgerun.control.v1.SetEnvRequest\x1a\".edgerun.control.v1.SetEnvResponse\x12X\n" +
 	"\tDeleteEnv\x12$.edgerun.control.v1.DeleteEnvRequest\x1a%.edgerun.control.v1.DeleteEnvResponse\x12R\n" +
-	"\aListEnv\x12\".edgerun.control.v1.ListEnvRequest\x1a#.edgerun.control.v1.ListEnvResponseB\xce\x01\n" +
+	"\aListEnv\x12\".edgerun.control.v1.ListEnvRequest\x1a#.edgerun.control.v1.ListEnvResponse\x12X\n" +
+	"\tSetEgress\x12$.edgerun.control.v1.SetEgressRequest\x1a%.edgerun.control.v1.SetEgressResponseB\xce\x01\n" +
 	"\x16com.edgerun.control.v1B\rFunctionProtoP\x01Z;github.com/Olian04/edgerun/gen/edgerun/control/v1;controlv1\xa2\x02\x03ECX\xaa\x02\x12Edgerun.Control.V1\xca\x02\x12Edgerun\\Control\\V1\xe2\x02\x1eEdgerun\\Control\\V1\\GPBMetadata\xea\x02\x14Edgerun::Control::V1b\x06proto3"
 
 var (
@@ -1075,7 +1179,7 @@ func file_edgerun_control_v1_function_proto_rawDescGZIP() []byte {
 	return file_edgerun_control_v1_function_proto_rawDescData
 }
 
-var file_edgerun_control_v1_function_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
+var file_edgerun_control_v1_function_proto_msgTypes = make([]protoimpl.MessageInfo, 22)
 var file_edgerun_control_v1_function_proto_goTypes = []any{
 	(*CreateFunctionRequest)(nil),   // 0: edgerun.control.v1.CreateFunctionRequest
 	(*CreateFunctionResponse)(nil),  // 1: edgerun.control.v1.CreateFunctionResponse
@@ -1096,47 +1200,52 @@ var file_edgerun_control_v1_function_proto_goTypes = []any{
 	(*DeleteEnvRequest)(nil),        // 16: edgerun.control.v1.DeleteEnvRequest
 	(*DeleteEnvResponse)(nil),       // 17: edgerun.control.v1.DeleteEnvResponse
 	(*ListEnvRequest)(nil),          // 18: edgerun.control.v1.ListEnvRequest
-	(*ListEnvResponse)(nil),         // 19: edgerun.control.v1.ListEnvResponse
-	(*Function)(nil),                // 20: edgerun.control.v1.Function
-	(*v1.Limits)(nil),               // 21: edgerun.common.v1.Limits
-	(*FunctionVersion)(nil),         // 22: edgerun.control.v1.FunctionVersion
-	(*EnvEntry)(nil),                // 23: edgerun.control.v1.EnvEntry
+	(*SetEgressRequest)(nil),        // 19: edgerun.control.v1.SetEgressRequest
+	(*SetEgressResponse)(nil),       // 20: edgerun.control.v1.SetEgressResponse
+	(*ListEnvResponse)(nil),         // 21: edgerun.control.v1.ListEnvResponse
+	(*Function)(nil),                // 22: edgerun.control.v1.Function
+	(*v1.Limits)(nil),               // 23: edgerun.common.v1.Limits
+	(*FunctionVersion)(nil),         // 24: edgerun.control.v1.FunctionVersion
+	(*EnvEntry)(nil),                // 25: edgerun.control.v1.EnvEntry
 }
 var file_edgerun_control_v1_function_proto_depIdxs = []int32{
-	20, // 0: edgerun.control.v1.CreateFunctionResponse.function:type_name -> edgerun.control.v1.Function
-	20, // 1: edgerun.control.v1.GetFunctionResponse.function:type_name -> edgerun.control.v1.Function
-	20, // 2: edgerun.control.v1.ListFunctionsResponse.functions:type_name -> edgerun.control.v1.Function
-	21, // 3: edgerun.control.v1.CreateVersionRequest.limits:type_name -> edgerun.common.v1.Limits
-	22, // 4: edgerun.control.v1.CreateVersionResponse.version:type_name -> edgerun.control.v1.FunctionVersion
-	22, // 5: edgerun.control.v1.ListVersionsResponse.versions:type_name -> edgerun.control.v1.FunctionVersion
-	20, // 6: edgerun.control.v1.ActivateVersionResponse.function:type_name -> edgerun.control.v1.Function
-	23, // 7: edgerun.control.v1.SetEnvRequest.entry:type_name -> edgerun.control.v1.EnvEntry
-	23, // 8: edgerun.control.v1.ListEnvResponse.entries:type_name -> edgerun.control.v1.EnvEntry
-	0,  // 9: edgerun.control.v1.FunctionService.CreateFunction:input_type -> edgerun.control.v1.CreateFunctionRequest
-	2,  // 10: edgerun.control.v1.FunctionService.GetFunction:input_type -> edgerun.control.v1.GetFunctionRequest
-	4,  // 11: edgerun.control.v1.FunctionService.ListFunctions:input_type -> edgerun.control.v1.ListFunctionsRequest
-	6,  // 12: edgerun.control.v1.FunctionService.DeleteFunction:input_type -> edgerun.control.v1.DeleteFunctionRequest
-	8,  // 13: edgerun.control.v1.FunctionService.CreateVersion:input_type -> edgerun.control.v1.CreateVersionRequest
-	10, // 14: edgerun.control.v1.FunctionService.ListVersions:input_type -> edgerun.control.v1.ListVersionsRequest
-	12, // 15: edgerun.control.v1.FunctionService.ActivateVersion:input_type -> edgerun.control.v1.ActivateVersionRequest
-	14, // 16: edgerun.control.v1.FunctionService.SetEnv:input_type -> edgerun.control.v1.SetEnvRequest
-	16, // 17: edgerun.control.v1.FunctionService.DeleteEnv:input_type -> edgerun.control.v1.DeleteEnvRequest
-	18, // 18: edgerun.control.v1.FunctionService.ListEnv:input_type -> edgerun.control.v1.ListEnvRequest
-	1,  // 19: edgerun.control.v1.FunctionService.CreateFunction:output_type -> edgerun.control.v1.CreateFunctionResponse
-	3,  // 20: edgerun.control.v1.FunctionService.GetFunction:output_type -> edgerun.control.v1.GetFunctionResponse
-	5,  // 21: edgerun.control.v1.FunctionService.ListFunctions:output_type -> edgerun.control.v1.ListFunctionsResponse
-	7,  // 22: edgerun.control.v1.FunctionService.DeleteFunction:output_type -> edgerun.control.v1.DeleteFunctionResponse
-	9,  // 23: edgerun.control.v1.FunctionService.CreateVersion:output_type -> edgerun.control.v1.CreateVersionResponse
-	11, // 24: edgerun.control.v1.FunctionService.ListVersions:output_type -> edgerun.control.v1.ListVersionsResponse
-	13, // 25: edgerun.control.v1.FunctionService.ActivateVersion:output_type -> edgerun.control.v1.ActivateVersionResponse
-	15, // 26: edgerun.control.v1.FunctionService.SetEnv:output_type -> edgerun.control.v1.SetEnvResponse
-	17, // 27: edgerun.control.v1.FunctionService.DeleteEnv:output_type -> edgerun.control.v1.DeleteEnvResponse
-	19, // 28: edgerun.control.v1.FunctionService.ListEnv:output_type -> edgerun.control.v1.ListEnvResponse
-	19, // [19:29] is the sub-list for method output_type
-	9,  // [9:19] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	22, // 0: edgerun.control.v1.CreateFunctionResponse.function:type_name -> edgerun.control.v1.Function
+	22, // 1: edgerun.control.v1.GetFunctionResponse.function:type_name -> edgerun.control.v1.Function
+	22, // 2: edgerun.control.v1.ListFunctionsResponse.functions:type_name -> edgerun.control.v1.Function
+	23, // 3: edgerun.control.v1.CreateVersionRequest.limits:type_name -> edgerun.common.v1.Limits
+	24, // 4: edgerun.control.v1.CreateVersionResponse.version:type_name -> edgerun.control.v1.FunctionVersion
+	24, // 5: edgerun.control.v1.ListVersionsResponse.versions:type_name -> edgerun.control.v1.FunctionVersion
+	22, // 6: edgerun.control.v1.ActivateVersionResponse.function:type_name -> edgerun.control.v1.Function
+	25, // 7: edgerun.control.v1.SetEnvRequest.entry:type_name -> edgerun.control.v1.EnvEntry
+	22, // 8: edgerun.control.v1.SetEgressResponse.function:type_name -> edgerun.control.v1.Function
+	25, // 9: edgerun.control.v1.ListEnvResponse.entries:type_name -> edgerun.control.v1.EnvEntry
+	0,  // 10: edgerun.control.v1.FunctionService.CreateFunction:input_type -> edgerun.control.v1.CreateFunctionRequest
+	2,  // 11: edgerun.control.v1.FunctionService.GetFunction:input_type -> edgerun.control.v1.GetFunctionRequest
+	4,  // 12: edgerun.control.v1.FunctionService.ListFunctions:input_type -> edgerun.control.v1.ListFunctionsRequest
+	6,  // 13: edgerun.control.v1.FunctionService.DeleteFunction:input_type -> edgerun.control.v1.DeleteFunctionRequest
+	8,  // 14: edgerun.control.v1.FunctionService.CreateVersion:input_type -> edgerun.control.v1.CreateVersionRequest
+	10, // 15: edgerun.control.v1.FunctionService.ListVersions:input_type -> edgerun.control.v1.ListVersionsRequest
+	12, // 16: edgerun.control.v1.FunctionService.ActivateVersion:input_type -> edgerun.control.v1.ActivateVersionRequest
+	14, // 17: edgerun.control.v1.FunctionService.SetEnv:input_type -> edgerun.control.v1.SetEnvRequest
+	16, // 18: edgerun.control.v1.FunctionService.DeleteEnv:input_type -> edgerun.control.v1.DeleteEnvRequest
+	18, // 19: edgerun.control.v1.FunctionService.ListEnv:input_type -> edgerun.control.v1.ListEnvRequest
+	19, // 20: edgerun.control.v1.FunctionService.SetEgress:input_type -> edgerun.control.v1.SetEgressRequest
+	1,  // 21: edgerun.control.v1.FunctionService.CreateFunction:output_type -> edgerun.control.v1.CreateFunctionResponse
+	3,  // 22: edgerun.control.v1.FunctionService.GetFunction:output_type -> edgerun.control.v1.GetFunctionResponse
+	5,  // 23: edgerun.control.v1.FunctionService.ListFunctions:output_type -> edgerun.control.v1.ListFunctionsResponse
+	7,  // 24: edgerun.control.v1.FunctionService.DeleteFunction:output_type -> edgerun.control.v1.DeleteFunctionResponse
+	9,  // 25: edgerun.control.v1.FunctionService.CreateVersion:output_type -> edgerun.control.v1.CreateVersionResponse
+	11, // 26: edgerun.control.v1.FunctionService.ListVersions:output_type -> edgerun.control.v1.ListVersionsResponse
+	13, // 27: edgerun.control.v1.FunctionService.ActivateVersion:output_type -> edgerun.control.v1.ActivateVersionResponse
+	15, // 28: edgerun.control.v1.FunctionService.SetEnv:output_type -> edgerun.control.v1.SetEnvResponse
+	17, // 29: edgerun.control.v1.FunctionService.DeleteEnv:output_type -> edgerun.control.v1.DeleteEnvResponse
+	21, // 30: edgerun.control.v1.FunctionService.ListEnv:output_type -> edgerun.control.v1.ListEnvResponse
+	20, // 31: edgerun.control.v1.FunctionService.SetEgress:output_type -> edgerun.control.v1.SetEgressResponse
+	21, // [21:32] is the sub-list for method output_type
+	10, // [10:21] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_edgerun_control_v1_function_proto_init() }
@@ -1151,7 +1260,7 @@ func file_edgerun_control_v1_function_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_edgerun_control_v1_function_proto_rawDesc), len(file_edgerun_control_v1_function_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   20,
+			NumMessages:   22,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
