@@ -444,8 +444,11 @@ func (x *EnvVar) GetValue() string {
 type Limits struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Maximum linear memory the guest may grow to. 0 means "worker default".
+	// Workers may round this up to a size they support and clamp it to their
+	// own maximum.
 	MemoryLimitBytes uint64 `protobuf:"varint,1,opt,name=memory_limit_bytes,json=memoryLimitBytes,proto3" json:"memory_limit_bytes,omitempty"`
-	// Maximum response body the guest may produce. 0 means "worker default".
+	// Maximum total output of the guest (response headers and body together).
+	// 0 means "worker default"; workers may clamp it to their own maximum.
 	MaxResponseBytes uint64 `protobuf:"varint,2,opt,name=max_response_bytes,json=maxResponseBytes,proto3" json:"max_response_bytes,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache

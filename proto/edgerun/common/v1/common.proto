@@ -63,8 +63,11 @@ message EnvVar {
 // the RPC deadline so that every hop enforces the same budget.
 message Limits {
   // Maximum linear memory the guest may grow to. 0 means "worker default".
+  // Workers may round this up to a size they support and clamp it to their
+  // own maximum.
   uint64 memory_limit_bytes = 1;
-  // Maximum response body the guest may produce. 0 means "worker default".
+  // Maximum total output of the guest (response headers and body together).
+  // 0 means "worker default"; workers may clamp it to their own maximum.
   uint64 max_response_bytes = 2;
 }
 

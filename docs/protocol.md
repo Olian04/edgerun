@@ -107,6 +107,23 @@ forwarded verbatim. Platform errors (`common.v1.ErrorReason`) map as:
 | `INTERNAL`, unknown | 500 | |
 
 Error messages are for operators. The frontend never forwards `ErrorInfo.message` to clients.
+A `FUNCTION_TRAPPED` message SHOULD end with the tail of the guest's stderr (at most 4 KiB),
+because a failed invocation has no `ExecutionSummary` to carry logs.
+
+Every reason has one canonical Connect code. Peers branch on the reason, never on the code:
+
+| Reason | Connect code |
+|---|---|
+| `FUNCTION_NOT_FOUND`, `ARTIFACT_NOT_FOUND` | `not_found` |
+| `NO_CAPACITY`, `RESPONSE_TOO_LARGE` | `resource_exhausted` |
+| `DEADLINE_EXCEEDED` | `deadline_exceeded` |
+| `FUNCTION_TRAPPED` | `aborted` |
+| `ABI_MISMATCH` | `failed_precondition` |
+| `REQUEST_TOO_LARGE` | `invalid_argument` |
+| `INTERNAL` | `internal` |
+
+A malformed request (bad digest, bad environment variable name) is `invalid_argument` with no
+reason: it is a caller bug, and nothing should branch on it.
 
 ## Guest ABI `wagi-1`
 
@@ -145,7 +162,16 @@ Content-Type: text/plain   ← any number of headers, `\n` or `\r\n` line ends
 ```
 
 - The exit code must be 0. Anything else, a trap, or exceeding the memory limit is
-  `FUNCTION_TRAPPED`. Output beyond `Limits.max_response_bytes` is `RESPONSE_TOO_LARGE`.
+  `FUNCTION_TRAPPED`. Output (headers and body together) beyond `Limits.max_response_bytes`
+  is `RESPONSE_TOO_LARGE`; the guest is stopped as soon as it crosses the limit.
+- Output that is not a valid response (no output, headers not ended by a blank line, a bad
+  `Status`) is `ABI_MISMATCH`. So is a module that is not a WASI command (no `_start`) or that
+  imports anything other than `wasi_snapshot_preview1`, checked when the module is first loaded.
+- The guest sees the **real** wall clock, monotonic clock and a cryptographically secure random
+  source. Sleeping is real, counts against the deadline, and ends at the deadline.
+- Memory limits are enforced per invocation but may be rounded up to a size the worker supports
+  (the reference worker uses 16, 32, 64, 128, 256 and 512 MiB). Workers may clamp limits to their
+  own maximum.
 - stderr is captured as the invocation log (truncated tail).
 - v1 has **no outbound network** for guests (preview 1 has no sockets) and the response is
   buffered by the worker before it is streamed on the wire. Neither limits the protocol: both
