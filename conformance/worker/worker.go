@@ -1,0 +1,702 @@
+// Package workerconf is the conformance suite for the worker role of the
+// edgerun worker seam (edgerun.worker.v1).
+//
+// It is black-box and implementation-agnostic: the suite starts the worker
+// under test through Target.Launch, then talks to it only over the wire, using
+// nothing but the generated protocol code. A worker that passes is
+// interchangeable with any other that passes, which is what lets a worker be
+// replaced without the orchestrator noticing.
+//
+// Because workers dial in, the suite hosts a fake orchestrator (FleetService
+// and ArtifactService) and points the worker at it. That also exercises the
+// Fleet and Artifact seams from the worker's side.
+package workerconf
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"net/http"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"connectrpc.com/connect"
+
+	"github.com/Olian04/edgerun/conformance/guest"
+	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
+	workerv1 "github.com/Olian04/edgerun/gen/edgerun/worker/v1"
+	"github.com/Olian04/edgerun/gen/edgerun/worker/v1/workerv1connect"
+)
+
+const (
+	workerToken    = "conformance-worker-token"
+	executionToken = "conformance-execution-token"
+	maxConcurrency = 2
+	heartbeatEvery = 100 * time.Millisecond
+
+	abi = "wagi-1"
+	// roomy covers the first invocation, which compiles the guest (seconds
+	// under the race detector).
+	roomy = 90 * time.Second
+)
+
+// Env tells the worker under test how to reach the suite.
+type Env struct {
+	// OrchestratorURL is the base URL of the suite's fake orchestrator.
+	OrchestratorURL string
+	// WorkerToken must be presented to the orchestrator on Fleet and
+	// Artifact calls.
+	WorkerToken string
+	// ExecutionToken must be required on ExecutionService calls.
+	ExecutionToken string
+	// MaxConcurrency is the number of invocations the worker must run at once.
+	MaxConcurrency uint32
+}
+
+// Target starts the implementation under test.
+type Target struct {
+	// Launch starts a worker configured per env and returns promptly; the
+	// worker is expected to register on its own. The returned stop requests a
+	// graceful shutdown (what SIGTERM means for the worker: drain, finish
+	// in-flight work, deregister, exit) and blocks until the worker has
+	// exited. Launch must arrange for stop to run at the end of the test if
+	// the suite has not already called it.
+	Launch func(t testing.TB, env Env) (stop func())
+}
+
+// Run runs the suite against target.
+func Run(t *testing.T, target Target) {
+	wasm := guest.Build(t)
+	orch := newFakeOrchestrator(t, workerToken, heartbeatEvery)
+	good := orch.addBlob(wasm)
+
+	stop := target.Launch(t, Env{
+		OrchestratorURL: orch.url(), WorkerToken: workerToken,
+		ExecutionToken: executionToken, MaxConcurrency: maxConcurrency,
+	})
+	orch.waitFor(t, "the worker to register", 60*time.Second, func() bool { return len(orch.registrations) > 0 })
+
+	orch.mu.Lock()
+	reg := orch.registrations[0]
+	orch.mu.Unlock()
+	h := &harness{
+		orch: orch, reg: reg, good: good, stop: stop,
+		client: workerv1connect.NewExecutionServiceClient(&http.Client{Transport: budgetTransport{}}, reg.Endpoint),
+	}
+
+	t.Run("Registration", h.registration)
+	t.Run("Heartbeats", h.heartbeats)
+	t.Run("Authentication", h.authentication)
+	t.Run("Requests", h.requests)
+	t.Run("FunctionStatusIsNotAPlatformError", h.functionStatus)
+	t.Run("Summary", h.summary)
+	t.Run("ABIMismatch", h.abiMismatch)
+	t.Run("Artifacts", h.artifacts)
+	t.Run("Deadline", h.deadline)
+	t.Run("Traps", h.traps)
+	t.Run("MemoryLimit", h.memoryLimit)
+	t.Run("ResponseLimit", h.responseLimit)
+	t.Run("ABIViolations", h.abiViolations)
+	t.Run("RealTimeAndEntropy", h.timeAndEntropy)
+	t.Run("Capacity", h.capacity)
+	t.Run("ReregistersWhenForgotten", h.reregister)
+	// Must stay last: it shuts the worker down.
+	t.Run("GracefulShutdown", h.gracefulShutdown)
+}
+
+type harness struct {
+	orch   *fakeOrchestrator
+	reg    registration
+	good   string
+	stop   func()
+	client workerv1connect.ExecutionServiceClient
+}
+
+// budgetHeader carries an invocation's wall-clock budget from call to
+// budgetTransport, which puts it on the wire as Connect-Timeout-Ms.
+const budgetHeader = "X-Conformance-Budget-Ms"
+
+// budgetTransport lets the suite give the worker a budget independent of the
+// client's own context deadline.
+type budgetTransport struct{}
+
+func (budgetTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if b := r.Header.Get(budgetHeader); b != "" {
+		r = r.Clone(r.Context())
+		r.Header.Del(budgetHeader)
+		r.Header.Set("Connect-Timeout-Ms", b)
+	}
+	return http.DefaultTransport.RoundTrip(r)
+}
+
+// canonicalCode is the Connect code each reason must travel with
+// (docs/protocol.md). Kept independent of any implementation's copy.
+var canonicalCode = map[commonv1.ErrorReason]connect.Code{
+	commonv1.ErrorReason_ERROR_REASON_FUNCTION_NOT_FOUND: connect.CodeNotFound,
+	commonv1.ErrorReason_ERROR_REASON_NO_CAPACITY:        connect.CodeResourceExhausted,
+	commonv1.ErrorReason_ERROR_REASON_DEADLINE_EXCEEDED:  connect.CodeDeadlineExceeded,
+	commonv1.ErrorReason_ERROR_REASON_FUNCTION_TRAPPED:   connect.CodeAborted,
+	commonv1.ErrorReason_ERROR_REASON_ABI_MISMATCH:       connect.CodeFailedPrecondition,
+	commonv1.ErrorReason_ERROR_REASON_REQUEST_TOO_LARGE:  connect.CodeInvalidArgument,
+	commonv1.ErrorReason_ERROR_REASON_RESPONSE_TOO_LARGE: connect.CodeResourceExhausted,
+	commonv1.ErrorReason_ERROR_REASON_ARTIFACT_NOT_FOUND: connect.CodeNotFound,
+	commonv1.ErrorReason_ERROR_REASON_INTERNAL:           connect.CodeInternal,
+}
+
+// reasonOf extracts the ErrorInfo reason from a Connect error.
+func reasonOf(err error) (commonv1.ErrorReason, string) {
+	var ce *connect.Error
+	if !errors.As(err, &ce) {
+		return commonv1.ErrorReason_ERROR_REASON_UNSPECIFIED, ""
+	}
+	for _, d := range ce.Details() {
+		if v, verr := d.Value(); verr == nil {
+			if info, ok := v.(*commonv1.ErrorInfo); ok {
+				return info.GetReason(), info.GetMessage()
+			}
+		}
+	}
+	return commonv1.ErrorReason_ERROR_REASON_UNSPECIFIED, ""
+}
+
+// outcome is everything one Execute produced.
+type outcome struct {
+	head    *commonv1.HttpResponseHead
+	body    []byte
+	summary *workerv1.ExecutionSummary
+	err     error
+	elapsed time.Duration
+}
+
+func (o outcome) headers(name string) []string {
+	var out []string
+	for _, h := range o.head.GetHeaders() {
+		if h.Name == name {
+			out = append(out, h.Value)
+		}
+	}
+	return out
+}
+
+// invocation describes one Execute call.
+type invocation struct {
+	path, query, method string
+	body                string
+	digest              string
+	abi                 string
+	limits              *commonv1.Limits
+	env                 []*commonv1.EnvVar
+	timeout             time.Duration
+	token               *string // nil: the correct token; pointer to "": none
+}
+
+func (h *harness) call(t *testing.T, inv invocation) outcome {
+	t.Helper()
+	if inv.digest == "" {
+		inv.digest = h.good
+	}
+	if inv.abi == "" {
+		inv.abi = abi
+	}
+	if inv.method == "" {
+		inv.method = "GET"
+	}
+	if inv.timeout == 0 {
+		inv.timeout = roomy
+	}
+	// The budget is what the worker is told (Connect-Timeout-Ms, see
+	// budgetTransport); the local guard is longer, so the worker's own typed
+	// error arrives before our timer could replace it with a bare context
+	// error. Connect clients derive the wire deadline from the context, which
+	// would make the two the same value.
+	ctx, cancel := context.WithTimeout(context.Background(), inv.timeout+15*time.Second)
+	defer cancel()
+
+	req := connect.NewRequest(&workerv1.ExecuteRequest{
+		InvocationId: "conformance-" + t.Name(), ArtifactDigest: inv.digest, Abi: inv.abi,
+		Limits: inv.limits, Env: inv.env,
+		Request: &commonv1.HttpRequest{
+			Method: inv.method, Host: "conformance.test", Path: inv.path, RawQuery: inv.query,
+			Body: []byte(inv.body), RemoteAddr: "192.0.2.1:1234",
+			Headers: []*commonv1.Header{{Name: "content-type", Value: "text/x-conformance"}, {Name: "x-multi", Value: "a"}, {Name: "x-multi", Value: "b"}},
+		},
+	})
+	req.Header().Set(budgetHeader, strconv.FormatInt(inv.timeout.Milliseconds(), 10))
+	switch {
+	case inv.token == nil:
+		req.Header().Set("Authorization", "Bearer "+executionToken)
+	case *inv.token != "":
+		req.Header().Set("Authorization", "Bearer "+*inv.token)
+	}
+
+	start := time.Now()
+	out := outcome{}
+	st, err := h.client.Execute(ctx, req)
+	if err != nil {
+		out.err, out.elapsed = err, time.Since(start)
+		return out
+	}
+	defer st.Close()
+
+	// The stream shape is part of the protocol: head, chunks*, summary, end.
+	sawSummary := false
+	for st.Receive() {
+		m := st.Msg()
+		switch {
+		case sawSummary:
+			t.Errorf("protocol violation: message after the summary")
+		case m.GetHead() != nil:
+			if out.head != nil {
+				t.Errorf("protocol violation: second head")
+			}
+			out.head = m.GetHead()
+		case m.GetChunk() != nil:
+			if out.head == nil {
+				t.Errorf("protocol violation: chunk before head")
+			}
+			out.body = append(out.body, m.GetChunk()...)
+		case m.GetSummary() != nil:
+			if out.head == nil {
+				t.Errorf("protocol violation: summary before head")
+			}
+			sawSummary = true
+			out.summary = m.GetSummary()
+		default:
+			t.Errorf("protocol violation: empty ExecuteResponse")
+		}
+	}
+	out.err, out.elapsed = st.Err(), time.Since(start)
+	if out.err == nil && (out.head == nil || !sawSummary) {
+		t.Errorf("protocol violation: stream ended OK without head and summary (head=%v summary=%v)", out.head != nil, sawSummary)
+	}
+	return out
+}
+
+func (h *harness) ok(t *testing.T, inv invocation) outcome {
+	t.Helper()
+	out := h.call(t, inv)
+	if out.err != nil {
+		t.Fatalf("%s %s: unexpected error: %v", inv.method, inv.path, out.err)
+	}
+	return out
+}
+
+func wantReason(t *testing.T, err error, want commonv1.ErrorReason) string {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("expected %v, got success", want)
+	}
+	got, msg := reasonOf(err)
+	if got != want {
+		t.Fatalf("reason = %v (%v), want %v", got, err, want)
+	}
+	if code, ok := canonicalCode[want]; ok && connect.CodeOf(err) != code {
+		t.Errorf("code = %v, want canonical %v for %v", connect.CodeOf(err), code, want)
+	}
+	return msg
+}
+
+func str(s string) *string { return &s }
+
+// --- Fleet seam, from the worker's side -----------------------------------
+
+func (h *harness) registration(t *testing.T) {
+	info := h.reg.Info
+	if h.reg.Endpoint == "" {
+		t.Error("worker registered without an endpoint")
+	}
+	if info.GetImplementation().GetName() == "" {
+		t.Error("implementation name is empty")
+	}
+	if !contains(info.GetImplementation().GetProtocols(), "edgerun.worker.v1") {
+		t.Errorf("implementation must declare edgerun.worker.v1, got %v", info.GetImplementation().GetProtocols())
+	}
+	if !contains(info.GetAbis(), abi) {
+		t.Errorf("worker must advertise %q, got %v", abi, info.GetAbis())
+	}
+	if info.GetMaxConcurrency() != maxConcurrency {
+		t.Errorf("max_concurrency = %d, want the configured %d", info.GetMaxConcurrency(), maxConcurrency)
+	}
+
+	// Describe on the worker itself must agree with what it registered.
+	req := connect.NewRequest(&workerv1.DescribeRequest{})
+	req.Header().Set("Authorization", "Bearer "+executionToken)
+	resp, err := h.client.Describe(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Describe: %v", err)
+	}
+	d := resp.Msg.GetInfo()
+	if d.GetMaxConcurrency() != info.GetMaxConcurrency() || strings.Join(d.GetAbis(), ",") != strings.Join(info.GetAbis(), ",") {
+		t.Errorf("Describe %v disagrees with Register %v", d, info)
+	}
+}
+
+func (h *harness) heartbeats(t *testing.T) {
+	h.orch.waitFor(t, "three heartbeats", 15*time.Second, func() bool { return len(h.orch.heartbeats) >= 3 })
+	h.orch.mu.Lock()
+	defer h.orch.mu.Unlock()
+	for _, hb := range h.orch.heartbeats[:3] {
+		if hb.ID != h.reg.ID {
+			t.Errorf("heartbeat for %q, want %q", hb.ID, h.reg.ID)
+		}
+		if hb.State != workerv1.WorkerState_WORKER_STATE_READY {
+			t.Errorf("idle worker reports %v, want READY", hb.State)
+		}
+	}
+	if h.orch.authFailures != 0 {
+		t.Errorf("worker failed to authenticate to the orchestrator %d times", h.orch.authFailures)
+	}
+}
+
+// --- Authentication --------------------------------------------------------
+
+func (h *harness) authentication(t *testing.T) {
+	for name, tok := range map[string]*string{"no token": str(""), "wrong token": str("not-the-token"), "the worker token": str(workerToken)} {
+		out := h.call(t, invocation{path: "/echo", token: tok, timeout: 10 * time.Second})
+		if connect.CodeOf(out.err) != connect.CodeUnauthenticated {
+			t.Errorf("%s: code = %v (%v), want unauthenticated", name, connect.CodeOf(out.err), out.err)
+		}
+	}
+	// Describe is guarded too.
+	_, err := h.client.Describe(context.Background(), connect.NewRequest(&workerv1.DescribeRequest{}))
+	if connect.CodeOf(err) != connect.CodeUnauthenticated {
+		t.Errorf("Describe without a token: %v", err)
+	}
+}
+
+// --- Execution -------------------------------------------------------------
+
+func (h *harness) requests(t *testing.T) {
+	out := h.ok(t, invocation{method: "POST", path: "/echo", body: "hello, worker",
+		env: []*commonv1.EnvVar{{Name: "MY_VAR", Value: "v1"}}})
+	if out.head.Status != 200 || string(out.body) != "hello, worker" {
+		t.Errorf("echo: status %d body %q", out.head.Status, out.body)
+	}
+	if got := out.headers("content-type"); len(got) != 1 || got[0] != "text/x-conformance" {
+		t.Errorf("response content-type = %v", got)
+	}
+
+	// A body larger than one chunk must come back intact and in order.
+	big := strings.Repeat("0123456789abcdef", 20_000) // 320 KB
+	out = h.ok(t, invocation{method: "POST", path: "/echo", body: big})
+	if string(out.body) != big {
+		t.Errorf("large body corrupted: got %d bytes, want %d", len(out.body), len(big))
+	}
+
+	// The wagi-1 environment.
+	out = h.ok(t, invocation{method: "POST", path: "/env", query: "a=b&c=d", body: "xyz",
+		env: []*commonv1.EnvVar{{Name: "MY_VAR", Value: "v1"}}})
+	env := string(out.body)
+	for _, want := range []string{
+		"GATEWAY_INTERFACE=CGI/1.1", "SERVER_PROTOCOL=HTTP/1.1", "REQUEST_METHOD=POST",
+		"SERVER_NAME=conformance.test", "PATH_INFO=/env", "QUERY_STRING=a=b&c=d",
+		"REMOTE_ADDR=192.0.2.1:1234", "CONTENT_LENGTH=3", "CONTENT_TYPE=text/x-conformance",
+		"HTTP_X_MULTI=a, b", "MY_VAR=v1",
+	} {
+		if !strings.Contains(env, want+"\n") {
+			t.Errorf("guest environment lacks %q; got:\n%s", want, env)
+		}
+	}
+}
+
+func (h *harness) functionStatus(t *testing.T) {
+	for _, code := range []string{"201", "404", "500", "503"} {
+		out := h.call(t, invocation{path: "/status", query: "code=" + code})
+		if out.err != nil {
+			t.Errorf("a function answering %s is a successful invocation, got %v", code, out.err)
+			continue
+		}
+		if strconv.Itoa(int(out.head.Status)) != code {
+			t.Errorf("status = %d, want %s", out.head.Status, code)
+		}
+	}
+	out := h.ok(t, invocation{path: "/status", query: "code=200"})
+	if got := out.headers("set-cookie"); strings.Join(got, "|") != "a=1|b=2" {
+		t.Errorf("repeated headers must keep their order: %v", got)
+	}
+	if got := out.headers("x-test"); len(got) != 1 || got[0] != "1" {
+		t.Errorf("x-test = %v", got)
+	}
+	for _, hd := range out.head.Headers {
+		if hd.Name != strings.ToLower(hd.Name) {
+			t.Errorf("header name %q must be lower-case", hd.Name)
+		}
+		if hd.Name == "status" {
+			t.Error("the CGI Status header must not be forwarded as a header")
+		}
+	}
+}
+
+func (h *harness) summary(t *testing.T) {
+	out := h.ok(t, invocation{path: "/stderr"})
+	s := out.summary
+	if string(s.Stderr) != "log line one\nlog line two\n" || s.StderrTruncated {
+		t.Errorf("stderr = %q truncated=%v", s.Stderr, s.StderrTruncated)
+	}
+	if s.DurationMicros == 0 {
+		t.Error("duration_micros not reported")
+	}
+	if s.PeakMemoryBytes == 0 {
+		t.Error("peak_memory_bytes not reported")
+	}
+}
+
+func (h *harness) abiMismatch(t *testing.T) {
+	out := h.call(t, invocation{path: "/echo", abi: "wagi-99"})
+	wantReason(t, out.err, commonv1.ErrorReason_ERROR_REASON_ABI_MISMATCH)
+}
+
+func (h *harness) artifacts(t *testing.T) {
+	t.Run("unknown digest", func(t *testing.T) {
+		d := "sha256:" + strings.Repeat("0", 64)
+		out := h.call(t, invocation{path: "/echo", digest: d})
+		wantReason(t, out.err, commonv1.ErrorReason_ERROR_REASON_ARTIFACT_NOT_FOUND)
+	})
+	t.Run("malformed digest", func(t *testing.T) {
+		out := h.call(t, invocation{path: "/echo", digest: "md5:nope"})
+		if connect.CodeOf(out.err) != connect.CodeInvalidArgument {
+			t.Errorf("code = %v (%v), want invalid_argument", connect.CodeOf(out.err), out.err)
+		}
+	})
+	t.Run("tampered bytes are never executed", func(t *testing.T) {
+		// Two valid, runnable modules that differ by one byte. The orchestrator
+		// serves the wrong one under the right one's digest. Garbage would be
+		// refused by any worker; only digest verification can refuse a module
+		// that would run perfectly well.
+		right, wrong := padded(h.blob(), 'R'), padded(h.blob(), 'W')
+		d := h.orch.addBlob(right)
+		defer h.orch.removeBlob(d)
+
+		h.orch.setBlob(d, wrong)
+		out := h.call(t, invocation{path: "/echo", digest: d})
+		wantReason(t, out.err, commonv1.ErrorReason_ERROR_REASON_INTERNAL)
+
+		// The bad bytes must not have been cached or remembered: once the
+		// orchestrator serves the right ones, the same digest works.
+		h.orch.setBlob(d, right)
+		h.ok(t, invocation{path: "/echo", digest: d})
+	})
+	t.Run("not a wasm module", func(t *testing.T) {
+		d := h.orch.addBlob([]byte("this is plainly not WebAssembly"))
+		defer h.orch.removeBlob(d)
+		out := h.call(t, invocation{path: "/echo", digest: d})
+		wantReason(t, out.err, commonv1.ErrorReason_ERROR_REASON_ABI_MISMATCH)
+	})
+	t.Run("a module that imports non-WASI functions", func(t *testing.T) {
+		// (module (import "env" "f" (func)) (func (export "_start")))
+		d := h.orch.addBlob([]byte{0, 'a', 's', 'm', 1, 0, 0, 0,
+			1, 4, 1, 0x60, 0, 0, 2, 9, 1, 3, 'e', 'n', 'v', 1, 'f', 0, 0,
+			3, 2, 1, 0, 7, 10, 1, 6, '_', 's', 't', 'a', 'r', 't', 0, 1, 10, 4, 1, 2, 0, 0x0b})
+		defer h.orch.removeBlob(d)
+		out := h.call(t, invocation{path: "/echo", digest: d})
+		wantReason(t, out.err, commonv1.ErrorReason_ERROR_REASON_ABI_MISMATCH)
+	})
+}
+
+// padded returns wasm with a trailing custom section holding 16 copies of tag:
+// still a valid module, but with a different digest for each tag.
+func padded(wasm []byte, tag byte) []byte {
+	payload := append([]byte{3}, "pad"...)
+	payload = append(payload, bytes.Repeat([]byte{tag}, 16)...)
+	out := append([]byte{}, wasm...)
+	out = append(out, 0, byte(len(payload)))
+	return append(out, payload...)
+}
+
+func (h *harness) blob() []byte {
+	h.orch.mu.Lock()
+	defer h.orch.mu.Unlock()
+	return h.orch.blobs[h.good]
+}
+
+func (h *harness) deadline(t *testing.T) {
+	h.ok(t, invocation{path: "/echo"}) // warm: the budget below is for execution
+	for name, inv := range map[string]invocation{
+		"a spinning guest": {path: "/spin"},
+		"a sleeping guest": {path: "/sleep", query: "ms=30000"},
+	} {
+		inv.timeout = 500 * time.Millisecond
+		out := h.call(t, inv)
+		wantReason(t, out.err, commonv1.ErrorReason_ERROR_REASON_DEADLINE_EXCEEDED)
+		if out.elapsed > 10*time.Second {
+			t.Errorf("%s: deadline of 500ms enforced after %v", name, out.elapsed)
+		}
+		// The guest must actually have been stopped, not just abandoned: its
+		// slot has to come back, or a few hung functions would starve the worker.
+		h.orch.waitFor(t, name+" to release its slot", 10*time.Second, func() bool {
+			n := len(h.orch.heartbeats)
+			return n > 0 && h.orch.heartbeats[n-1].InFlight == 0
+		})
+	}
+}
+
+func (h *harness) traps(t *testing.T) {
+	out := h.call(t, invocation{path: "/exit", query: "code=3"})
+	msg := wantReason(t, out.err, commonv1.ErrorReason_ERROR_REASON_FUNCTION_TRAPPED)
+	if !strings.Contains(msg, "exiting on request") {
+		t.Errorf("a FUNCTION_TRAPPED message should end with the guest's stderr tail, got %q", msg)
+	}
+	out = h.call(t, invocation{path: "/panic"})
+	wantReason(t, out.err, commonv1.ErrorReason_ERROR_REASON_FUNCTION_TRAPPED)
+	// Exit code 0 from a guest that wrote a valid response is fine, and the
+	// worker survives traps.
+	h.ok(t, invocation{path: "/echo"})
+}
+
+func (h *harness) memoryLimit(t *testing.T) {
+	small := &commonv1.Limits{MemoryLimitBytes: 32 << 20}
+	large := &commonv1.Limits{MemoryLimitBytes: 256 << 20}
+	out := h.call(t, invocation{path: "/memhog", query: "mb=100", limits: small})
+	wantReason(t, out.err, commonv1.ErrorReason_ERROR_REASON_FUNCTION_TRAPPED)
+	// The same module on the same worker, with a larger limit, must fit.
+	out = h.ok(t, invocation{path: "/memhog", query: "mb=100", limits: large})
+	if out.summary.PeakMemoryBytes < 100<<20 {
+		t.Errorf("peak_memory_bytes = %d, want >= 100 MiB", out.summary.PeakMemoryBytes)
+	}
+}
+
+func (h *harness) responseLimit(t *testing.T) {
+	lim := &commonv1.Limits{MaxResponseBytes: 64 << 10}
+	out := h.call(t, invocation{path: "/big", query: "bytes=1048576", limits: lim})
+	wantReason(t, out.err, commonv1.ErrorReason_ERROR_REASON_RESPONSE_TOO_LARGE)
+	if out.head != nil || len(out.body) != 0 {
+		t.Error("nothing of an over-limit response may be streamed")
+	}
+	out = h.ok(t, invocation{path: "/big", query: "bytes=16384", limits: lim})
+	if len(out.body) < 16384 {
+		t.Errorf("under the limit: got %d bytes", len(out.body))
+	}
+}
+
+func (h *harness) abiViolations(t *testing.T) {
+	for _, path := range []string{"/noseparator", "/empty"} {
+		out := h.call(t, invocation{path: path})
+		wantReason(t, out.err, commonv1.ErrorReason_ERROR_REASON_ABI_MISMATCH)
+	}
+}
+
+func (h *harness) timeAndEntropy(t *testing.T) {
+	a := h.ok(t, invocation{path: "/random"})
+	b := h.ok(t, invocation{path: "/random"})
+	if len(bytes.TrimSpace(a.body)) != 32 || bytes.Equal(a.body, b.body) {
+		t.Errorf("guest randomness must be real and differ between invocations: %q %q", a.body, b.body)
+	}
+	before := time.Now().Unix()
+	out := h.ok(t, invocation{path: "/time"})
+	var got int64
+	for _, c := range bytes.TrimSpace(out.body) {
+		got = got*10 + int64(c-'0')
+	}
+	if d := got - before; d < -5 || d > 5 {
+		t.Errorf("guest clock reads %s, %ds from real time", bytes.TrimSpace(out.body), d)
+	}
+	start := time.Now()
+	h.ok(t, invocation{path: "/sleep", query: "ms=400"})
+	if time.Since(start) < 400*time.Millisecond {
+		t.Error("sleeping must really sleep")
+	}
+}
+
+// --- Capacity --------------------------------------------------------------
+
+func (h *harness) capacity(t *testing.T) {
+	h.ok(t, invocation{path: "/echo"}) // warm
+	done := make(chan outcome, maxConcurrency)
+	for range maxConcurrency {
+		go func() { done <- h.call(t, invocation{path: "/sleep", query: "ms=1500"}) }()
+	}
+	h.orch.waitFor(t, "all slots to be reported busy", 10*time.Second, func() bool {
+		for i := len(h.orch.heartbeats) - 1; i >= 0 && i >= len(h.orch.heartbeats)-3; i-- {
+			if h.orch.heartbeats[i].InFlight == maxConcurrency {
+				return true
+			}
+		}
+		return false
+	})
+
+	// Capacity is never queued: with every slot busy the answer is immediate.
+	out := h.call(t, invocation{path: "/echo"})
+	wantReason(t, out.err, commonv1.ErrorReason_ERROR_REASON_NO_CAPACITY)
+	if out.elapsed > time.Second {
+		t.Errorf("NO_CAPACITY took %v: workers must not queue", out.elapsed)
+	}
+
+	for range maxConcurrency {
+		if o := <-done; o.err != nil {
+			t.Errorf("an admitted invocation failed: %v", o.err)
+		}
+	}
+	h.ok(t, invocation{path: "/echo"}) // slots are released again
+}
+
+// --- Fleet: recovery and shutdown -----------------------------------------
+
+func (h *harness) reregister(t *testing.T) {
+	h.orch.mu.Lock()
+	n := len(h.orch.registrations)
+	last := h.orch.registrations[n-1].ID
+	h.orch.mu.Unlock()
+
+	h.orch.update(func() { h.orch.forget = last })
+	h.orch.waitFor(t, "a new registration after reregister=true", 15*time.Second, func() bool { return len(h.orch.registrations) > n })
+
+	h.orch.mu.Lock()
+	next := h.orch.registrations[len(h.orch.registrations)-1]
+	h.orch.mu.Unlock()
+	if next.ID == last {
+		t.Error("re-registration must yield a fresh worker id")
+	}
+	h.orch.waitFor(t, "heartbeats under the new id", 15*time.Second, func() bool {
+		for _, hb := range h.orch.heartbeats {
+			if hb.ID == next.ID {
+				return true
+			}
+		}
+		return false
+	})
+	h.reg = next
+	h.ok(t, invocation{path: "/echo"}) // still serving
+}
+
+func (h *harness) gracefulShutdown(t *testing.T) {
+	h.ok(t, invocation{path: "/echo"}) // warm
+	inflight := make(chan outcome, 1)
+	go func() { inflight <- h.call(t, invocation{path: "/sleep", query: "ms=1200"}) }()
+	h.orch.waitFor(t, "the invocation to be in flight", 10*time.Second, func() bool {
+		n := len(h.orch.heartbeats)
+		return n > 0 && h.orch.heartbeats[n-1].InFlight == 1
+	})
+
+	stopped := make(chan struct{})
+	go func() { h.stop(); close(stopped) }()
+
+	h.orch.waitFor(t, "a DRAINING heartbeat", 10*time.Second, func() bool {
+		n := len(h.orch.heartbeats)
+		return n > 0 && h.orch.heartbeats[n-1].State == workerv1.WorkerState_WORKER_STATE_DRAINING
+	})
+	// A draining worker takes no new work, so the orchestrator can retry elsewhere.
+	out := h.call(t, invocation{path: "/echo", timeout: 10 * time.Second})
+	wantReason(t, out.err, commonv1.ErrorReason_ERROR_REASON_NO_CAPACITY)
+
+	// The invocation that was already running is allowed to finish.
+	if o := <-inflight; o.err != nil {
+		t.Errorf("in-flight invocation was cut off by shutdown: %v", o.err)
+	}
+	select {
+	case <-stopped:
+	case <-time.After(30 * time.Second):
+		t.Fatal("worker did not exit after draining")
+	}
+	h.orch.waitFor(t, "Deregister", 5*time.Second, func() bool { return contains(h.orch.deregistered, h.reg.ID) })
+}
+
+func contains(s []string, v string) bool {
+	for _, x := range s {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}

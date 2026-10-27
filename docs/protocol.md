@@ -35,7 +35,11 @@ Shared vocabulary lives in `edgerun.common.v1`.
 - Only **unary** and **server-streaming** RPCs are used. There is no client or bidirectional
   streaming, so any plain HTTP stack can implement a peer.
 - The RPC deadline (`Connect-Timeout-Ms`) is the wall-clock budget of an invocation. Every hop
-  must propagate it and enforce it.
+  must propagate it and enforce it: a worker must actually stop the guest and free its slot,
+  not merely stop waiting for it. A caller whose own deadline expires first must treat that as
+  `DEADLINE_EXCEEDED`: Connect clients derive the wire deadline from the call's context, so the
+  caller's timer and the downstream's budget are the same value and the downstream's typed
+  error is not guaranteed to arrive first.
 
 ## Authentication
 
