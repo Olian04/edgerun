@@ -313,31 +313,27 @@ func TestRegisterWorkerValidation(t *testing.T) {
 	}
 }
 
-func TestSchedulableWorkersFiltersByStateAbiAndLiveness(t *testing.T) {
+func TestReadyWorkersFiltersByStateAndLiveness(t *testing.T) {
 	s := newStore(t)
-	ready, _ := s.RegisterWorker(ctx, "http://ready:1", workerInfo("wagi-1"))
+	ready, _ := s.RegisterWorker(ctx, "http://ready:1", workerInfo("wagi-1", "wagi-2"))
 	draining, _ := s.RegisterWorker(ctx, "http://draining:1", workerInfo("wagi-1"))
 	s.Heartbeat(ctx, draining, workerv1.WorkerState_WORKER_STATE_DRAINING, 0)
-	s.RegisterWorker(ctx, "http://other-abi:1", workerInfo("v8-1"))
-	stale, _ := s.RegisterWorker(ctx, "http://stale:1", workerInfo("wagi-1"))
-	_ = stale
+	s.RegisterWorker(ctx, "http://stale:1", workerInfo("wagi-1"))
 
 	// Let every worker go stale, then keep only `ready` alive.
 	time.Sleep(500 * time.Millisecond)
 	s.Heartbeat(ctx, ready, workerv1.WorkerState_WORKER_STATE_READY, 1)
 
-	got, err := s.SchedulableWorkers(ctx, "wagi-1", 300*time.Millisecond)
+	got, err := s.ReadyWorkers(ctx, 300*time.Millisecond)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0].ID != ready || got[0].Endpoint != "http://ready:1" || got[0].InFlight != 1 || got[0].MaxConcurrency != 4 {
-		t.Errorf("schedulable = %+v, want only the live READY wagi-1 worker", got)
+	if len(got) != 1 || got[0].ID != ready || got[0].Endpoint != "http://ready:1" || got[0].InFlight != 1 ||
+		got[0].MaxConcurrency != 4 || !got[0].Supports("wagi-1") || !got[0].Supports("wagi-2") || got[0].Supports("v8-1") {
+		t.Errorf("ready = %+v, want only the live READY worker with both ABIs", got)
 	}
-	if got, _ := s.SchedulableWorkers(ctx, "v8-1", time.Minute); len(got) != 1 || got[0].Endpoint != "http://other-abi:1" {
-		t.Errorf("abi filter: %+v", got)
-	}
-	if got, _ := s.SchedulableWorkers(ctx, "nope", time.Minute); len(got) != 0 {
-		t.Errorf("unknown abi: %+v", got)
+	if all, _ := s.ReadyWorkers(ctx, time.Minute); len(all) != 2 {
+		t.Errorf("with a generous window both READY workers are listed, draining excluded: %d", len(all))
 	}
 
 	ws, _ := s.ListWorkers(ctx, 300*time.Millisecond)
@@ -347,12 +343,11 @@ func TestSchedulableWorkersFiltersByStateAbiAndLiveness(t *testing.T) {
 			alive++
 		}
 	}
-	if alive != 1 || len(ws) != 4 {
-		t.Errorf("ListWorkers: %d alive of %d, want 1 of 4", alive, len(ws))
+	if alive != 1 || len(ws) != 3 {
+		t.Errorf("ListWorkers: %d alive of %d, want 1 of 3", alive, len(ws))
 	}
-
-	if n, err := s.PruneWorkers(ctx, 300*time.Millisecond); err != nil || n != 3 {
-		t.Errorf("PruneWorkers = %d, %v; want the 3 stale ones", n, err)
+	if n, err := s.PruneWorkers(ctx, 300*time.Millisecond); err != nil || n != 2 {
+		t.Errorf("PruneWorkers = %d, %v; want the 2 stale ones", n, err)
 	}
 }
 

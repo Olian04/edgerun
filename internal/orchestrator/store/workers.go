@@ -109,16 +109,29 @@ func (s *Store) ListWorkers(ctx context.Context, aliveWithin time.Duration) ([]*
 type Worker struct {
 	ID             string
 	Endpoint       string
+	ABIs           []string
 	MaxConcurrency uint32
 	InFlight       uint32
 }
 
-// SchedulableWorkers returns workers that are alive, READY and support abi.
-func (s *Store) SchedulableWorkers(ctx context.Context, abi string, aliveWithin time.Duration) ([]Worker, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id::text, endpoint, max_concurrency, in_flight FROM workers
-		WHERE state = $1 AND $2 = ANY (abis) AND last_heartbeat > now() - make_interval(secs => $3)
+// Supports reports whether the worker can run modules built for abi.
+func (w Worker) Supports(abi string) bool {
+	for _, a := range w.ABIs {
+		if a == abi {
+			return true
+		}
+	}
+	return false
+}
+
+// ReadyWorkers returns the workers that are alive and READY, with their ABIs.
+// Filtering by ABI is the scheduler's job: it needs the whole set to tell "no
+// worker supports this ABI" from "no worker is alive".
+func (s *Store) ReadyWorkers(ctx context.Context, aliveWithin time.Duration) ([]Worker, error) {
+	rows, err := s.pool.Query(ctx, `SELECT id::text, endpoint, abis, max_concurrency, in_flight FROM workers
+		WHERE state = $1 AND last_heartbeat > now() - make_interval(secs => $2)
 		ORDER BY endpoint`,
-		int16(workerv1.WorkerState_WORKER_STATE_READY), abi, aliveWithin.Seconds())
+		int16(workerv1.WorkerState_WORKER_STATE_READY), aliveWithin.Seconds())
 	if err != nil {
 		return nil, err
 	}
@@ -127,7 +140,7 @@ func (s *Store) SchedulableWorkers(ctx context.Context, abi string, aliveWithin 
 	for rows.Next() {
 		var w Worker
 		var maxC, inF int32
-		if err := rows.Scan(&w.ID, &w.Endpoint, &maxC, &inF); err != nil {
+		if err := rows.Scan(&w.ID, &w.Endpoint, &w.ABIs, &maxC, &inF); err != nil {
 			return nil, err
 		}
 		w.MaxConcurrency, w.InFlight = uint32(maxC), uint32(inF)

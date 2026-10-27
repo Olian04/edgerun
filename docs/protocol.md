@@ -80,13 +80,19 @@ token scheme does not replace it.
 
 1. **Frontend → orchestrator.** The frontend sends `HttpRequest` (host, path, method, headers,
    body) via `Invoke`. It has no knowledge of functions or workers.
-2. **Routing** is the orchestrator's: most specific host pattern, then longest path prefix on
-   whole segments (see `Route` in `model.proto`). No match → `FUNCTION_NOT_FOUND`.
+2. **Routing** is the orchestrator's: among the routes matching both host and path, the most
+   specific host wins, then the longest path prefix on whole segments (see `Route` in
+   `model.proto`); a specific host with no matching prefix falls through to less specific
+   hosts. No match → `FUNCTION_NOT_FOUND`. The Host header is compared lower-cased, without
+   port or trailing dot. Paths are matched as given, not cleaned.
 3. **Scheduling.** The orchestrator picks among workers that are alive, `READY`, and list the
    module's ABI, preferring the same worker for the same module (warm cache).
-4. **Retry rule.** The orchestrator retries only on `NO_CAPACITY`, on the next candidate, at most
-   3 attempts. It never retries after the response head was received, and never retries
-   `FUNCTION_TRAPPED` or `DEADLINE_EXCEEDED`, because the function may have had side effects.
+4. **Retry rule.** The orchestrator retries on `NO_CAPACITY`, and when a worker could not be
+   reached at all (the connection was never established, so the request cannot have run), on the
+   next candidate, at most 3 attempts. It never retries after the response head was received,
+   and never retries `FUNCTION_TRAPPED` or `DEADLINE_EXCEEDED`, or a connection that broke
+   after the request was sent, because the function may have had side effects. A worker that
+   could not be reached is skipped for a few seconds.
 5. **Capacity is never queued.** A worker with no free slot answers `NO_CAPACITY` immediately.
 6. **Response stream:** head, then chunks. A worker stream ends with exactly one
    `ExecutionSummary`; ending without one is a failed invocation.

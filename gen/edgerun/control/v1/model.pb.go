@@ -203,9 +203,13 @@ func (x *FunctionVersion) GetCreateTime() *timestamppb.Timestamp {
 
 // Route maps incoming requests to a function.
 //
-// Matching: the most specific host pattern wins (exact host, then a leading
-// wildcard like "*.example.com", then "*"); among equally specific hosts the
-// longest path_prefix wins. Prefixes match on whole path segments.
+// Matching: among the routes that match both host and path, the most specific
+// host pattern wins (exact host, then a leading wildcard like "*.example.com"
+// with the longer suffix first, then "*"); among equally specific hosts the
+// longest path_prefix wins. Prefixes match on whole path segments. A wildcard
+// does not match its own apex ("*.example.com" does not match "example.com").
+// A request that matches a specific host but none of its prefixes falls through
+// to less specific hosts, so a "*" route works as a catch-all.
 type Route struct {
 	state       protoimpl.MessageState `protogen:"open.v1"`
 	Id          string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`

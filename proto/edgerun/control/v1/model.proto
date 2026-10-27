@@ -34,9 +34,13 @@ message FunctionVersion {
 
 // Route maps incoming requests to a function.
 //
-// Matching: the most specific host pattern wins (exact host, then a leading
-// wildcard like "*.example.com", then "*"); among equally specific hosts the
-// longest path_prefix wins. Prefixes match on whole path segments.
+// Matching: among the routes that match both host and path, the most specific
+// host pattern wins (exact host, then a leading wildcard like "*.example.com"
+// with the longer suffix first, then "*"); among equally specific hosts the
+// longest path_prefix wins. Prefixes match on whole path segments. A wildcard
+// does not match its own apex ("*.example.com" does not match "example.com").
+// A request that matches a specific host but none of its prefixes falls through
+// to less specific hosts, so a "*" route works as a catch-all.
 message Route {
   string id = 1;
   string host_pattern = 2;
