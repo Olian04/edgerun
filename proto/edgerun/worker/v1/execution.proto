@@ -1,0 +1,61 @@
+// Execution seam, served by workers: run one invocation of one module.
+// Server: worker. Client: orchestrator.
+syntax = "proto3";
+
+package edgerun.worker.v1;
+
+import "edgerun/common/v1/common.proto";
+import "edgerun/worker/v1/worker.proto";
+
+service ExecutionService {
+  rpc Describe(DescribeRequest) returns (DescribeResponse);
+
+  // Execute runs the module identified by artifact_digest against the request.
+  //
+  // The worker fetches and caches the artifact itself (see ArtifactService)
+  // and must verify its digest. The response stream is: exactly one head, zero
+  // or more chunks, then exactly one summary. A stream that ends without a
+  // summary is a failed invocation.
+  //
+  // Capacity is never queued: a worker with no free slot answers immediately
+  // with ERROR_REASON_NO_CAPACITY so the orchestrator can try another worker.
+  // The RPC deadline is the invocation's wall-clock budget.
+  rpc Execute(ExecuteRequest) returns (stream ExecuteResponse);
+}
+
+message DescribeRequest {}
+
+message DescribeResponse {
+  WorkerInfo info = 1;
+}
+
+message ExecuteRequest {
+  // Correlation id; echoed in worker logs. Workers attach no other meaning.
+  string invocation_id = 1;
+  // Content address of the module: "sha256:<lowercase hex>".
+  string artifact_digest = 2;
+  // ABI the module was built for. A worker that does not support it answers
+  // ERROR_REASON_ABI_MISMATCH.
+  string abi = 3;
+  edgerun.common.v1.Limits limits = 4;
+  repeated edgerun.common.v1.EnvVar env = 5;
+  edgerun.common.v1.HttpRequest request = 6;
+}
+
+message ExecuteResponse {
+  oneof part {
+    edgerun.common.v1.HttpResponseHead head = 1;
+    bytes chunk = 2;
+    ExecutionSummary summary = 3;
+  }
+}
+
+// ExecutionSummary closes a successful stream and carries the measurements the
+// orchestrator persists.
+message ExecutionSummary {
+  uint64 duration_micros = 1;
+  uint64 peak_memory_bytes = 2;
+  // Tail of the guest's stderr, truncated by the worker to a bounded size.
+  bytes stderr = 3;
+  bool stderr_truncated = 4;
+}

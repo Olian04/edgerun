@@ -1,0 +1,20 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # buf breaking compares against origin/main
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: make proto-check
+      - run: make build
+      - run: make test

@@ -1,0 +1,40 @@
+// Control seam, routing. Server: orchestrator. Clients: admin UI, CLI.
+syntax = "proto3";
+
+package edgerun.control.v1;
+
+import "edgerun/control/v1/model.proto";
+
+service RouteService {
+  // CreateRoute fails with ALREADY_EXISTS if the same (host_pattern,
+  // path_prefix) pair is already routed.
+  rpc CreateRoute(CreateRouteRequest) returns (CreateRouteResponse);
+  rpc ListRoutes(ListRoutesRequest) returns (ListRoutesResponse);
+  rpc DeleteRoute(DeleteRouteRequest) returns (DeleteRouteResponse);
+}
+
+message CreateRouteRequest {
+  string host_pattern = 1;
+  string path_prefix = 2;
+  string function_id = 3;
+}
+
+message CreateRouteResponse {
+  Route route = 1;
+}
+
+message ListRoutesRequest {
+  uint32 page_size = 1;
+  string page_token = 2;
+}
+
+message ListRoutesResponse {
+  repeated Route routes = 1;
+  string next_page_token = 2;
+}
+
+message DeleteRouteRequest {
+  string route_id = 1;
+}
+
+message DeleteRouteResponse {}

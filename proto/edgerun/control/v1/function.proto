@@ -1,0 +1,124 @@
+// Control seam, functions: create functions, upload versions, deploy, and
+// configure environment. Server: orchestrator. Clients: admin UI, CLI.
+syntax = "proto3";
+
+package edgerun.control.v1;
+
+import "edgerun/common/v1/common.proto";
+import "edgerun/control/v1/model.proto";
+
+service FunctionService {
+  rpc CreateFunction(CreateFunctionRequest) returns (CreateFunctionResponse);
+  rpc GetFunction(GetFunctionRequest) returns (GetFunctionResponse);
+  rpc ListFunctions(ListFunctionsRequest) returns (ListFunctionsResponse);
+  // DeleteFunction removes the function with its versions, routes and
+  // environment. Invocation records are retained.
+  rpc DeleteFunction(DeleteFunctionRequest) returns (DeleteFunctionResponse);
+
+  // CreateVersion stores a new immutable version. It does not deploy it unless
+  // activate is set.
+  rpc CreateVersion(CreateVersionRequest) returns (CreateVersionResponse);
+  rpc ListVersions(ListVersionsRequest) returns (ListVersionsResponse);
+  // ActivateVersion atomically points the function at a version. This is both
+  // deploy and rollback.
+  rpc ActivateVersion(ActivateVersionRequest) returns (ActivateVersionResponse);
+
+  // SetEnv creates or replaces one environment variable.
+  rpc SetEnv(SetEnvRequest) returns (SetEnvResponse);
+  rpc DeleteEnv(DeleteEnvRequest) returns (DeleteEnvResponse);
+  rpc ListEnv(ListEnvRequest) returns (ListEnvResponse);
+}
+
+message CreateFunctionRequest {
+  string name = 1;
+}
+
+message CreateFunctionResponse {
+  Function function = 1;
+}
+
+message GetFunctionRequest {
+  string function_id = 1;
+}
+
+message GetFunctionResponse {
+  Function function = 1;
+}
+
+message ListFunctionsRequest {
+  // 0 means server default.
+  uint32 page_size = 1;
+  // Opaque; empty for the first page.
+  string page_token = 2;
+}
+
+message ListFunctionsResponse {
+  repeated Function functions = 1;
+  // Empty when there are no more pages.
+  string next_page_token = 2;
+}
+
+message DeleteFunctionRequest {
+  string function_id = 1;
+}
+
+message DeleteFunctionResponse {}
+
+message CreateVersionRequest {
+  string function_id = 1;
+  // The module bytes, bounded by DescribeResponse.max_module_bytes.
+  bytes module = 2;
+  // Guest ABI the module was built for.
+  string abi = 3;
+  edgerun.common.v1.Limits limits = 4;
+  // Deploy the new version immediately.
+  bool activate = 5;
+}
+
+message CreateVersionResponse {
+  FunctionVersion version = 1;
+}
+
+message ListVersionsRequest {
+  string function_id = 1;
+  uint32 page_size = 2;
+  string page_token = 3;
+}
+
+message ListVersionsResponse {
+  // Newest first.
+  repeated FunctionVersion versions = 1;
+  string next_page_token = 2;
+}
+
+message ActivateVersionRequest {
+  string function_id = 1;
+  string version_id = 2;
+}
+
+message ActivateVersionResponse {
+  Function function = 1;
+}
+
+message SetEnvRequest {
+  string function_id = 1;
+  EnvEntry entry = 2;
+}
+
+message SetEnvResponse {}
+
+message DeleteEnvRequest {
+  string function_id = 1;
+  string name = 2;
+}
+
+message DeleteEnvResponse {}
+
+message ListEnvRequest {
+  string function_id = 1;
+}
+
+message ListEnvResponse {
+  // Secret values are returned empty.
+  repeated EnvEntry entries = 1;
+}

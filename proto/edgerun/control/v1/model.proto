@@ -1,0 +1,87 @@
+// Resources managed through the control seam.
+syntax = "proto3";
+
+package edgerun.control.v1;
+
+import "google/protobuf/timestamp.proto";
+import "edgerun/common/v1/common.proto";
+import "edgerun/worker/v1/worker.proto";
+
+message Function {
+  string id = 1;
+  // Unique, DNS-label-like: lowercase letters, digits and '-', 1-63 chars.
+  string name = 2;
+  // Version that serves traffic. Empty until the first activation.
+  string active_version_id = 3;
+  google.protobuf.Timestamp create_time = 4;
+}
+
+// FunctionVersion is immutable once created. Rolling back is activating an
+// older version, never editing one.
+message FunctionVersion {
+  string id = 1;
+  string function_id = 2;
+  // 1-based, increasing per function.
+  int64 number = 3;
+  // "sha256:<lowercase hex>" of the module bytes.
+  string artifact_digest = 4;
+  // Guest ABI, e.g. "wagi-1".
+  string abi = 5;
+  uint64 size_bytes = 6;
+  edgerun.common.v1.Limits limits = 7;
+  google.protobuf.Timestamp create_time = 8;
+}
+
+// Route maps incoming requests to a function.
+//
+// Matching: the most specific host pattern wins (exact host, then a leading
+// wildcard like "*.example.com", then "*"); among equally specific hosts the
+// longest path_prefix wins. Prefixes match on whole path segments.
+message Route {
+  string id = 1;
+  string host_pattern = 2;
+  // Starts with "/".
+  string path_prefix = 3;
+  string function_id = 4;
+  google.protobuf.Timestamp create_time = 5;
+}
+
+// EnvEntry is one environment variable of a function. Values of secret
+// entries are write-only: reads return them empty.
+message EnvEntry {
+  string name = 1;
+  string value = 2;
+  bool secret = 3;
+}
+
+// WorkerStatus is the orchestrator's current view of one registered worker.
+message WorkerStatus {
+  string id = 1;
+  string endpoint = 2;
+  edgerun.worker.v1.WorkerInfo info = 3;
+  edgerun.worker.v1.WorkerState state = 4;
+  uint32 in_flight = 5;
+  google.protobuf.Timestamp last_heartbeat_time = 6;
+  // Whether the worker has heartbeated recently enough to be scheduled onto.
+  bool alive = 7;
+}
+
+// Invocation is the persisted record of one routed request.
+message Invocation {
+  string id = 1;
+  string request_id = 2;
+  string function_id = 3;
+  string version_id = 4;
+  string worker_id = 5;
+  string method = 6;
+  string path = 7;
+  // HTTP status the function answered with; 0 if it never answered.
+  uint32 status = 8;
+  // Set when the platform (not the function) failed the invocation.
+  edgerun.common.v1.ErrorReason error_reason = 9;
+  uint64 duration_micros = 10;
+  uint64 peak_memory_bytes = 11;
+  // Tail of the guest's stderr, truncated.
+  bytes stderr = 12;
+  google.protobuf.Timestamp start_time = 13;
+}
