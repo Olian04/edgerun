@@ -9,6 +9,7 @@ tool (
 
 require (
 	connectrpc.com/connect v1.21.1
+	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/tetratelabs/wazero v1.12.0
 	golang.org/x/sync v0.24.0
