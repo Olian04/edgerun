@@ -162,7 +162,6 @@ type overview struct {
 	Functions    int
 	Routes       int
 	Workers      string
-	ModuleLimit  int
 }
 
 var (
@@ -170,7 +169,6 @@ var (
 	ovFunctions    = webui.Int[overview]{Label: "Functions", Load: func(o overview) int { return o.Functions }}
 	ovRoutes       = webui.Int[overview]{Label: "Routes", Load: func(o overview) int { return o.Routes }}
 	ovWorkers      = webui.String[overview]{Label: "Workers", Load: func(o overview) string { return o.Workers }}
-	ovModuleLimit  = webui.Int[overview]{Label: "Largest module", Load: func(o overview) int { return o.ModuleLimit }, Format: humanBytes}
 )
 
 func (u *ui) overviewPage() webui.Page[webui.NoArgs] {
@@ -207,12 +205,11 @@ func (u *ui) overviewPage() webui.Page[webui.NoArgs] {
 					return overview{
 						Orchestrator: strings.TrimSpace(impl.GetName() + " " + impl.GetVersion()),
 						Functions:    len(fns), Routes: len(rts), Workers: fmt.Sprintf("%d alive of %d registered", alive, len(ws)),
-						ModuleLimit: int(info.GetMaxModuleBytes()),
 					}, nil
 				},
 				Fields: []webui.Accessor[overview]{
 					webui.Group[overview]{ovOrchestrator, ovWorkers},
-					webui.Group[overview]{ovFunctions, ovRoutes, ovModuleLimit},
+					webui.Group[overview]{ovFunctions, ovRoutes},
 				},
 			},
 			u.workersTable("Workers"),
