@@ -17,6 +17,8 @@ message CreateRouteRequest {
   string host_pattern = 1;
   string path_prefix = 2;
   string function_id = 3;
+  map<string, string> labels = 4;
+  bool validate_only = 5;
 }
 
 message CreateRouteResponse {
@@ -26,6 +28,8 @@ message CreateRouteResponse {
 message ListRoutesRequest {
   uint32 page_size = 1;
   string page_token = 2;
+  // Only routes that carry every one of these labels with exactly these values.
+  map<string, string> match_labels = 3;
 }
 
 message ListRoutesResponse {
@@ -35,6 +39,7 @@ message ListRoutesResponse {
 
 message DeleteRouteRequest {
   string route_id = 1;
+  bool validate_only = 2;
 }
 
 message DeleteRouteResponse {}

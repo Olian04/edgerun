@@ -67,6 +67,9 @@ const (
 	// FunctionServiceSetEgressProcedure is the fully-qualified name of the FunctionService's SetEgress
 	// RPC.
 	FunctionServiceSetEgressProcedure = "/edgerun.control.v1.FunctionService/SetEgress"
+	// FunctionServiceSetLabelsProcedure is the fully-qualified name of the FunctionService's SetLabels
+	// RPC.
+	FunctionServiceSetLabelsProcedure = "/edgerun.control.v1.FunctionService/SetLabels"
 )
 
 // FunctionServiceClient is a client for the edgerun.control.v1.FunctionService service.
@@ -96,6 +99,9 @@ type FunctionServiceClient interface {
 	// invalid_argument. An empty list closes the function off again. Whatever is
 	// listed here, the network service may still refuse a destination.
 	SetEgress(context.Context, *connect.Request[v1.SetEgressRequest]) (*connect.Response[v1.SetEgressResponse], error)
+	// SetLabels replaces the function's labels (an empty map clears them).
+	// Labels are validated as described in docs/protocol.md.
+	SetLabels(context.Context, *connect.Request[v1.SetLabelsRequest]) (*connect.Response[v1.SetLabelsResponse], error)
 }
 
 // NewFunctionServiceClient constructs a client for the edgerun.control.v1.FunctionService service.
@@ -175,6 +181,12 @@ func NewFunctionServiceClient(httpClient connect.HTTPClient, baseURL string, opt
 			connect.WithSchema(functionServiceMethods.ByName("SetEgress")),
 			connect.WithClientOptions(opts...),
 		),
+		setLabels: connect.NewClient[v1.SetLabelsRequest, v1.SetLabelsResponse](
+			httpClient,
+			baseURL+FunctionServiceSetLabelsProcedure,
+			connect.WithSchema(functionServiceMethods.ByName("SetLabels")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -191,6 +203,7 @@ type functionServiceClient struct {
 	deleteEnv       *connect.Client[v1.DeleteEnvRequest, v1.DeleteEnvResponse]
 	listEnv         *connect.Client[v1.ListEnvRequest, v1.ListEnvResponse]
 	setEgress       *connect.Client[v1.SetEgressRequest, v1.SetEgressResponse]
+	setLabels       *connect.Client[v1.SetLabelsRequest, v1.SetLabelsResponse]
 }
 
 // CreateFunction calls edgerun.control.v1.FunctionService.CreateFunction.
@@ -248,6 +261,11 @@ func (c *functionServiceClient) SetEgress(ctx context.Context, req *connect.Requ
 	return c.setEgress.CallUnary(ctx, req)
 }
 
+// SetLabels calls edgerun.control.v1.FunctionService.SetLabels.
+func (c *functionServiceClient) SetLabels(ctx context.Context, req *connect.Request[v1.SetLabelsRequest]) (*connect.Response[v1.SetLabelsResponse], error) {
+	return c.setLabels.CallUnary(ctx, req)
+}
+
 // FunctionServiceHandler is an implementation of the edgerun.control.v1.FunctionService service.
 type FunctionServiceHandler interface {
 	CreateFunction(context.Context, *connect.Request[v1.CreateFunctionRequest]) (*connect.Response[v1.CreateFunctionResponse], error)
@@ -275,6 +293,9 @@ type FunctionServiceHandler interface {
 	// invalid_argument. An empty list closes the function off again. Whatever is
 	// listed here, the network service may still refuse a destination.
 	SetEgress(context.Context, *connect.Request[v1.SetEgressRequest]) (*connect.Response[v1.SetEgressResponse], error)
+	// SetLabels replaces the function's labels (an empty map clears them).
+	// Labels are validated as described in docs/protocol.md.
+	SetLabels(context.Context, *connect.Request[v1.SetLabelsRequest]) (*connect.Response[v1.SetLabelsResponse], error)
 }
 
 // NewFunctionServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -350,6 +371,12 @@ func NewFunctionServiceHandler(svc FunctionServiceHandler, opts ...connect.Handl
 		connect.WithSchema(functionServiceMethods.ByName("SetEgress")),
 		connect.WithHandlerOptions(opts...),
 	)
+	functionServiceSetLabelsHandler := connect.NewUnaryHandler(
+		FunctionServiceSetLabelsProcedure,
+		svc.SetLabels,
+		connect.WithSchema(functionServiceMethods.ByName("SetLabels")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/edgerun.control.v1.FunctionService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case FunctionServiceCreateFunctionProcedure:
@@ -374,6 +401,8 @@ func NewFunctionServiceHandler(svc FunctionServiceHandler, opts ...connect.Handl
 			functionServiceListEnvHandler.ServeHTTP(w, r)
 		case FunctionServiceSetEgressProcedure:
 			functionServiceSetEgressHandler.ServeHTTP(w, r)
+		case FunctionServiceSetLabelsProcedure:
+			functionServiceSetLabelsHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -425,4 +454,8 @@ func (UnimplementedFunctionServiceHandler) ListEnv(context.Context, *connect.Req
 
 func (UnimplementedFunctionServiceHandler) SetEgress(context.Context, *connect.Request[v1.SetEgressRequest]) (*connect.Response[v1.SetEgressResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("edgerun.control.v1.FunctionService.SetEgress is not implemented"))
+}
+
+func (UnimplementedFunctionServiceHandler) SetLabels(context.Context, *connect.Request[v1.SetLabelsRequest]) (*connect.Response[v1.SetLabelsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("edgerun.control.v1.FunctionService.SetLabels is not implemented"))
 }

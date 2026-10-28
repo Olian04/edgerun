@@ -231,7 +231,7 @@ func TestOperatorDeploysAFunctionThroughTheUI(t *testing.T) {
 
 func TestAViewerCanLookButNotChange(t *testing.T) {
 	r := newRig(t)
-	fn, err := r.ctl.CreateFunction(ctx, "watched")
+	fn, err := r.ctl.CreateFunction(ctx, "watched", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +299,7 @@ func TestAViewerCanLookButNotChange(t *testing.T) {
 
 func TestOperatorSuppliedTextIsEscaped(t *testing.T) {
 	r := newRig(t)
-	fn, _ := r.ctl.CreateFunction(ctx, "xss")
+	fn, _ := r.ctl.CreateFunction(ctx, "xss", nil)
 	const payload = `<script>alert("owned")</script><img src=x onerror=alert(1)>`
 	b := r.browser()
 	b.signIn("alice", "alice-pw")
@@ -330,7 +330,7 @@ func TestMissingFunctionIsA404WithAWayBack(t *testing.T) {
 func TestFleetAndInvocationsAreVisible(t *testing.T) {
 	r := newRig(t)
 	r.startWorker()
-	fn, _ := r.ctl.CreateFunction(ctx, "observed")
+	fn, _ := r.ctl.CreateFunction(ctx, "observed", nil)
 	if _, err := r.ctl.Deploy(ctx, fn.Id, moduleBytes(t), "wagi-1", nil, true); err != nil {
 		t.Fatal(err)
 	}
@@ -375,7 +375,7 @@ func TestFleetAndInvocationsAreVisible(t *testing.T) {
 // reload would throw away what someone is typing.
 func TestOnlyReadOnlyPagesReloadThemselves(t *testing.T) {
 	r := newRig(t)
-	fn, _ := r.ctl.CreateFunction(ctx, "reloads")
+	fn, _ := r.ctl.CreateFunction(ctx, "reloads", nil)
 	b := r.browser()
 	b.signIn("alice", "alice-pw")
 
@@ -408,7 +408,7 @@ func TestOnlyReadOnlyPagesReloadThemselves(t *testing.T) {
 // where they say it.
 func TestOperatorOpensAndClosesTheNetwork(t *testing.T) {
 	r := newRig(t)
-	fn, err := r.ctl.CreateFunction(ctx, "talker")
+	fn, err := r.ctl.CreateFunction(ctx, "talker", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

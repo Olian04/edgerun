@@ -38,7 +38,11 @@ type Function struct {
 	// The destinations the function may reach over the network, in canonical
 	// form (see SetEgress). Empty: the function has no network. Closed by
 	// default, and only the operator opens it.
-	EgressAllow   []string `protobuf:"bytes,5,rep,name=egress_allow,json=egressAllow,proto3" json:"egress_allow,omitempty"`
+	EgressAllow []string `protobuf:"bytes,5,rep,name=egress_allow,json=egressAllow,proto3" json:"egress_allow,omitempty"`
+	// Free-form metadata, set by whoever manages the function (see Labels in
+	// docs/protocol.md). Nothing in edgerun interprets it; tools use it to mark
+	// what they own and to find it again (ListFunctionsRequest.match_labels).
+	Labels        map[string]string `protobuf:"bytes,6,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -108,6 +112,13 @@ func (x *Function) GetEgressAllow() []string {
 	return nil
 }
 
+func (x *Function) GetLabels() map[string]string {
+	if x != nil {
+		return x.Labels
+	}
+	return nil
+}
+
 // FunctionVersion is immutable once created. Rolling back is activating an
 // older version, never editing one.
 type FunctionVersion struct {
@@ -119,10 +130,12 @@ type FunctionVersion struct {
 	// "sha256:<lowercase hex>" of the module bytes.
 	ArtifactDigest string `protobuf:"bytes,4,opt,name=artifact_digest,json=artifactDigest,proto3" json:"artifact_digest,omitempty"`
 	// Guest ABI, e.g. "wagi-1".
-	Abi           string                 `protobuf:"bytes,5,opt,name=abi,proto3" json:"abi,omitempty"`
-	SizeBytes     uint64                 `protobuf:"varint,6,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
-	Limits        *v1.Limits             `protobuf:"bytes,7,opt,name=limits,proto3" json:"limits,omitempty"`
-	CreateTime    *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=create_time,json=createTime,proto3" json:"create_time,omitempty"`
+	Abi        string                 `protobuf:"bytes,5,opt,name=abi,proto3" json:"abi,omitempty"`
+	SizeBytes  uint64                 `protobuf:"varint,6,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
+	Limits     *v1.Limits             `protobuf:"bytes,7,opt,name=limits,proto3" json:"limits,omitempty"`
+	CreateTime *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=create_time,json=createTime,proto3" json:"create_time,omitempty"`
+	// Set when the version is created, and as immutable as the version is.
+	Labels        map[string]string `protobuf:"bytes,9,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -213,6 +226,13 @@ func (x *FunctionVersion) GetCreateTime() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *FunctionVersion) GetLabels() map[string]string {
+	if x != nil {
+		return x.Labels
+	}
+	return nil
+}
+
 // Route maps incoming requests to a function.
 //
 // Matching: among the routes that match both host and path, the most specific
@@ -227,9 +247,12 @@ type Route struct {
 	Id          string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	HostPattern string                 `protobuf:"bytes,2,opt,name=host_pattern,json=hostPattern,proto3" json:"host_pattern,omitempty"`
 	// Starts with "/".
-	PathPrefix    string                 `protobuf:"bytes,3,opt,name=path_prefix,json=pathPrefix,proto3" json:"path_prefix,omitempty"`
-	FunctionId    string                 `protobuf:"bytes,4,opt,name=function_id,json=functionId,proto3" json:"function_id,omitempty"`
-	CreateTime    *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=create_time,json=createTime,proto3" json:"create_time,omitempty"`
+	PathPrefix string                 `protobuf:"bytes,3,opt,name=path_prefix,json=pathPrefix,proto3" json:"path_prefix,omitempty"`
+	FunctionId string                 `protobuf:"bytes,4,opt,name=function_id,json=functionId,proto3" json:"function_id,omitempty"`
+	CreateTime *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=create_time,json=createTime,proto3" json:"create_time,omitempty"`
+	// Set when the route is created. A route cannot be edited: replacing one is
+	// deleting it and creating another.
+	Labels        map[string]string `protobuf:"bytes,6,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -299,13 +322,30 @@ func (x *Route) GetCreateTime() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *Route) GetLabels() map[string]string {
+	if x != nil {
+		return x.Labels
+	}
+	return nil
+}
+
 // EnvEntry is one environment variable of a function. Values of secret
 // entries are write-only: reads return them empty.
 type EnvEntry struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	Value         string                 `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"`
-	Secret        bool                   `protobuf:"varint,3,opt,name=secret,proto3" json:"secret,omitempty"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Name   string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Value  string                 `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"`
+	Secret bool                   `protobuf:"varint,3,opt,name=secret,proto3" json:"secret,omitempty"`
+	// Output only (ignored when the entry is sent). An opaque token that
+	// identifies the stored value without revealing it, so that a write-only
+	// secret can still be compared: it is the same for the same value stored
+	// under the same name in the same function (setting a value that is already
+	// there changes nothing), and different for any other value. It is keyed
+	// with a secret only the orchestrator holds, so it cannot be recomputed
+	// outside, nor used to guess a value offline: remember the revision a write
+	// returned, and a different one later means the value was changed by someone
+	// else. Present for every entry, secret or not.
+	Revision      string `protobuf:"bytes,4,opt,name=revision,proto3" json:"revision,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -359,6 +399,13 @@ func (x *EnvEntry) GetSecret() bool {
 		return x.Secret
 	}
 	return false
+}
+
+func (x *EnvEntry) GetRevision() string {
+	if x != nil {
+		return x.Revision
+	}
+	return ""
 }
 
 // WorkerStatus is the orchestrator's current view of one registered worker.
@@ -694,14 +741,18 @@ var File_edgerun_control_v1_model_proto protoreflect.FileDescriptor
 
 const file_edgerun_control_v1_model_proto_rawDesc = "" +
 	"\n" +
-	"\x1eedgerun/control/v1/model.proto\x12\x12edgerun.control.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1eedgerun/common/v1/common.proto\x1a edgerun/egress/v1/registry.proto\x1a\x1eedgerun/worker/v1/worker.proto\"\xba\x01\n" +
+	"\x1eedgerun/control/v1/model.proto\x12\x12edgerun.control.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1eedgerun/common/v1/common.proto\x1a edgerun/egress/v1/registry.proto\x1a\x1eedgerun/worker/v1/worker.proto\"\xb7\x02\n" +
 	"\bFunction\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12*\n" +
 	"\x11active_version_id\x18\x03 \x01(\tR\x0factiveVersionId\x12;\n" +
 	"\vcreate_time\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"createTime\x12!\n" +
-	"\fegress_allow\x18\x05 \x03(\tR\vegressAllow\"\xa4\x02\n" +
+	"\fegress_allow\x18\x05 \x03(\tR\vegressAllow\x12@\n" +
+	"\x06labels\x18\x06 \x03(\v2(.edgerun.control.v1.Function.LabelsEntryR\x06labels\x1a9\n" +
+	"\vLabelsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xa8\x03\n" +
 	"\x0fFunctionVersion\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1f\n" +
 	"\vfunction_id\x18\x02 \x01(\tR\n" +
@@ -713,7 +764,11 @@ const file_edgerun_control_v1_model_proto_rawDesc = "" +
 	"size_bytes\x18\x06 \x01(\x04R\tsizeBytes\x121\n" +
 	"\x06limits\x18\a \x01(\v2\x19.edgerun.common.v1.LimitsR\x06limits\x12;\n" +
 	"\vcreate_time\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"createTime\"\xb9\x01\n" +
+	"createTime\x12G\n" +
+	"\x06labels\x18\t \x03(\v2/.edgerun.control.v1.FunctionVersion.LabelsEntryR\x06labels\x1a9\n" +
+	"\vLabelsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb3\x02\n" +
 	"\x05Route\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12!\n" +
 	"\fhost_pattern\x18\x02 \x01(\tR\vhostPattern\x12\x1f\n" +
@@ -722,11 +777,16 @@ const file_edgerun_control_v1_model_proto_rawDesc = "" +
 	"\vfunction_id\x18\x04 \x01(\tR\n" +
 	"functionId\x12;\n" +
 	"\vcreate_time\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"createTime\"L\n" +
+	"createTime\x12=\n" +
+	"\x06labels\x18\x06 \x03(\v2%.edgerun.control.v1.Route.LabelsEntryR\x06labels\x1a9\n" +
+	"\vLabelsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"h\n" +
 	"\bEnvEntry\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value\x12\x16\n" +
-	"\x06secret\x18\x03 \x01(\bR\x06secret\"\xa2\x02\n" +
+	"\x06secret\x18\x03 \x01(\bR\x06secret\x12\x1a\n" +
+	"\brevision\x18\x04 \x01(\tR\brevision\"\xa2\x02\n" +
 	"\fWorkerStatus\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1a\n" +
 	"\bendpoint\x18\x02 \x01(\tR\bendpoint\x121\n" +
@@ -777,7 +837,7 @@ func file_edgerun_control_v1_model_proto_rawDescGZIP() []byte {
 	return file_edgerun_control_v1_model_proto_rawDescData
 }
 
-var file_edgerun_control_v1_model_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_edgerun_control_v1_model_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_edgerun_control_v1_model_proto_goTypes = []any{
 	(*Function)(nil),              // 0: edgerun.control.v1.Function
 	(*FunctionVersion)(nil),       // 1: edgerun.control.v1.FunctionVersion
@@ -786,32 +846,38 @@ var file_edgerun_control_v1_model_proto_goTypes = []any{
 	(*WorkerStatus)(nil),          // 4: edgerun.control.v1.WorkerStatus
 	(*Invocation)(nil),            // 5: edgerun.control.v1.Invocation
 	(*NetworkServiceStatus)(nil),  // 6: edgerun.control.v1.NetworkServiceStatus
-	(*timestamppb.Timestamp)(nil), // 7: google.protobuf.Timestamp
-	(*v1.Limits)(nil),             // 8: edgerun.common.v1.Limits
-	(*v11.WorkerInfo)(nil),        // 9: edgerun.worker.v1.WorkerInfo
-	(v11.WorkerState)(0),          // 10: edgerun.worker.v1.WorkerState
-	(v1.ErrorReason)(0),           // 11: edgerun.common.v1.ErrorReason
-	(*v12.ServiceInfo)(nil),       // 12: edgerun.egress.v1.ServiceInfo
-	(v12.ServiceState)(0),         // 13: edgerun.egress.v1.ServiceState
+	nil,                           // 7: edgerun.control.v1.Function.LabelsEntry
+	nil,                           // 8: edgerun.control.v1.FunctionVersion.LabelsEntry
+	nil,                           // 9: edgerun.control.v1.Route.LabelsEntry
+	(*timestamppb.Timestamp)(nil), // 10: google.protobuf.Timestamp
+	(*v1.Limits)(nil),             // 11: edgerun.common.v1.Limits
+	(*v11.WorkerInfo)(nil),        // 12: edgerun.worker.v1.WorkerInfo
+	(v11.WorkerState)(0),          // 13: edgerun.worker.v1.WorkerState
+	(v1.ErrorReason)(0),           // 14: edgerun.common.v1.ErrorReason
+	(*v12.ServiceInfo)(nil),       // 15: edgerun.egress.v1.ServiceInfo
+	(v12.ServiceState)(0),         // 16: edgerun.egress.v1.ServiceState
 }
 var file_edgerun_control_v1_model_proto_depIdxs = []int32{
-	7,  // 0: edgerun.control.v1.Function.create_time:type_name -> google.protobuf.Timestamp
-	8,  // 1: edgerun.control.v1.FunctionVersion.limits:type_name -> edgerun.common.v1.Limits
-	7,  // 2: edgerun.control.v1.FunctionVersion.create_time:type_name -> google.protobuf.Timestamp
-	7,  // 3: edgerun.control.v1.Route.create_time:type_name -> google.protobuf.Timestamp
-	9,  // 4: edgerun.control.v1.WorkerStatus.info:type_name -> edgerun.worker.v1.WorkerInfo
-	10, // 5: edgerun.control.v1.WorkerStatus.state:type_name -> edgerun.worker.v1.WorkerState
-	7,  // 6: edgerun.control.v1.WorkerStatus.last_heartbeat_time:type_name -> google.protobuf.Timestamp
-	11, // 7: edgerun.control.v1.Invocation.error_reason:type_name -> edgerun.common.v1.ErrorReason
-	7,  // 8: edgerun.control.v1.Invocation.start_time:type_name -> google.protobuf.Timestamp
-	12, // 9: edgerun.control.v1.NetworkServiceStatus.info:type_name -> edgerun.egress.v1.ServiceInfo
-	13, // 10: edgerun.control.v1.NetworkServiceStatus.state:type_name -> edgerun.egress.v1.ServiceState
-	7,  // 11: edgerun.control.v1.NetworkServiceStatus.last_heartbeat_time:type_name -> google.protobuf.Timestamp
-	12, // [12:12] is the sub-list for method output_type
-	12, // [12:12] is the sub-list for method input_type
-	12, // [12:12] is the sub-list for extension type_name
-	12, // [12:12] is the sub-list for extension extendee
-	0,  // [0:12] is the sub-list for field type_name
+	10, // 0: edgerun.control.v1.Function.create_time:type_name -> google.protobuf.Timestamp
+	7,  // 1: edgerun.control.v1.Function.labels:type_name -> edgerun.control.v1.Function.LabelsEntry
+	11, // 2: edgerun.control.v1.FunctionVersion.limits:type_name -> edgerun.common.v1.Limits
+	10, // 3: edgerun.control.v1.FunctionVersion.create_time:type_name -> google.protobuf.Timestamp
+	8,  // 4: edgerun.control.v1.FunctionVersion.labels:type_name -> edgerun.control.v1.FunctionVersion.LabelsEntry
+	10, // 5: edgerun.control.v1.Route.create_time:type_name -> google.protobuf.Timestamp
+	9,  // 6: edgerun.control.v1.Route.labels:type_name -> edgerun.control.v1.Route.LabelsEntry
+	12, // 7: edgerun.control.v1.WorkerStatus.info:type_name -> edgerun.worker.v1.WorkerInfo
+	13, // 8: edgerun.control.v1.WorkerStatus.state:type_name -> edgerun.worker.v1.WorkerState
+	10, // 9: edgerun.control.v1.WorkerStatus.last_heartbeat_time:type_name -> google.protobuf.Timestamp
+	14, // 10: edgerun.control.v1.Invocation.error_reason:type_name -> edgerun.common.v1.ErrorReason
+	10, // 11: edgerun.control.v1.Invocation.start_time:type_name -> google.protobuf.Timestamp
+	15, // 12: edgerun.control.v1.NetworkServiceStatus.info:type_name -> edgerun.egress.v1.ServiceInfo
+	16, // 13: edgerun.control.v1.NetworkServiceStatus.state:type_name -> edgerun.egress.v1.ServiceState
+	10, // 14: edgerun.control.v1.NetworkServiceStatus.last_heartbeat_time:type_name -> google.protobuf.Timestamp
+	15, // [15:15] is the sub-list for method output_type
+	15, // [15:15] is the sub-list for method input_type
+	15, // [15:15] is the sub-list for extension type_name
+	15, // [15:15] is the sub-list for extension extendee
+	0,  // [0:15] is the sub-list for field type_name
 }
 
 func init() { file_edgerun_control_v1_model_proto_init() }
@@ -825,7 +891,7 @@ func file_edgerun_control_v1_model_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_edgerun_control_v1_model_proto_rawDesc), len(file_edgerun_control_v1_model_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   7,
+			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

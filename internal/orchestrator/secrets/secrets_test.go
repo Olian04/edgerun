@@ -67,3 +67,28 @@ func TestKeyLength(t *testing.T) {
 		}
 	}
 }
+
+func TestRevisionIdentifiesWithoutRevealing(t *testing.T) {
+	b := box(t)
+	a := b.Revision([]byte("fn"), []byte("NAME"), []byte("s"), []byte("hunter2"))
+	if a != b.Revision([]byte("fn"), []byte("NAME"), []byte("s"), []byte("hunter2")) {
+		t.Error("the same parts must give the same revision")
+	}
+	if len(a) != 32 || bytes.Contains([]byte(a), []byte("hunter2")) {
+		t.Errorf("revision %q", a)
+	}
+	for name, other := range map[string]string{
+		"another value":  b.Revision([]byte("fn"), []byte("NAME"), []byte("s"), []byte("hunter3")),
+		"another name":   b.Revision([]byte("fn"), []byte("OTHER"), []byte("s"), []byte("hunter2")),
+		"another slot":   b.Revision([]byte("fn2"), []byte("NAME"), []byte("s"), []byte("hunter2")),
+		"the boundaries": b.Revision([]byte("f"), []byte("nNAME"), []byte("s"), []byte("hunter2")),
+	} {
+		if other == a {
+			t.Errorf("%s gave the same revision", name)
+		}
+	}
+	k2, _ := NewBox(bytes.Repeat([]byte{8}, KeySize))
+	if k2.Revision([]byte("fn"), []byte("NAME"), []byte("s"), []byte("hunter2")) == a {
+		t.Error("a different key must give a different revision: it cannot be recomputed without it")
+	}
+}

@@ -87,7 +87,7 @@ func (s *Store) ListInvocations(ctx context.Context, functionID string, size uin
 		where += " AND (start_time, id) < ($" + strconv.Itoa(len(args)-1) + "::timestamptz, $" + strconv.Itoa(len(args)) + "::uuid)"
 	}
 	args = append(args, n+1)
-	rows, err := s.pool.Query(ctx, `SELECT `+invocationCols+` FROM invocations WHERE `+where+
+	rows, err := s.q(ctx).Query(ctx, `SELECT `+invocationCols+` FROM invocations WHERE `+where+
 		` ORDER BY start_time DESC, id DESC LIMIT $`+strconv.Itoa(len(args)), args...)
 	if err != nil {
 		if pgCode(err) == "22P02" { // invalid_text_representation: a forged token id
@@ -129,7 +129,7 @@ func (s *Store) ListInvocations(ctx context.Context, functionID string, size uin
 // DeleteInvocationsBefore removes up to limit records older than t and returns
 // how many it removed; call it until it returns less than limit.
 func (s *Store) DeleteInvocationsBefore(ctx context.Context, t time.Time, limit int) (int, error) {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM invocations WHERE id IN
+	tag, err := s.q(ctx).Exec(ctx, `DELETE FROM invocations WHERE id IN
 		(SELECT id FROM invocations WHERE start_time < $1 ORDER BY start_time LIMIT $2)`, t, limit)
 	return int(tag.RowsAffected()), err
 }

@@ -31,7 +31,7 @@ func (s *Store) RegisterNetworkService(ctx context.Context, endpoint string, inf
 		return "", err
 	}
 	var id string
-	err = s.pool.QueryRow(ctx, `INSERT INTO network_services (endpoint, info, covers, state)
+	err = s.q(ctx).QueryRow(ctx, `INSERT INTO network_services (endpoint, info, covers, state)
 		VALUES ($1, $2, $3, $4)
 		ON CONFLICT (endpoint) DO UPDATE SET
 			id = gen_random_uuid(), info = EXCLUDED.info, covers = EXCLUDED.covers, state = EXCLUDED.state,
@@ -48,7 +48,7 @@ func (s *Store) HeartbeatNetworkService(ctx context.Context, id string, state eg
 	if perr != nil {
 		return false, nil
 	}
-	tag, err := s.pool.Exec(ctx, `UPDATE network_services SET state = $2, last_heartbeat = now() WHERE id = $1`, sid, int16(state))
+	tag, err := s.q(ctx).Exec(ctx, `UPDATE network_services SET state = $2, last_heartbeat = now() WHERE id = $1`, sid, int16(state))
 	if err != nil {
 		return false, err
 	}
@@ -61,21 +61,21 @@ func (s *Store) DeregisterNetworkService(ctx context.Context, id string) error {
 	if err != nil {
 		return nil
 	}
-	_, err = s.pool.Exec(ctx, `DELETE FROM network_services WHERE id = $1`, sid)
+	_, err = s.q(ctx).Exec(ctx, `DELETE FROM network_services WHERE id = $1`, sid)
 	return err
 }
 
 // PruneNetworkServices deletes services that have not heartbeated for longer
 // than olderThan, and returns how many it removed.
 func (s *Store) PruneNetworkServices(ctx context.Context, olderThan time.Duration) (int, error) {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM network_services WHERE last_heartbeat < now() - make_interval(secs => $1)`, olderThan.Seconds())
+	tag, err := s.q(ctx).Exec(ctx, `DELETE FROM network_services WHERE last_heartbeat < now() - make_interval(secs => $1)`, olderThan.Seconds())
 	return int(tag.RowsAffected()), err
 }
 
 // ListNetworkServices returns every registered service. One is alive if it
 // heartbeated within aliveWithin, by the database's clock.
 func (s *Store) ListNetworkServices(ctx context.Context, aliveWithin time.Duration) ([]*controlv1.NetworkServiceStatus, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id::text, endpoint, info, state, last_heartbeat,
+	rows, err := s.q(ctx).Query(ctx, `SELECT id::text, endpoint, info, state, last_heartbeat,
 			last_heartbeat > now() - make_interval(secs => $1)
 		FROM network_services ORDER BY endpoint`, aliveWithin.Seconds())
 	if err != nil {
@@ -111,7 +111,7 @@ type NetworkService struct {
 
 // ReadyNetworkServices returns the services that are alive and READY.
 func (s *Store) ReadyNetworkServices(ctx context.Context, aliveWithin time.Duration) ([]NetworkService, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id::text, endpoint, covers FROM network_services
+	rows, err := s.q(ctx).Query(ctx, `SELECT id::text, endpoint, covers FROM network_services
 		WHERE state = $1 AND last_heartbeat > now() - make_interval(secs => $2)
 		ORDER BY endpoint`,
 		int16(egressv1.ServiceState_SERVICE_STATE_READY), aliveWithin.Seconds())

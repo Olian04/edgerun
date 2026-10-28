@@ -268,6 +268,61 @@ stderr tail (for a failure that has no summary, the error's message). `duration_
 `peak_memory_bytes` are what the worker reported in its summary. Records appear shortly after the
 invocation, not necessarily before the call returns.
 
+### Labels
+
+A function, a version and a route carry **labels**: a map of strings that whoever manages the resource sets, and
+that nothing in edgerun interprets (they affect no routing, scheduling or access, and a guest never sees them).
+They exist so that tools can mark what they own and find it again. A tool should namespace its keys
+(`gitops.example.com/managed-by`); edgerun reserves none.
+
+- They are set when the resource is created (`CreateFunction`, `CreateVersion`, `CreateRoute`). A version and a
+  route cannot be edited, so their labels are as fixed as they are; `SetLabels` **replaces** a function's labels
+  as a whole (an empty map clears them), the way `SetEgress` replaces its list.
+- A key is 1-63 characters of lower-case letters, digits and `.`, `_`, `/`, `-`, starting and ending with a
+  letter or digit. A value is at most 253 characters of printable ASCII and may be empty. At most 32 labels.
+  Anything else is `invalid_argument`. Labels are stored and returned as given.
+- `ListFunctions`, `ListVersions` and `ListRoutes` take `match_labels`: only resources that carry **every** label
+  named, **with exactly that value** (values compare exactly, case included, and a label with another value
+  does not match an empty one), are returned. An empty filter returns everything. The filter is not validated
+  as a label set, it merely matches nothing if nothing carries it, and it combines with paging as the other
+  lists do.
+- Deleting a function deletes its labels with everything else.
+
+### Env revisions
+
+A secret's value is write-only, which would make a write-only value impossible to compare. Every `EnvEntry`
+therefore has a `revision`, an opaque token **output only** (it is ignored when an entry is sent) that identifies
+the stored value without revealing it:
+
+- the same value stored under the same name in the same function, with the same `secret` flag, always has the
+  same revision, so setting a value that is already there changes nothing, revision included; any other value,
+  name, function or flag has another;
+- it is keyed with a secret only the orchestrator holds, so it can be neither recomputed outside nor used to
+  guess a value offline, and it is stable for as long as that key is. Compare it, do not interpret it;
+- `SetEnv` returns the entry as stored (a secret's value empty) with the revision of the value just set, and
+  `ListEnv` returns the same revision for it later. A tool that remembers the revision its last write returned
+  can tell that someone else has since changed the value: the revision it reads back differs.
+
+### Validate-only
+
+Every request that changes something (`CreateFunction`, `DeleteFunction`, `CreateVersion`, `ActivateVersion`,
+`SetEnv`, `DeleteEnv`, `SetEgress`, `SetLabels`, `CreateRoute`, `DeleteRoute`) has a `validate_only` field. With
+it set the orchestrator does everything the call would do, **against the real state**, up to but not including
+the commit:
+
+- it performs every check: the request's form, the existence of what it names, conflicts with what is
+  stored (`already_exists`), and the limits (a module's size, the number of variables or labels);
+- it answers with the error the call itself would answer with, the same code and the same message, or, if there is
+  none, with the response the call would have returned, **except that the ids of a created function, version or
+  route are empty** (there is no such resource);
+- it changes nothing: no resource, no number (a version that was validated does not use up its number), no
+  cached state, so no effect is visible to `Invoke` or to any list;
+- it needs the same credentials as the call.
+
+It is a check against the state at that moment, not a reservation: the real call can still fail if something
+changed in between. A tool uses it for a dry run that cannot disagree with the apply, instead of re-implementing
+the server's rules.
+
 ## Fleet and artifact semantics
 
 Workers dial in to the orchestrator (`FleetService`, `ArtifactService`, scope `worker`).

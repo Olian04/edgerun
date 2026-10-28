@@ -8,7 +8,11 @@ package secrets
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 )
@@ -17,7 +21,10 @@ import (
 const KeySize = 32
 
 // Box seals and opens values under one key.
-type Box struct{ aead cipher.AEAD }
+type Box struct {
+	aead   cipher.AEAD
+	macKey []byte // derived from the key, for Revision
+}
 
 // NewBox returns a Box for a 32-byte key.
 func NewBox(key []byte) (*Box, error) {
@@ -32,7 +39,10 @@ func NewBox(key []byte) (*Box, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Box{aead: aead}, nil
+	// A separate key for revisions, so the one that seals is never used to MAC.
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte("edgerun/revision/v1"))
+	return &Box{aead: aead, macKey: mac.Sum(nil)}, nil
 }
 
 // Seal returns nonce || ciphertext for plaintext, bound to aad.
@@ -52,4 +62,19 @@ func (b *Box) Open(sealed, aad []byte) ([]byte, error) {
 		return nil, errors.New("secrets: sealed value is too short")
 	}
 	return b.aead.Open(nil, sealed[:n], sealed[n:], aad)
+}
+
+// Revision returns a token that identifies parts without revealing them: the
+// same parts always give the same token, any other give another, and it cannot
+// be recomputed or guessed against without the key. Parts are length-prefixed,
+// so ("ab", "c") and ("a", "bc") differ.
+func (b *Box) Revision(parts ...[]byte) string {
+	mac := hmac.New(sha256.New, b.macKey)
+	for _, p := range parts {
+		var n [8]byte
+		binary.BigEndian.PutUint64(n[:], uint64(len(p)))
+		mac.Write(n[:])
+		mac.Write(p)
+	}
+	return hex.EncodeToString(mac.Sum(nil)[:16])
 }

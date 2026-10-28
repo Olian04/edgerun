@@ -25,6 +25,10 @@ const maxListed = 10000
 type Control struct {
 	lib *edgerun.Control
 
+	// DryRun makes every write a validate-only call: all the checks, nothing
+	// changed (see "Validate-only" in docs/protocol.md).
+	DryRun bool
+
 	mu       sync.Mutex
 	names    map[string]string // function id -> name
 	namesAt  time.Time
@@ -50,10 +54,15 @@ func (c *Control) Info(ctx context.Context) (*controlv1.DescribeResponse, error)
 
 // Functions lists every function, by name.
 func (c *Control) Functions(ctx context.Context) ([]*controlv1.Function, error) {
+	return c.FunctionsMatching(ctx, nil)
+}
+
+// FunctionsMatching lists the functions that carry every one of the labels.
+func (c *Control) FunctionsMatching(ctx context.Context, match map[string]string) ([]*controlv1.Function, error) {
 	var all []*controlv1.Function
 	token := ""
 	for len(all) < maxListed {
-		r, err := c.lib.ListFunctions(ctx, &controlv1.ListFunctionsRequest{PageSize: 500, PageToken: token})
+		r, err := c.lib.ListFunctions(ctx, &controlv1.ListFunctionsRequest{PageSize: 500, PageToken: token, MatchLabels: match})
 		if err != nil {
 			return nil, err
 		}
@@ -62,7 +71,9 @@ func (c *Control) Functions(ctx context.Context) ([]*controlv1.Function, error) 
 			break
 		}
 	}
-	c.rememberNames(all)
+	if len(match) == 0 {
+		c.rememberNames(all)
+	}
 	return all, nil
 }
 
@@ -229,8 +240,8 @@ func (c *Control) rememberNames(fns []*controlv1.Function) {
 
 // --- writes ------------------------------------------------------------------
 
-func (c *Control) CreateFunction(ctx context.Context, name string) (*controlv1.Function, error) {
-	r, err := c.lib.CreateFunction(ctx, &controlv1.CreateFunctionRequest{Name: name})
+func (c *Control) CreateFunction(ctx context.Context, name string, labels map[string]string) (*controlv1.Function, error) {
+	r, err := c.lib.CreateFunction(ctx, &controlv1.CreateFunctionRequest{Name: name, Labels: labels, ValidateOnly: c.DryRun})
 	if err != nil {
 		return nil, err
 	}
@@ -239,7 +250,7 @@ func (c *Control) CreateFunction(ctx context.Context, name string) (*controlv1.F
 }
 
 func (c *Control) DeleteFunction(ctx context.Context, id string) error {
-	_, err := c.lib.DeleteFunction(ctx, &controlv1.DeleteFunctionRequest{FunctionId: id})
+	_, err := c.lib.DeleteFunction(ctx, &controlv1.DeleteFunctionRequest{FunctionId: id, ValidateOnly: c.DryRun})
 	c.invalidateNames()
 	return err
 }
@@ -247,7 +258,7 @@ func (c *Control) DeleteFunction(ctx context.Context, id string) error {
 // Deploy uploads a module as a new version of a function.
 func (c *Control) Deploy(ctx context.Context, fid string, module []byte, abi string, limits *commonv1.Limits, activate bool) (*controlv1.FunctionVersion, error) {
 	r, err := c.lib.CreateVersion(ctx, &controlv1.CreateVersionRequest{
-		FunctionId: fid, Module: module, Abi: abi, Limits: limits, Activate: activate})
+		FunctionId: fid, Module: module, Abi: abi, Limits: limits, Activate: activate, ValidateOnly: c.DryRun})
 	if err != nil {
 		return nil, err
 	}
@@ -255,24 +266,24 @@ func (c *Control) Deploy(ctx context.Context, fid string, module []byte, abi str
 }
 
 func (c *Control) Activate(ctx context.Context, fid, vid string) error {
-	_, err := c.lib.ActivateVersion(ctx, &controlv1.ActivateVersionRequest{FunctionId: fid, VersionId: vid})
+	_, err := c.lib.ActivateVersion(ctx, &controlv1.ActivateVersionRequest{FunctionId: fid, VersionId: vid, ValidateOnly: c.DryRun})
 	return err
 }
 
 func (c *Control) SetEnv(ctx context.Context, fid string, e *controlv1.EnvEntry) error {
-	_, err := c.lib.SetEnv(ctx, &controlv1.SetEnvRequest{FunctionId: fid, Entry: e})
+	_, err := c.lib.SetEnv(ctx, &controlv1.SetEnvRequest{FunctionId: fid, Entry: e, ValidateOnly: c.DryRun})
 	return err
 }
 
 func (c *Control) DeleteEnv(ctx context.Context, fid, name string) error {
-	_, err := c.lib.DeleteEnv(ctx, &controlv1.DeleteEnvRequest{FunctionId: fid, Name: name})
+	_, err := c.lib.DeleteEnv(ctx, &controlv1.DeleteEnvRequest{FunctionId: fid, Name: name, ValidateOnly: c.DryRun})
 	return err
 }
 
 // SetEgress replaces the function's network allow list and returns the function
 // with the list in canonical form.
 func (c *Control) SetEgress(ctx context.Context, fid string, allow []string) (*controlv1.Function, error) {
-	r, err := c.lib.SetEgress(ctx, &controlv1.SetEgressRequest{FunctionId: fid, Allow: allow})
+	r, err := c.lib.SetEgress(ctx, &controlv1.SetEgressRequest{FunctionId: fid, Allow: allow, ValidateOnly: c.DryRun})
 	if err != nil {
 		return nil, err
 	}
@@ -280,7 +291,7 @@ func (c *Control) SetEgress(ctx context.Context, fid string, allow []string) (*c
 }
 
 func (c *Control) CreateRoute(ctx context.Context, host, prefix, fid string) (*controlv1.Route, error) {
-	r, err := c.lib.CreateRoute(ctx, &controlv1.CreateRouteRequest{HostPattern: host, PathPrefix: prefix, FunctionId: fid})
+	r, err := c.lib.CreateRoute(ctx, &controlv1.CreateRouteRequest{HostPattern: host, PathPrefix: prefix, FunctionId: fid, ValidateOnly: c.DryRun})
 	if err != nil {
 		return nil, err
 	}
@@ -288,7 +299,7 @@ func (c *Control) CreateRoute(ctx context.Context, host, prefix, fid string) (*c
 }
 
 func (c *Control) DeleteRoute(ctx context.Context, id string) error {
-	_, err := c.lib.DeleteRoute(ctx, &controlv1.DeleteRouteRequest{RouteId: id})
+	_, err := c.lib.DeleteRoute(ctx, &controlv1.DeleteRouteRequest{RouteId: id, ValidateOnly: c.DryRun})
 	return err
 }
 
@@ -296,4 +307,13 @@ func (c *Control) invalidateNames() {
 	c.mu.Lock()
 	c.names = nil
 	c.mu.Unlock()
+}
+
+// SetLabels replaces a function's labels.
+func (c *Control) SetLabels(ctx context.Context, fid string, labels map[string]string) (*controlv1.Function, error) {
+	r, err := c.lib.SetLabels(ctx, &controlv1.SetLabelsRequest{FunctionId: fid, Labels: labels, ValidateOnly: c.DryRun})
+	if err != nil {
+		return nil, err
+	}
+	return r.Function, nil
 }

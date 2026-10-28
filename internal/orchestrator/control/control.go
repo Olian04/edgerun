@@ -74,14 +74,34 @@ func (s *Service) Mount(mux *http.ServeMux, v authn.Verifier) {
 
 func (s *Service) fail(err error) error { return apierr.FromStore(s.cfg.Log, err) }
 
+// mutate runs op, a change to the store. With validateOnly it runs as a dry
+// run: against the real state, meeting every check and conflict, with nothing
+// kept. The caller must not refresh the cache for a validate-only call.
+func mutate[T any](ctx context.Context, s *Service, validateOnly bool, op func(ctx context.Context) (T, error)) (out T, err error) {
+	if !validateOnly {
+		return op(ctx)
+	}
+	err = s.cfg.Store.DryRun(ctx, func(ctx context.Context) error {
+		out, err = op(ctx)
+		return err
+	})
+	return out, err
+}
+
 // --- FunctionService ---------------------------------------------------------
 
 type functions struct{ s *Service }
 
 func (f functions) CreateFunction(ctx context.Context, r *connect.Request[controlv1.CreateFunctionRequest]) (*connect.Response[controlv1.CreateFunctionResponse], error) {
-	fn, err := f.s.cfg.Store.CreateFunction(ctx, r.Msg.GetName())
+	m := r.Msg
+	fn, err := mutate(ctx, f.s, m.GetValidateOnly(), func(ctx context.Context) (*controlv1.Function, error) {
+		return f.s.cfg.Store.CreateFunction(ctx, m.GetName(), m.GetLabels())
+	})
 	if err != nil {
 		return nil, f.s.fail(err)
+	}
+	if m.GetValidateOnly() {
+		fn.Id = ""
 	}
 	return connect.NewResponse(&controlv1.CreateFunctionResponse{Function: fn}), nil
 }
@@ -95,7 +115,7 @@ func (f functions) GetFunction(ctx context.Context, r *connect.Request[controlv1
 }
 
 func (f functions) ListFunctions(ctx context.Context, r *connect.Request[controlv1.ListFunctionsRequest]) (*connect.Response[controlv1.ListFunctionsResponse], error) {
-	fns, next, err := f.s.cfg.Store.ListFunctions(ctx, r.Msg.GetPageSize(), r.Msg.GetPageToken())
+	fns, next, err := f.s.cfg.Store.ListFunctions(ctx, r.Msg.GetPageSize(), r.Msg.GetPageToken(), r.Msg.GetMatchLabels())
 	if err != nil {
 		return nil, f.s.fail(err)
 	}
@@ -103,10 +123,16 @@ func (f functions) ListFunctions(ctx context.Context, r *connect.Request[control
 }
 
 func (f functions) DeleteFunction(ctx context.Context, r *connect.Request[controlv1.DeleteFunctionRequest]) (*connect.Response[controlv1.DeleteFunctionResponse], error) {
-	if err := f.s.cfg.Store.DeleteFunction(ctx, r.Msg.GetFunctionId()); err != nil {
+	m := r.Msg
+	_, err := mutate(ctx, f.s, m.GetValidateOnly(), func(ctx context.Context) (struct{}, error) {
+		return struct{}{}, f.s.cfg.Store.DeleteFunction(ctx, m.GetFunctionId())
+	})
+	if err != nil {
 		return nil, f.s.fail(err)
 	}
-	f.s.cfg.Refresh(ctx)
+	if !m.GetValidateOnly() {
+		f.s.cfg.Refresh(ctx)
+	}
 	return connect.NewResponse(&controlv1.DeleteFunctionResponse{}), nil
 }
 
@@ -118,20 +144,25 @@ func (f functions) CreateVersion(ctx context.Context, r *connect.Request[control
 	if !abiPattern.MatchString(m.GetAbi()) {
 		return nil, errs.Invalid("abi %q: want a short lower-case name such as \"wagi-1\"", m.GetAbi())
 	}
-	v, err := f.s.cfg.Store.CreateVersion(ctx, store.NewVersion{
-		FunctionID: m.GetFunctionId(), Module: m.GetModule(), ABI: m.GetAbi(), Limits: m.GetLimits(), Activate: m.GetActivate(),
+	v, err := mutate(ctx, f.s, m.GetValidateOnly(), func(ctx context.Context) (*controlv1.FunctionVersion, error) {
+		return f.s.cfg.Store.CreateVersion(ctx, store.NewVersion{
+			FunctionID: m.GetFunctionId(), Module: m.GetModule(), ABI: m.GetAbi(), Limits: m.GetLimits(), Activate: m.GetActivate(),
+			Labels: m.GetLabels(),
+		})
 	})
 	if err != nil {
 		return nil, f.s.fail(err)
 	}
-	if m.GetActivate() {
+	if m.GetValidateOnly() {
+		v.Id = ""
+	} else if m.GetActivate() {
 		f.s.cfg.Refresh(ctx)
 	}
 	return connect.NewResponse(&controlv1.CreateVersionResponse{Version: v}), nil
 }
 
 func (f functions) ListVersions(ctx context.Context, r *connect.Request[controlv1.ListVersionsRequest]) (*connect.Response[controlv1.ListVersionsResponse], error) {
-	vs, next, err := f.s.cfg.Store.ListVersions(ctx, r.Msg.GetFunctionId(), r.Msg.GetPageSize(), r.Msg.GetPageToken())
+	vs, next, err := f.s.cfg.Store.ListVersions(ctx, r.Msg.GetFunctionId(), r.Msg.GetPageSize(), r.Msg.GetPageToken(), r.Msg.GetMatchLabels())
 	if err != nil {
 		return nil, f.s.fail(err)
 	}
@@ -139,40 +170,73 @@ func (f functions) ListVersions(ctx context.Context, r *connect.Request[controlv
 }
 
 func (f functions) ActivateVersion(ctx context.Context, r *connect.Request[controlv1.ActivateVersionRequest]) (*connect.Response[controlv1.ActivateVersionResponse], error) {
-	fn, err := f.s.cfg.Store.ActivateVersion(ctx, r.Msg.GetFunctionId(), r.Msg.GetVersionId())
+	m := r.Msg
+	fn, err := mutate(ctx, f.s, m.GetValidateOnly(), func(ctx context.Context) (*controlv1.Function, error) {
+		return f.s.cfg.Store.ActivateVersion(ctx, m.GetFunctionId(), m.GetVersionId())
+	})
 	if err != nil {
 		return nil, f.s.fail(err)
 	}
-	f.s.cfg.Refresh(ctx)
+	if !m.GetValidateOnly() {
+		f.s.cfg.Refresh(ctx)
+	}
 	return connect.NewResponse(&controlv1.ActivateVersionResponse{Function: fn}), nil
 }
 
 func (f functions) SetEnv(ctx context.Context, r *connect.Request[controlv1.SetEnvRequest]) (*connect.Response[controlv1.SetEnvResponse], error) {
-	if r.Msg.GetEntry() == nil {
+	m := r.Msg
+	if m.GetEntry() == nil {
 		return nil, errs.Invalid("entry is required")
 	}
-	if err := f.s.cfg.Store.SetEnv(ctx, r.Msg.GetFunctionId(), r.Msg.GetEntry()); err != nil {
+	e, err := mutate(ctx, f.s, m.GetValidateOnly(), func(ctx context.Context) (*controlv1.EnvEntry, error) {
+		return f.s.cfg.Store.SetEnv(ctx, m.GetFunctionId(), m.GetEntry())
+	})
+	if err != nil {
 		return nil, f.s.fail(err)
 	}
-	f.s.cfg.Refresh(ctx)
-	return connect.NewResponse(&controlv1.SetEnvResponse{}), nil
+	if !m.GetValidateOnly() {
+		f.s.cfg.Refresh(ctx)
+	}
+	return connect.NewResponse(&controlv1.SetEnvResponse{Entry: e}), nil
 }
 
 func (f functions) DeleteEnv(ctx context.Context, r *connect.Request[controlv1.DeleteEnvRequest]) (*connect.Response[controlv1.DeleteEnvResponse], error) {
-	if err := f.s.cfg.Store.DeleteEnv(ctx, r.Msg.GetFunctionId(), r.Msg.GetName()); err != nil {
+	m := r.Msg
+	_, err := mutate(ctx, f.s, m.GetValidateOnly(), func(ctx context.Context) (struct{}, error) {
+		return struct{}{}, f.s.cfg.Store.DeleteEnv(ctx, m.GetFunctionId(), m.GetName())
+	})
+	if err != nil {
 		return nil, f.s.fail(err)
 	}
-	f.s.cfg.Refresh(ctx)
+	if !m.GetValidateOnly() {
+		f.s.cfg.Refresh(ctx)
+	}
 	return connect.NewResponse(&controlv1.DeleteEnvResponse{}), nil
 }
 
 func (f functions) SetEgress(ctx context.Context, r *connect.Request[controlv1.SetEgressRequest]) (*connect.Response[controlv1.SetEgressResponse], error) {
-	fn, err := f.s.cfg.Store.SetEgress(ctx, r.Msg.GetFunctionId(), r.Msg.GetAllow())
+	m := r.Msg
+	fn, err := mutate(ctx, f.s, m.GetValidateOnly(), func(ctx context.Context) (*controlv1.Function, error) {
+		return f.s.cfg.Store.SetEgress(ctx, m.GetFunctionId(), m.GetAllow())
+	})
 	if err != nil {
 		return nil, f.s.fail(err)
 	}
-	f.s.cfg.Refresh(ctx)
+	if !m.GetValidateOnly() {
+		f.s.cfg.Refresh(ctx)
+	}
 	return connect.NewResponse(&controlv1.SetEgressResponse{Function: fn}), nil
+}
+
+func (f functions) SetLabels(ctx context.Context, r *connect.Request[controlv1.SetLabelsRequest]) (*connect.Response[controlv1.SetLabelsResponse], error) {
+	m := r.Msg
+	fn, err := mutate(ctx, f.s, m.GetValidateOnly(), func(ctx context.Context) (*controlv1.Function, error) {
+		return f.s.cfg.Store.SetLabels(ctx, m.GetFunctionId(), m.GetLabels())
+	})
+	if err != nil {
+		return nil, f.s.fail(err)
+	}
+	return connect.NewResponse(&controlv1.SetLabelsResponse{Function: fn}), nil
 }
 
 func (f functions) ListEnv(ctx context.Context, r *connect.Request[controlv1.ListEnvRequest]) (*connect.Response[controlv1.ListEnvResponse], error) {
@@ -188,16 +252,23 @@ func (f functions) ListEnv(ctx context.Context, r *connect.Request[controlv1.Lis
 type routes struct{ s *Service }
 
 func (r routes) CreateRoute(ctx context.Context, req *connect.Request[controlv1.CreateRouteRequest]) (*connect.Response[controlv1.CreateRouteResponse], error) {
-	route, err := r.s.cfg.Store.CreateRoute(ctx, req.Msg.GetHostPattern(), req.Msg.GetPathPrefix(), req.Msg.GetFunctionId())
+	m := req.Msg
+	route, err := mutate(ctx, r.s, m.GetValidateOnly(), func(ctx context.Context) (*controlv1.Route, error) {
+		return r.s.cfg.Store.CreateRoute(ctx, m.GetHostPattern(), m.GetPathPrefix(), m.GetFunctionId(), m.GetLabels())
+	})
 	if err != nil {
 		return nil, r.s.fail(err)
 	}
-	r.s.cfg.Refresh(ctx)
+	if m.GetValidateOnly() {
+		route.Id = ""
+	} else {
+		r.s.cfg.Refresh(ctx)
+	}
 	return connect.NewResponse(&controlv1.CreateRouteResponse{Route: route}), nil
 }
 
 func (r routes) ListRoutes(ctx context.Context, req *connect.Request[controlv1.ListRoutesRequest]) (*connect.Response[controlv1.ListRoutesResponse], error) {
-	rs, next, err := r.s.cfg.Store.ListRoutes(ctx, req.Msg.GetPageSize(), req.Msg.GetPageToken())
+	rs, next, err := r.s.cfg.Store.ListRoutes(ctx, req.Msg.GetPageSize(), req.Msg.GetPageToken(), req.Msg.GetMatchLabels())
 	if err != nil {
 		return nil, r.s.fail(err)
 	}
@@ -205,10 +276,16 @@ func (r routes) ListRoutes(ctx context.Context, req *connect.Request[controlv1.L
 }
 
 func (r routes) DeleteRoute(ctx context.Context, req *connect.Request[controlv1.DeleteRouteRequest]) (*connect.Response[controlv1.DeleteRouteResponse], error) {
-	if err := r.s.cfg.Store.DeleteRoute(ctx, req.Msg.GetRouteId()); err != nil {
+	m := req.Msg
+	_, err := mutate(ctx, r.s, m.GetValidateOnly(), func(ctx context.Context) (struct{}, error) {
+		return struct{}{}, r.s.cfg.Store.DeleteRoute(ctx, m.GetRouteId())
+	})
+	if err != nil {
 		return nil, r.s.fail(err)
 	}
-	r.s.cfg.Refresh(ctx)
+	if !m.GetValidateOnly() {
+		r.s.cfg.Refresh(ctx)
+	}
 	return connect.NewResponse(&controlv1.DeleteRouteResponse{}), nil
 }
 

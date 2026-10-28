@@ -30,7 +30,7 @@ func (s *Store) RegisterWorker(ctx context.Context, endpoint string, info *worke
 		return "", err
 	}
 	var id string
-	err = s.pool.QueryRow(ctx, `INSERT INTO workers (endpoint, info, abis, max_concurrency, state)
+	err = s.q(ctx).QueryRow(ctx, `INSERT INTO workers (endpoint, info, abis, max_concurrency, state)
 		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (endpoint) DO UPDATE SET
 			id = gen_random_uuid(), info = EXCLUDED.info, abis = EXCLUDED.abis,
@@ -49,7 +49,7 @@ func (s *Store) Heartbeat(ctx context.Context, id string, state workerv1.WorkerS
 	if perr != nil {
 		return false, nil
 	}
-	tag, err := s.pool.Exec(ctx, `UPDATE workers SET state = $2, in_flight = $3, last_heartbeat = now() WHERE id = $1`,
+	tag, err := s.q(ctx).Exec(ctx, `UPDATE workers SET state = $2, in_flight = $3, last_heartbeat = now() WHERE id = $1`,
 		wid, int16(state), int32(inFlight))
 	if err != nil {
 		return false, err
@@ -63,21 +63,21 @@ func (s *Store) DeregisterWorker(ctx context.Context, id string) error {
 	if err != nil {
 		return nil
 	}
-	_, err = s.pool.Exec(ctx, `DELETE FROM workers WHERE id = $1`, wid)
+	_, err = s.q(ctx).Exec(ctx, `DELETE FROM workers WHERE id = $1`, wid)
 	return err
 }
 
 // PruneWorkers deletes workers that have not heartbeated for longer than
 // olderThan, and returns how many it removed.
 func (s *Store) PruneWorkers(ctx context.Context, olderThan time.Duration) (int, error) {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM workers WHERE last_heartbeat < now() - make_interval(secs => $1)`, olderThan.Seconds())
+	tag, err := s.q(ctx).Exec(ctx, `DELETE FROM workers WHERE last_heartbeat < now() - make_interval(secs => $1)`, olderThan.Seconds())
 	return int(tag.RowsAffected()), err
 }
 
 // ListWorkers returns every registered worker. A worker is alive if it
 // heartbeated within aliveWithin, by the database's clock.
 func (s *Store) ListWorkers(ctx context.Context, aliveWithin time.Duration) ([]*controlv1.WorkerStatus, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id::text, endpoint, info, state, in_flight, last_heartbeat,
+	rows, err := s.q(ctx).Query(ctx, `SELECT id::text, endpoint, info, state, in_flight, last_heartbeat,
 			last_heartbeat > now() - make_interval(secs => $1)
 		FROM workers ORDER BY endpoint`, aliveWithin.Seconds())
 	if err != nil {
@@ -128,7 +128,7 @@ func (w Worker) Supports(abi string) bool {
 // Filtering by ABI is the scheduler's job: it needs the whole set to tell "no
 // worker supports this ABI" from "no worker is alive".
 func (s *Store) ReadyWorkers(ctx context.Context, aliveWithin time.Duration) ([]Worker, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id::text, endpoint, abis, max_concurrency, in_flight FROM workers
+	rows, err := s.q(ctx).Query(ctx, `SELECT id::text, endpoint, abis, max_concurrency, in_flight FROM workers
 		WHERE state = $1 AND last_heartbeat > now() - make_interval(secs => $2)
 		ORDER BY endpoint`,
 		int16(workerv1.WorkerState_WORKER_STATE_READY), aliveWithin.Seconds())

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -88,7 +89,7 @@ func (u *ui) newFunctionPage() webui.Page[webui.NoArgs] {
 			Submit: webui.Action[newFn]{
 				Label: "Create", Role: webui.RolePrimary, Guard: editGuard[newFn],
 				Run: func(ctx context.Context, f newFn) (webui.Outcome, error) {
-					fn, err := u.c.CreateFunction(ctx, f.Name)
+					fn, err := u.c.CreateFunction(ctx, f.Name, nil)
 					if err == nil {
 						return webui.Success("Created " + fn.Name).Then(webui.Open(ctx, FunctionPath, FnArgs{ID: fn.Id})), nil
 					}
@@ -111,6 +112,7 @@ type fnDetail struct {
 	ID, Name string
 	Active   int64
 	Created  int
+	Labels   string
 }
 
 var (
@@ -118,6 +120,7 @@ var (
 	detailID      = webui.String[fnDetail]{Label: "ID", Load: func(d fnDetail) string { return d.ID }}
 	detailActive  = webui.Int[fnDetail]{Label: "Active version", Load: func(d fnDetail) int { return int(d.Active) }, Format: versionLabel}
 	detailCreated = webui.Timestamp[fnDetail]{Label: "Created", Load: func(d fnDetail) int { return d.Created }, Format: when}
+	detailLabels  = webui.String[fnDetail]{Label: "Labels", NoSort: true, Load: func(d fnDetail) string { return d.Labels }}
 )
 
 func (u *ui) functionPage() webui.Page[FnArgs] {
@@ -171,9 +174,9 @@ func (u *ui) functionPage() webui.Page[FnArgs] {
 						return fnDetail{}, err
 					}
 					n := u.c.ActiveVersionNumbers(ctx, []*controlv1.Function{f})[f.Id]
-					return fnDetail{ID: f.Id, Name: f.Name, Active: n, Created: int(f.CreateTime.AsTime().Unix())}, nil
+					return fnDetail{ID: f.Id, Name: f.Name, Active: n, Created: int(f.CreateTime.AsTime().Unix()), Labels: labelsText(f.Labels)}, nil
 				},
-				Fields: []webui.Accessor[fnDetail]{webui.Group[fnDetail]{detailName, detailID}, webui.Group[fnDetail]{detailActive, detailCreated}},
+				Fields: []webui.Accessor[fnDetail]{webui.Group[fnDetail]{detailName, detailID}, webui.Group[fnDetail]{detailActive, detailCreated}, detailLabels},
 			},
 			webui.Tabs{Panels: []webui.Tab{
 				{Label: "Versions", Body: u.versionsTable()},
@@ -597,4 +600,21 @@ func (u *ui) egressNewPage() webui.Page[FnArgs] {
 			},
 		},
 	}
+}
+
+// labelsText writes labels as "a=b, c=d", by key, or "none".
+func labelsText(m map[string]string) string {
+	if len(m) == 0 {
+		return "none"
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, len(keys))
+	for i, k := range keys {
+		parts[i] = k + "=" + m[k]
+	}
+	return strings.Join(parts, ", ")
 }

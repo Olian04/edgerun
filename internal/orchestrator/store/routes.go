@@ -11,12 +11,12 @@ import (
 	controlv1 "github.com/Olian04/edgerun/gen/edgerun/control/v1"
 )
 
-const routeCols = `id::text, host_pattern, path_prefix, function_id::text, created_at`
+const routeCols = `id::text, host_pattern, path_prefix, function_id::text, created_at, labels`
 
 func scanRoute(row pgx.Row) (*controlv1.Route, error) {
 	var r controlv1.Route
 	var created time.Time
-	if err := row.Scan(&r.Id, &r.HostPattern, &r.PathPrefix, &r.FunctionId, &created); err != nil {
+	if err := row.Scan(&r.Id, &r.HostPattern, &r.PathPrefix, &r.FunctionId, &created, &r.Labels); err != nil {
 		return nil, err
 	}
 	r.CreateTime = timestamppb.New(created)
@@ -41,7 +41,7 @@ func NormalizeRoute(host, prefix string) (string, string, error) {
 }
 
 // CreateRoute routes (host, prefix) to a function.
-func (s *Store) CreateRoute(ctx context.Context, host, prefix, functionID string) (*controlv1.Route, error) {
+func (s *Store) CreateRoute(ctx context.Context, host, prefix, functionID string, labels map[string]string) (*controlv1.Route, error) {
 	host, prefix, err := NormalizeRoute(host, prefix)
 	if err != nil {
 		return nil, err
@@ -50,9 +50,12 @@ func (s *Store) CreateRoute(ctx context.Context, host, prefix, functionID string
 	if err != nil {
 		return nil, err
 	}
-	r, err := scanRoute(s.pool.QueryRow(ctx,
-		`INSERT INTO routes (host_pattern, path_prefix, function_id) VALUES ($1, $2, $3) RETURNING `+routeCols,
-		host, prefix, fid))
+	if err := ValidateLabels(labels); err != nil {
+		return nil, err
+	}
+	r, err := scanRoute(s.q(ctx).QueryRow(ctx,
+		`INSERT INTO routes (host_pattern, path_prefix, function_id, labels) VALUES ($1, $2, $3, $4) RETURNING `+routeCols,
+		host, prefix, fid, labelArg(labels)))
 	switch pgCode(err) {
 	case "":
 		return r, err
@@ -67,7 +70,7 @@ func (s *Store) CreateRoute(ctx context.Context, host, prefix, functionID string
 }
 
 // ListRoutes pages through routes ordered by (host, path prefix).
-func (s *Store) ListRoutes(ctx context.Context, size uint32, token string) ([]*controlv1.Route, string, error) {
+func (s *Store) ListRoutes(ctx context.Context, size uint32, token string, match map[string]string) ([]*controlv1.Route, string, error) {
 	after, err := decodeToken(token, 2)
 	if err != nil {
 		return nil, "", err
@@ -75,10 +78,10 @@ func (s *Store) ListRoutes(ctx context.Context, size uint32, token string) ([]*c
 	n := pageSize(size)
 	var rows pgx.Rows
 	if after == nil {
-		rows, err = s.pool.Query(ctx, `SELECT `+routeCols+` FROM routes ORDER BY host_pattern, path_prefix LIMIT $1`, n+1)
+		rows, err = s.q(ctx).Query(ctx, `SELECT `+routeCols+` FROM routes WHERE labels @> $2 ORDER BY host_pattern, path_prefix LIMIT $1`, n+1, labelArg(match))
 	} else {
-		rows, err = s.pool.Query(ctx, `SELECT `+routeCols+` FROM routes
-			WHERE (host_pattern, path_prefix) > ($1, $2) ORDER BY host_pattern, path_prefix LIMIT $3`, after[0], after[1], n+1)
+		rows, err = s.q(ctx).Query(ctx, `SELECT `+routeCols+` FROM routes
+			WHERE (host_pattern, path_prefix) > ($1, $2) AND labels @> $4 ORDER BY host_pattern, path_prefix LIMIT $3`, after[0], after[1], n+1, labelArg(match))
 	}
 	if err != nil {
 		return nil, "", err
@@ -109,7 +112,7 @@ func (s *Store) DeleteRoute(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	tag, err := s.pool.Exec(ctx, `DELETE FROM routes WHERE id = $1`, id)
+	tag, err := s.q(ctx).Exec(ctx, `DELETE FROM routes WHERE id = $1`, id)
 	if err != nil {
 		return err
 	}

@@ -37,7 +37,7 @@ func newStore(t *testing.T) *store.Store {
 
 func mustFn(t *testing.T, s *store.Store, name string) string {
 	t.Helper()
-	f, err := s.CreateFunction(ctx, name)
+	f, err := s.CreateFunction(ctx, name, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func mustVersion(t *testing.T, s *store.Store, fid, content string, activate boo
 
 func TestFunctionLifecycle(t *testing.T) {
 	s := newStore(t)
-	f, err := s.CreateFunction(ctx, "hello")
+	f, err := s.CreateFunction(ctx, "hello", nil)
 	if err != nil || f.Name != "hello" || f.Id == "" || f.ActiveVersionId != "" || f.CreateTime == nil {
 		t.Fatalf("create: %+v %v", f, err)
 	}
@@ -63,7 +63,7 @@ func TestFunctionLifecycle(t *testing.T) {
 	if err != nil || got.Id != f.Id {
 		t.Fatalf("get: %v", err)
 	}
-	if _, err := s.CreateFunction(ctx, "hello"); !errors.Is(err, store.ErrAlreadyExists) {
+	if _, err := s.CreateFunction(ctx, "hello", nil); !errors.Is(err, store.ErrAlreadyExists) {
 		t.Errorf("duplicate name: %v", err)
 	}
 	if err := s.DeleteFunction(ctx, f.Id); err != nil {
@@ -80,12 +80,12 @@ func TestFunctionLifecycle(t *testing.T) {
 func TestFunctionNameValidation(t *testing.T) {
 	s := newStore(t)
 	for _, bad := range []string{"", "Hello", "-a", "a-", "a_b", "a b", "a.b", fmt.Sprintf("%064d", 1)} {
-		if _, err := s.CreateFunction(ctx, bad); !errors.Is(err, store.ErrInvalid) {
+		if _, err := s.CreateFunction(ctx, bad, nil); !errors.Is(err, store.ErrInvalid) {
 			t.Errorf("name %q: err = %v, want ErrInvalid", bad, err)
 		}
 	}
 	for _, good := range []string{"a", "a1", "my-func-2", fmt.Sprintf("%063d", 1)} {
-		if _, err := s.CreateFunction(ctx, good); err != nil {
+		if _, err := s.CreateFunction(ctx, good, nil); err != nil {
 			t.Errorf("name %q: %v", good, err)
 		}
 	}
@@ -97,7 +97,7 @@ func TestNonUUIDIDsAreNotFoundNotErrors(t *testing.T) {
 		"get":      func() error { _, err := s.GetFunction(ctx, "nope"); return err },
 		"delete":   func() error { return s.DeleteFunction(ctx, "nope") },
 		"activate": func() error { _, err := s.ActivateVersion(ctx, "nope", "nope"); return err },
-		"versions": func() error { _, _, err := s.ListVersions(ctx, "nope", 0, ""); return err },
+		"versions": func() error { _, _, err := s.ListVersions(ctx, "nope", 0, "", nil); return err },
 	} {
 		if err := f(); !errors.Is(err, store.ErrNotFound) {
 			t.Errorf("%s: %v", name, err)
@@ -113,7 +113,7 @@ func TestListFunctionsPaginates(t *testing.T) {
 	var seen []string
 	token := ""
 	for pages := 0; ; pages++ {
-		fs, next, err := s.ListFunctions(ctx, 2, token)
+		fs, next, err := s.ListFunctions(ctx, 2, token, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -131,7 +131,7 @@ func TestListFunctionsPaginates(t *testing.T) {
 	if fmt.Sprint(seen) != "[a b c d e]" {
 		t.Errorf("order/coverage: %v", seen)
 	}
-	if _, _, err := s.ListFunctions(ctx, 2, "garbage!!"); !errors.Is(err, store.ErrInvalid) {
+	if _, _, err := s.ListFunctions(ctx, 2, "garbage!!", nil); !errors.Is(err, store.ErrInvalid) {
 		t.Errorf("tampered token: %v", err)
 	}
 }
@@ -231,7 +231,7 @@ func TestListVersionsNewestFirst(t *testing.T) {
 	var got []int64
 	tok := ""
 	for {
-		vs, next, err := s.ListVersions(ctx, fid, 2, tok)
+		vs, next, err := s.ListVersions(ctx, fid, 2, tok, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -281,7 +281,7 @@ func TestDeleteFunctionCascadesButKeepsArtifacts(t *testing.T) {
 	s := newStore(t)
 	fid := mustFn(t, s, "fn")
 	v := mustVersion(t, s, fid, "code", true)
-	vs, _, _ := s.ListVersions(ctx, fid, 0, "")
+	vs, _, _ := s.ListVersions(ctx, fid, 0, "", nil)
 	digest := vs[0].ArtifactDigest
 	_ = v
 	if err := s.DeleteFunction(ctx, fid); err != nil {

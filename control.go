@@ -50,8 +50,14 @@ func (c *Control) DeleteFunction(ctx context.Context, req *controlv1.DeleteFunct
 
 // AllFunctions iterates over every function.
 func (c *Control) AllFunctions(ctx context.Context) iter.Seq2[*controlv1.Function, error] {
+	return c.AllFunctionsMatching(ctx, nil)
+}
+
+// AllFunctionsMatching iterates over the functions that carry every one of the
+// labels, with exactly those values.
+func (c *Control) AllFunctionsMatching(ctx context.Context, match map[string]string) iter.Seq2[*controlv1.Function, error] {
 	return pages(ctx, func(ctx context.Context, token string) ([]*controlv1.Function, string, error) {
-		r, err := c.ListFunctions(ctx, &controlv1.ListFunctionsRequest{PageToken: token})
+		r, err := c.ListFunctions(ctx, &controlv1.ListFunctionsRequest{PageToken: token, MatchLabels: match})
 		if err != nil {
 			return nil, "", err
 		}
@@ -75,8 +81,14 @@ func (c *Control) ActivateVersion(ctx context.Context, req *controlv1.ActivateVe
 
 // AllVersions iterates over every version of a function, newest first.
 func (c *Control) AllVersions(ctx context.Context, functionID string) iter.Seq2[*controlv1.FunctionVersion, error] {
+	return c.AllVersionsMatching(ctx, functionID, nil)
+}
+
+// AllVersionsMatching is AllVersions restricted to the versions that carry every
+// one of the labels, with exactly those values.
+func (c *Control) AllVersionsMatching(ctx context.Context, functionID string, match map[string]string) iter.Seq2[*controlv1.FunctionVersion, error] {
 	return pages(ctx, func(ctx context.Context, token string) ([]*controlv1.FunctionVersion, string, error) {
-		r, err := c.ListVersions(ctx, &controlv1.ListVersionsRequest{FunctionId: functionID, PageToken: token})
+		r, err := c.ListVersions(ctx, &controlv1.ListVersionsRequest{FunctionId: functionID, PageToken: token, MatchLabels: match})
 		if err != nil {
 			return nil, "", err
 		}
@@ -96,6 +108,10 @@ func (c *Control) DeleteEnv(ctx context.Context, req *controlv1.DeleteEnvRequest
 
 func (c *Control) ListEnv(ctx context.Context, req *controlv1.ListEnvRequest) (*controlv1.ListEnvResponse, error) {
 	return call(ctx, c.fn.ListEnv, req)
+}
+
+func (c *Control) SetLabels(ctx context.Context, req *controlv1.SetLabelsRequest) (*controlv1.SetLabelsResponse, error) {
+	return call(ctx, c.fn.SetLabels, req)
 }
 
 func (c *Control) SetEgress(ctx context.Context, req *controlv1.SetEgressRequest) (*controlv1.SetEgressResponse, error) {
@@ -118,8 +134,14 @@ func (c *Control) DeleteRoute(ctx context.Context, req *controlv1.DeleteRouteReq
 
 // AllRoutes iterates over every route.
 func (c *Control) AllRoutes(ctx context.Context) iter.Seq2[*controlv1.Route, error] {
+	return c.AllRoutesMatching(ctx, nil)
+}
+
+// AllRoutesMatching is AllRoutes restricted to the routes that carry every one
+// of the labels, with exactly those values.
+func (c *Control) AllRoutesMatching(ctx context.Context, match map[string]string) iter.Seq2[*controlv1.Route, error] {
 	return pages(ctx, func(ctx context.Context, token string) ([]*controlv1.Route, string, error) {
-		r, err := c.ListRoutes(ctx, &controlv1.ListRoutesRequest{PageToken: token})
+		r, err := c.ListRoutes(ctx, &controlv1.ListRoutesRequest{PageToken: token, MatchLabels: match})
 		if err != nil {
 			return nil, "", err
 		}

@@ -19,6 +19,10 @@ message Function {
   // form (see SetEgress). Empty: the function has no network. Closed by
   // default, and only the operator opens it.
   repeated string egress_allow = 5;
+  // Free-form metadata, set by whoever manages the function (see Labels in
+  // docs/protocol.md). Nothing in edgerun interprets it; tools use it to mark
+  // what they own and to find it again (ListFunctionsRequest.match_labels).
+  map<string, string> labels = 6;
 }
 
 // FunctionVersion is immutable once created. Rolling back is activating an
@@ -35,6 +39,8 @@ message FunctionVersion {
   uint64 size_bytes = 6;
   edgerun.common.v1.Limits limits = 7;
   google.protobuf.Timestamp create_time = 8;
+  // Set when the version is created, and as immutable as the version is.
+  map<string, string> labels = 9;
 }
 
 // Route maps incoming requests to a function.
@@ -53,6 +59,9 @@ message Route {
   string path_prefix = 3;
   string function_id = 4;
   google.protobuf.Timestamp create_time = 5;
+  // Set when the route is created. A route cannot be edited: replacing one is
+  // deleting it and creating another.
+  map<string, string> labels = 6;
 }
 
 // EnvEntry is one environment variable of a function. Values of secret
@@ -61,6 +70,16 @@ message EnvEntry {
   string name = 1;
   string value = 2;
   bool secret = 3;
+  // Output only (ignored when the entry is sent). An opaque token that
+  // identifies the stored value without revealing it, so that a write-only
+  // secret can still be compared: it is the same for the same value stored
+  // under the same name in the same function (setting a value that is already
+  // there changes nothing), and different for any other value. It is keyed
+  // with a secret only the orchestrator holds, so it cannot be recomputed
+  // outside, nor used to guess a value offline: remember the revision a write
+  // returned, and a different one later means the value was changed by someone
+  // else. Present for every entry, secret or not.
+  string revision = 4;
 }
 
 // WorkerStatus is the orchestrator's current view of one registered worker.

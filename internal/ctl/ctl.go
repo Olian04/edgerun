@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -29,8 +30,8 @@ const usage = `edgerunctl manages an edgerun orchestrator through its control pr
 
 usage: edgerunctl [--url URL] [--token TOKEN] <command> [arguments]
 
-  functions                       list functions
-  create NAME                     create a function
+  functions [--label K=V]...      list functions, only those with every label given
+  create NAME [--label K=V]...    create a function
   delete NAME                     delete a function with its versions, routes and environment
   deploy NAME FILE [flags]        upload FILE as a new version      (--abi, --memory-mib, --max-response-kib, --activate)
   versions NAME                   list a function's versions
@@ -41,6 +42,9 @@ usage: edgerunctl [--url URL] [--token TOKEN] <command> [arguments]
   env NAME                        list a function's environment
   set NAME KEY VALUE [--secret]   set an environment variable
   unset NAME KEY                  delete an environment variable
+  labels NAME                     list a function's labels
+  label NAME K=V...               set labels on a function (others are kept)
+  unlabel NAME K...               remove labels from a function
   egress NAME                     list the network destinations a function may reach (none by default)
   allow NAME DEST...              let a function reach DEST: host, *.domain, or address, with :port if not 80/443
   deny NAME DEST...               stop letting a function reach DEST
@@ -48,7 +52,8 @@ usage: edgerunctl [--url URL] [--token TOKEN] <command> [arguments]
   workers                         list workers
   invocations [--function NAME] [--limit N]
 
---url defaults to $EDGERUN_URL and --token to $EDGERUN_ADMIN_TOKEN.
+--url defaults to $EDGERUN_URL and --token to $EDGERUN_ADMIN_TOKEN. --dry-run, before the command, makes any change
+a validate-only call: every check is made against the real state and nothing is changed.
 `
 
 // Run executes args (without the program name) and returns the exit code.
@@ -57,6 +62,7 @@ func Run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	global.SetOutput(io.Discard)
 	url := global.String("url", getenv("EDGERUN_URL"), "")
 	token := global.String("token", getenv("EDGERUN_ADMIN_TOKEN"), "")
+	dryRun := global.Bool("dry-run", false, "")
 	if err := global.Parse(args); err != nil {
 		fmt.Fprint(stderr, usage)
 		return 2
@@ -71,7 +77,12 @@ func Run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		return 2
 	}
 	c := &client{ctx: ctx, c: admin.NewControl(http.DefaultClient, *url, *token), out: stdout}
-	if err := c.run(rest[0], rest[1:]); err != nil {
+	c.c.DryRun = *dryRun
+	err := c.run(rest[0], rest[1:])
+	if err == nil && *dryRun && writes[rest[0]] {
+		fmt.Fprintln(stdout, "(dry run: validated only, nothing was changed)")
+	}
+	if err != nil {
 		var usageErr usageError
 		if errors.As(err, &usageErr) {
 			fmt.Fprintf(stderr, "edgerunctl: %s\n\n%s", err, usage)
@@ -82,6 +93,10 @@ func Run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	}
 	return 0
 }
+
+// writes are the commands that change something.
+var writes = map[string]bool{"create": true, "delete": true, "deploy": true, "activate": true, "route": true, "unroute": true,
+	"set": true, "unset": true, "allow": true, "deny": true, "label": true, "unlabel": true}
 
 type usageError string
 
@@ -105,7 +120,7 @@ type client struct {
 func (c *client) run(cmd string, args []string) error {
 	switch cmd {
 	case "functions":
-		return c.functions()
+		return c.functions(args)
 	case "create":
 		return c.create(args)
 	case "delete":
@@ -128,6 +143,12 @@ func (c *client) run(cmd string, args []string) error {
 		return c.set(args)
 	case "unset":
 		return c.unset(args)
+	case "labels":
+		return c.labels(args)
+	case "label":
+		return c.label(args, true)
+	case "unlabel":
+		return c.label(args, false)
 	case "egress":
 		return c.egress(args)
 	case "allow":
@@ -171,31 +192,140 @@ func when(t interface{ AsTime() time.Time }) string {
 	return t.AsTime().UTC().Format("2006-01-02 15:04:05")
 }
 
-func (c *client) functions() error {
-	fns, err := c.c.Functions(c.ctx)
+// labelFlag collects repeated --label K=V flags.
+type labelFlag map[string]string
+
+func (l labelFlag) String() string { return fmt.Sprint(map[string]string(l)) }
+func (l labelFlag) Set(v string) error {
+	k, val, ok := strings.Cut(v, "=")
+	if !ok || k == "" {
+		return fmt.Errorf("want K=V, got %q", v)
+	}
+	l[k] = val
+	return nil
+}
+
+func labelText(m map[string]string) string {
+	if len(m) == 0 {
+		return "-"
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, len(keys))
+	for i, k := range keys {
+		parts[i] = k + "=" + m[k]
+	}
+	return strings.Join(parts, ",")
+}
+
+func (c *client) functions(args []string) error {
+	fs := flag.NewFlagSet("functions", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	match := labelFlag{}
+	fs.Var(match, "label", "")
+	rest, err := parseInterspersed(fs, args)
+	if err != nil || len(rest) != 0 {
+		return usageError("usage: edgerunctl functions [--label K=V]...")
+	}
+	fns, err := c.c.FunctionsMatching(c.ctx, match)
 	if err != nil {
 		return err
 	}
 	numbers := c.c.ActiveVersionNumbers(c.ctx, fns)
 	w := c.table()
-	fmt.Fprintln(w, "NAME\tACTIVE\tCREATED\tID")
+	fmt.Fprintln(w, "NAME\tACTIVE\tLABELS\tCREATED\tID")
 	for _, f := range fns {
 		active := "-"
 		if n := numbers[f.Id]; n > 0 {
 			active = "v" + strconv.FormatInt(n, 10)
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", f.Name, active, when(f.CreateTime), f.Id)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", f.Name, active, labelText(f.Labels), when(f.CreateTime), f.Id)
 	}
 	return w.Flush()
 }
 
-func (c *client) create(args []string) error {
-	if err := wantArgs(args, 1, "create NAME"); err != nil {
+func (c *client) labels(args []string) error {
+	if err := wantArgs(args, 1, "labels NAME"); err != nil {
 		return err
 	}
-	f, err := c.c.CreateFunction(c.ctx, args[0])
+	f, err := c.function(args[0])
 	if err != nil {
 		return err
+	}
+	if len(f.Labels) == 0 {
+		fmt.Fprintf(c.out, "%s has no labels\n", f.Name)
+		return nil
+	}
+	keys := make([]string, 0, len(f.Labels))
+	for k := range f.Labels {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		fmt.Fprintf(c.out, "%s=%s\n", k, f.Labels[k])
+	}
+	return nil
+}
+
+// label sets labels (K=V) or, with set false, removes them (K).
+func (c *client) label(args []string, set bool) error {
+	form := "label NAME K=V..."
+	if !set {
+		form = "unlabel NAME K..."
+	}
+	if len(args) < 2 {
+		return usageError("usage: edgerunctl " + form)
+	}
+	f, err := c.function(args[0])
+	if err != nil {
+		return err
+	}
+	labels := map[string]string{}
+	for k, v := range f.Labels {
+		labels[k] = v
+	}
+	for _, a := range args[1:] {
+		if set {
+			k, v, ok := strings.Cut(a, "=")
+			if !ok || k == "" {
+				return usageError("usage: edgerunctl " + form)
+			}
+			labels[k] = v
+		} else {
+			delete(labels, a)
+		}
+	}
+	// SetLabels replaces the set; sending the edited one is what keeps the others.
+	updated, err := c.c.SetLabels(c.ctx, f.Id, labels)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(c.out, "%s: %s\n", f.Name, labelText(updated.Labels))
+	return nil
+}
+
+func (c *client) create(args []string) error {
+	fs := flag.NewFlagSet("create", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	labels := labelFlag{}
+	fs.Var(labels, "label", "")
+	positional, err := parseInterspersed(fs, args)
+	if err != nil {
+		return usageError(err.Error())
+	}
+	if err := wantArgs(positional, 1, "create NAME [--label K=V]..."); err != nil {
+		return err
+	}
+	f, err := c.c.CreateFunction(c.ctx, positional[0], labels)
+	if err != nil {
+		return err
+	}
+	if c.c.DryRun {
+		fmt.Fprintf(c.out, "would create %s\n", f.Name)
+		return nil
 	}
 	fmt.Fprintf(c.out, "created %s (%s)\n", f.Name, f.Id)
 	return nil

@@ -198,3 +198,47 @@ func TestMissingCredentialsAndHelp(t *testing.T) {
 		t.Errorf("wrong token: %d %q", code, errb.String())
 	}
 }
+
+func TestLabelsAndDryRunFromTheCommandLine(t *testing.T) {
+	r := newRig(t)
+	r.mustRun("create", "a", "--label", "owner=gitops", "--label", "env=prod")
+	r.mustRun("create", "b", "--label", "owner=human")
+	r.mustRun("create", "c")
+
+	list := r.mustRun("functions", "--label", "owner=gitops")
+	if !strings.Contains(list, "a ") || strings.Contains(list, "\nb ") || strings.Contains(list, "\nc ") || !strings.Contains(list, "env=prod,owner=gitops") {
+		t.Errorf("functions --label:\n%s", list)
+	}
+	if out := r.mustRun("labels", "a"); out != "env=prod\nowner=gitops\n" {
+		t.Errorf("labels: %q", out)
+	}
+	// label merges into what is there; unlabel removes.
+	if out := r.mustRun("label", "a", "team=core", "env=dev"); !strings.Contains(out, "env=dev,owner=gitops,team=core") {
+		t.Errorf("label: %q", out)
+	}
+	if out := r.mustRun("unlabel", "a", "env", "team"); !strings.Contains(out, "owner=gitops") || strings.Contains(out, "team") {
+		t.Errorf("unlabel: %q", out)
+	}
+	if code, _, stderr := r.run("label", "a", "BAD=x"); code != 1 || !strings.Contains(stderr, "label key") {
+		t.Errorf("a bad key: %d %q", code, stderr)
+	}
+
+	// --dry-run: every check, no change.
+	if out := r.mustRun("--dry-run", "create", "d"); !strings.Contains(out, "would create d") || !strings.Contains(out, "nothing was changed") {
+		t.Errorf("dry-run create: %q", out)
+	}
+	if out := r.mustRun("functions"); strings.Contains(out, "\nd ") {
+		t.Errorf("a dry run created it:\n%s", out)
+	}
+	if code, _, stderr := r.run("--dry-run", "create", "a"); code != 1 || !strings.Contains(stderr, "exists") {
+		t.Errorf("a dry run reports the conflict the real call would: %d %q", code, stderr)
+	}
+	r.mustRun("--dry-run", "label", "a", "x=y")
+	if out := r.mustRun("labels", "a"); strings.Contains(out, "x=y") {
+		t.Errorf("a dry run set a label: %q", out)
+	}
+	r.mustRun("--dry-run", "delete", "b")
+	if out := r.mustRun("functions"); !strings.Contains(out, "\nb ") {
+		t.Errorf("a dry run deleted it:\n%s", out)
+	}
+}

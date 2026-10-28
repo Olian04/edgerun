@@ -22,27 +22,27 @@ func TestRoutes(t *testing.T) {
 	s := newStore(t)
 	fid := mustFn(t, s, "fn")
 
-	r, err := s.CreateRoute(ctx, "API.Example.COM", "/v1/", fid)
+	r, err := s.CreateRoute(ctx, "API.Example.COM", "/v1/", fid, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if r.HostPattern != "api.example.com" || r.PathPrefix != "/v1" || r.FunctionId != fid {
 		t.Errorf("not normalised: %+v", r)
 	}
-	if _, err := s.CreateRoute(ctx, "api.example.com", "/v1", fid); !errors.Is(err, store.ErrAlreadyExists) {
+	if _, err := s.CreateRoute(ctx, "api.example.com", "/v1", fid, nil); !errors.Is(err, store.ErrAlreadyExists) {
 		t.Errorf("duplicate (normalised) route: %v", err)
 	}
-	if rr, err := s.CreateRoute(ctx, "*", "/", fid); err != nil || rr.PathPrefix != "/" {
+	if rr, err := s.CreateRoute(ctx, "*", "/", fid, nil); err != nil || rr.PathPrefix != "/" {
 		t.Errorf("root route: %+v %v", rr, err)
 	}
-	if _, err := s.CreateRoute(ctx, "*.example.com", "/x", fid); err != nil {
+	if _, err := s.CreateRoute(ctx, "*.example.com", "/x", fid, nil); err != nil {
 		t.Error(err)
 	}
-	if _, err := s.CreateRoute(ctx, "h", "/x", "00000000-0000-0000-0000-000000000000"); !errors.Is(err, store.ErrNotFound) {
+	if _, err := s.CreateRoute(ctx, "h", "/x", "00000000-0000-0000-0000-000000000000", nil); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("unknown function: %v", err)
 	}
 	for _, c := range [][2]string{{"", "/"}, {"Bad Host", "/"}, {"a.*.b", "/"}, {"h", "x"}, {"h", ""}, {"h", "/a//b"}, {"h", "/a?b"}, {"h", "/a b"}} {
-		if _, err := s.CreateRoute(ctx, c[0], c[1], fid); !errors.Is(err, store.ErrInvalid) {
+		if _, err := s.CreateRoute(ctx, c[0], c[1], fid, nil); !errors.Is(err, store.ErrInvalid) {
 			t.Errorf("route %q %q: err = %v, want ErrInvalid", c[0], c[1], err)
 		}
 	}
@@ -59,14 +59,14 @@ func TestListRoutesPaginatesInOrder(t *testing.T) {
 	s := newStore(t)
 	fid := mustFn(t, s, "fn")
 	for _, hp := range [][2]string{{"b.com", "/z"}, {"a.com", "/b"}, {"a.com", "/a"}, {"*", "/"}, {"b.com", "/a"}} {
-		if _, err := s.CreateRoute(ctx, hp[0], hp[1], fid); err != nil {
+		if _, err := s.CreateRoute(ctx, hp[0], hp[1], fid, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
 	var got []string
 	tok := ""
 	for {
-		rs, next, err := s.ListRoutes(ctx, 2, tok)
+		rs, next, err := s.ListRoutes(ctx, 2, tok, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -86,9 +86,9 @@ func TestListRoutesPaginatesInOrder(t *testing.T) {
 func TestDeletingAFunctionDeletesItsRoutes(t *testing.T) {
 	s := newStore(t)
 	fid := mustFn(t, s, "fn")
-	s.CreateRoute(ctx, "h.com", "/", fid)
+	s.CreateRoute(ctx, "h.com", "/", fid, nil)
 	s.DeleteFunction(ctx, fid)
-	if rs, _, _ := s.ListRoutes(ctx, 0, ""); len(rs) != 0 {
+	if rs, _, _ := s.ListRoutes(ctx, 0, "", nil); len(rs) != 0 {
 		t.Errorf("orphaned routes: %v", rs)
 	}
 }
@@ -98,10 +98,10 @@ func TestDeletingAFunctionDeletesItsRoutes(t *testing.T) {
 func TestEnvSecretsAreWriteOnlyAndSealedAtRest(t *testing.T) {
 	s := newStore(t)
 	fid := mustFn(t, s, "fn")
-	if err := s.SetEnv(ctx, fid, &controlv1.EnvEntry{Name: "PLAIN", Value: "visible"}); err != nil {
+	if _, err := s.SetEnv(ctx, fid, &controlv1.EnvEntry{Name: "PLAIN", Value: "visible"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetEnv(ctx, fid, &controlv1.EnvEntry{Name: "TOKEN", Value: "hunter2", Secret: true}); err != nil {
+	if _, err := s.SetEnv(ctx, fid, &controlv1.EnvEntry{Name: "TOKEN", Value: "hunter2", Secret: true}); err != nil {
 		t.Fatal(err)
 	}
 	entries, err := s.ListEnv(ctx, fid)
@@ -138,22 +138,22 @@ func TestEnvValidation(t *testing.T) {
 		"NUL":           {Name: "A", Value: "a\x00b"},
 		"too big":       {Name: "A", Value: strings.Repeat("x", 32<<10+1)},
 	} {
-		if err := s.SetEnv(ctx, fid, e); !errors.Is(err, store.ErrInvalid) {
+		if _, err := s.SetEnv(ctx, fid, e); !errors.Is(err, store.ErrInvalid) {
 			t.Errorf("%s: err = %v, want ErrInvalid", name, err)
 		}
 	}
-	if err := s.SetEnv(ctx, "00000000-0000-0000-0000-000000000000", &controlv1.EnvEntry{Name: "A"}); !errors.Is(err, store.ErrNotFound) {
+	if _, err := s.SetEnv(ctx, "00000000-0000-0000-0000-000000000000", &controlv1.EnvEntry{Name: "A"}); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("unknown function: %v", err)
 	}
 	for i := range 64 {
-		if err := s.SetEnv(ctx, fid, &controlv1.EnvEntry{Name: fmt.Sprint("V", i)}); err != nil {
+		if _, err := s.SetEnv(ctx, fid, &controlv1.EnvEntry{Name: fmt.Sprint("V", i)}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := s.SetEnv(ctx, fid, &controlv1.EnvEntry{Name: "ONE_TOO_MANY"}); !errors.Is(err, store.ErrInvalid) {
+	if _, err := s.SetEnv(ctx, fid, &controlv1.EnvEntry{Name: "ONE_TOO_MANY"}); !errors.Is(err, store.ErrInvalid) {
 		t.Errorf("65th variable: %v", err)
 	}
-	if err := s.SetEnv(ctx, fid, &controlv1.EnvEntry{Name: "V0", Value: "replacing is fine at the limit"}); err != nil {
+	if _, err := s.SetEnv(ctx, fid, &controlv1.EnvEntry{Name: "V0", Value: "replacing is fine at the limit"}); err != nil {
 		t.Errorf("replacing at the limit: %v", err)
 	}
 }
@@ -171,9 +171,9 @@ func TestLoadRouting(t *testing.T) {
 	}
 	s.SetEnv(ctx, live, &controlv1.EnvEntry{Name: "PLAIN", Value: "p"})
 	s.SetEnv(ctx, live, &controlv1.EnvEntry{Name: "SECRET", Value: "decrypted-for-workers", Secret: true})
-	s.CreateRoute(ctx, "a.com", "/", live)
-	s.CreateRoute(ctx, "a.com", "/also", live)
-	s.CreateRoute(ctx, "b.com", "/", undeployed)
+	s.CreateRoute(ctx, "a.com", "/", live, nil)
+	s.CreateRoute(ctx, "a.com", "/also", live, nil)
+	s.CreateRoute(ctx, "b.com", "/", undeployed, nil)
 
 	entries, err := s.LoadRouting(ctx)
 	if err != nil {
@@ -210,7 +210,7 @@ func TestSecretsAreUnreadableAtRestAndBoundToTheirSlot(t *testing.T) {
 	a, b := mustFn(t, s, "a"), mustFn(t, s, "b")
 	for _, f := range []string{a, b} {
 		s.SetEnv(ctx, f, &controlv1.EnvEntry{Name: "TOKEN", Value: "super-secret-value-" + f, Secret: true})
-		s.CreateRoute(ctx, f+".com", "/", f)
+		s.CreateRoute(ctx, f+".com", "/", f, nil)
 	}
 	var raw []byte
 	if err := pool.QueryRow(ctx, `SELECT value FROM env_vars WHERE function_id = $1`, a).Scan(&raw); err != nil {

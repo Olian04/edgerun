@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -21,28 +22,28 @@ func envAAD(functionID, name string) []byte { return []byte(functionID + "/" + n
 
 // SetEnv creates or replaces one environment variable of a function. Secret
 // values are sealed before they reach the database.
-func (s *Store) SetEnv(ctx context.Context, functionID string, e *controlv1.EnvEntry) error {
+func (s *Store) SetEnv(ctx context.Context, functionID string, e *controlv1.EnvEntry) (*controlv1.EnvEntry, error) {
 	fid, err := parseID("function", functionID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	name := e.GetName()
 	switch {
 	case !wagi.ValidEnvName(name):
-		return invalid("environment variable name %q: want [A-Za-z_][A-Za-z0-9_]*", name)
+		return nil, invalid("environment variable name %q: want [A-Za-z_][A-Za-z0-9_]*", name)
 	case wagi.ReservedEnvName(name):
-		return invalid("environment variable %q is reserved by the %s ABI", name, wagi.ABI)
+		return nil, invalid("environment variable %q is reserved by the %s ABI", name, wagi.ABI)
 	case len(e.GetValue()) > maxEnvValueBytes:
-		return invalid("environment variable %q is larger than %d bytes", name, maxEnvValueBytes)
+		return nil, invalid("environment variable %q is larger than %d bytes", name, maxEnvValueBytes)
 	case strings.ContainsRune(e.GetValue(), 0):
-		return invalid("environment variable %q contains NUL", name)
+		return nil, invalid("environment variable %q contains NUL", name)
 	}
 	stored := []byte(e.GetValue())
 	if e.GetSecret() {
 		stored = s.box.Seal(stored, envAAD(fid, name))
 	}
 
-	return s.inTx(ctx, func(tx pgx.Tx) error {
+	err = s.inTx(ctx, func(tx pgx.Tx) error {
 		// Serialise env writes per function so the count limit cannot be raced.
 		var locked string
 		if err := tx.QueryRow(ctx, `SELECT id::text FROM functions WHERE id = $1 FOR UPDATE`, fid).Scan(&locked); err != nil {
@@ -64,6 +65,23 @@ func (s *Store) SetEnv(ctx context.Context, functionID string, e *controlv1.EnvE
 			fid, name, stored, e.GetSecret())
 		return err
 	})
+	if err != nil {
+		return nil, err
+	}
+	out := &controlv1.EnvEntry{Name: name, Secret: e.GetSecret(), Revision: s.revision(fid, name, e.GetSecret(), []byte(e.GetValue()))}
+	if !e.GetSecret() {
+		out.Value = e.GetValue()
+	}
+	return out, nil
+}
+
+// revision identifies a stored value without revealing it (see EnvEntry.revision).
+func (s *Store) revision(fid, name string, secret bool, value []byte) string {
+	kind := []byte("p")
+	if secret {
+		kind = []byte("s")
+	}
+	return s.box.Revision([]byte(fid), []byte(name), kind, value)
 }
 
 // DeleteEnv removes one environment variable.
@@ -72,7 +90,7 @@ func (s *Store) DeleteEnv(ctx context.Context, functionID, name string) error {
 	if err != nil {
 		return err
 	}
-	tag, err := s.pool.Exec(ctx, `DELETE FROM env_vars WHERE function_id = $1 AND name = $2`, fid, name)
+	tag, err := s.q(ctx).Exec(ctx, `DELETE FROM env_vars WHERE function_id = $1 AND name = $2`, fid, name)
 	if err != nil {
 		return err
 	}
@@ -92,7 +110,7 @@ func (s *Store) ListEnv(ctx context.Context, functionID string) ([]*controlv1.En
 	if _, err := s.GetFunction(ctx, fid); err != nil {
 		return nil, err
 	}
-	rows, err := s.pool.Query(ctx, `SELECT name, value, secret FROM env_vars WHERE function_id = $1 ORDER BY name`, fid)
+	rows, err := s.q(ctx).Query(ctx, `SELECT name, value, secret FROM env_vars WHERE function_id = $1 ORDER BY name`, fid)
 	if err != nil {
 		return nil, err
 	}
@@ -104,9 +122,16 @@ func (s *Store) ListEnv(ctx context.Context, functionID string) ([]*controlv1.En
 		if err := rows.Scan(&e.Name, &v, &e.Secret); err != nil {
 			return nil, err
 		}
-		if !e.Secret {
+		plain := v
+		if e.Secret {
+			// Opened only to take its revision; it never leaves this function.
+			if plain, err = s.box.Open(v, envAAD(fid, e.Name)); err != nil {
+				return nil, fmt.Errorf("opening secret %q of function %s: %w", e.Name, fid, err)
+			}
+		} else {
 			e.Value = string(v)
 		}
+		e.Revision = s.revision(fid, e.Name, e.Secret, plain)
 		out = append(out, &e)
 	}
 	return out, rows.Err()

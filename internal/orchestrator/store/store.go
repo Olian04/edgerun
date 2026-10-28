@@ -68,8 +68,43 @@ func parseID(kind, id string) (string, error) {
 	return u.String(), nil
 }
 
-// inTx runs f in a transaction, committing if it returns nil.
+// querier is what the store runs statements through: the pool, or, for a
+// validate-only call, the transaction that will be rolled back.
+type querier interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+type dryRunKey struct{}
+
+// q returns where statements for ctx run.
+func (s *Store) q(ctx context.Context) querier {
+	if tx, ok := ctx.Value(dryRunKey{}).(pgx.Tx); ok {
+		return tx
+	}
+	return s.pool
+}
+
+// DryRun runs f with everything it does to the store taking place in a
+// transaction that is rolled back whatever f returns. f therefore sees the real
+// state, meets the real constraints and conflicts, and returns what it would
+// have returned, while nothing is left behind: that is what validate-only means.
+func (s *Store) DryRun(ctx context.Context, f func(ctx context.Context) error) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(context.WithoutCancel(ctx))
+	return f(context.WithValue(ctx, dryRunKey{}, tx))
+}
+
+// inTx runs f in a transaction, committing if it returns nil. Inside a dry run
+// it joins the dry run's transaction, which is never committed.
 func (s *Store) inTx(ctx context.Context, f func(tx pgx.Tx) error) error {
+	if tx, ok := ctx.Value(dryRunKey{}).(pgx.Tx); ok {
+		return f(tx)
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err

@@ -28,6 +28,8 @@ type CreateRouteRequest struct {
 	HostPattern   string                 `protobuf:"bytes,1,opt,name=host_pattern,json=hostPattern,proto3" json:"host_pattern,omitempty"`
 	PathPrefix    string                 `protobuf:"bytes,2,opt,name=path_prefix,json=pathPrefix,proto3" json:"path_prefix,omitempty"`
 	FunctionId    string                 `protobuf:"bytes,3,opt,name=function_id,json=functionId,proto3" json:"function_id,omitempty"`
+	Labels        map[string]string      `protobuf:"bytes,4,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	ValidateOnly  bool                   `protobuf:"varint,5,opt,name=validate_only,json=validateOnly,proto3" json:"validate_only,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -83,6 +85,20 @@ func (x *CreateRouteRequest) GetFunctionId() string {
 	return ""
 }
 
+func (x *CreateRouteRequest) GetLabels() map[string]string {
+	if x != nil {
+		return x.Labels
+	}
+	return nil
+}
+
+func (x *CreateRouteRequest) GetValidateOnly() bool {
+	if x != nil {
+		return x.ValidateOnly
+	}
+	return false
+}
+
 type CreateRouteResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Route         *Route                 `protobuf:"bytes,1,opt,name=route,proto3" json:"route,omitempty"`
@@ -128,9 +144,11 @@ func (x *CreateRouteResponse) GetRoute() *Route {
 }
 
 type ListRoutesRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	PageSize      uint32                 `protobuf:"varint,1,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
-	PageToken     string                 `protobuf:"bytes,2,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	PageSize  uint32                 `protobuf:"varint,1,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	PageToken string                 `protobuf:"bytes,2,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
+	// Only routes that carry every one of these labels with exactly these values.
+	MatchLabels   map[string]string `protobuf:"bytes,3,rep,name=match_labels,json=matchLabels,proto3" json:"match_labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -177,6 +195,13 @@ func (x *ListRoutesRequest) GetPageToken() string {
 		return x.PageToken
 	}
 	return ""
+}
+
+func (x *ListRoutesRequest) GetMatchLabels() map[string]string {
+	if x != nil {
+		return x.MatchLabels
+	}
+	return nil
 }
 
 type ListRoutesResponse struct {
@@ -234,6 +259,7 @@ func (x *ListRoutesResponse) GetNextPageToken() string {
 type DeleteRouteRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	RouteId       string                 `protobuf:"bytes,1,opt,name=route_id,json=routeId,proto3" json:"route_id,omitempty"`
+	ValidateOnly  bool                   `protobuf:"varint,2,opt,name=validate_only,json=validateOnly,proto3" json:"validate_only,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -273,6 +299,13 @@ func (x *DeleteRouteRequest) GetRouteId() string {
 		return x.RouteId
 	}
 	return ""
+}
+
+func (x *DeleteRouteRequest) GetValidateOnly() bool {
+	if x != nil {
+		return x.ValidateOnly
+	}
+	return false
 }
 
 type DeleteRouteResponse struct {
@@ -315,24 +348,34 @@ var File_edgerun_control_v1_route_proto protoreflect.FileDescriptor
 
 const file_edgerun_control_v1_route_proto_rawDesc = "" +
 	"\n" +
-	"\x1eedgerun/control/v1/route.proto\x12\x12edgerun.control.v1\x1a\x1eedgerun/control/v1/model.proto\"y\n" +
+	"\x1eedgerun/control/v1/route.proto\x12\x12edgerun.control.v1\x1a\x1eedgerun/control/v1/model.proto\"\xa5\x02\n" +
 	"\x12CreateRouteRequest\x12!\n" +
 	"\fhost_pattern\x18\x01 \x01(\tR\vhostPattern\x12\x1f\n" +
 	"\vpath_prefix\x18\x02 \x01(\tR\n" +
 	"pathPrefix\x12\x1f\n" +
 	"\vfunction_id\x18\x03 \x01(\tR\n" +
-	"functionId\"F\n" +
+	"functionId\x12J\n" +
+	"\x06labels\x18\x04 \x03(\v22.edgerun.control.v1.CreateRouteRequest.LabelsEntryR\x06labels\x12#\n" +
+	"\rvalidate_only\x18\x05 \x01(\bR\fvalidateOnly\x1a9\n" +
+	"\vLabelsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"F\n" +
 	"\x13CreateRouteResponse\x12/\n" +
-	"\x05route\x18\x01 \x01(\v2\x19.edgerun.control.v1.RouteR\x05route\"O\n" +
+	"\x05route\x18\x01 \x01(\v2\x19.edgerun.control.v1.RouteR\x05route\"\xea\x01\n" +
 	"\x11ListRoutesRequest\x12\x1b\n" +
 	"\tpage_size\x18\x01 \x01(\rR\bpageSize\x12\x1d\n" +
 	"\n" +
-	"page_token\x18\x02 \x01(\tR\tpageToken\"o\n" +
+	"page_token\x18\x02 \x01(\tR\tpageToken\x12Y\n" +
+	"\fmatch_labels\x18\x03 \x03(\v26.edgerun.control.v1.ListRoutesRequest.MatchLabelsEntryR\vmatchLabels\x1a>\n" +
+	"\x10MatchLabelsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"o\n" +
 	"\x12ListRoutesResponse\x121\n" +
 	"\x06routes\x18\x01 \x03(\v2\x19.edgerun.control.v1.RouteR\x06routes\x12&\n" +
-	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"/\n" +
+	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"T\n" +
 	"\x12DeleteRouteRequest\x12\x19\n" +
-	"\broute_id\x18\x01 \x01(\tR\arouteId\"\x15\n" +
+	"\broute_id\x18\x01 \x01(\tR\arouteId\x12#\n" +
+	"\rvalidate_only\x18\x02 \x01(\bR\fvalidateOnly\"\x15\n" +
 	"\x13DeleteRouteResponse2\xab\x02\n" +
 	"\fRouteService\x12^\n" +
 	"\vCreateRoute\x12&.edgerun.control.v1.CreateRouteRequest\x1a'.edgerun.control.v1.CreateRouteResponse\x12[\n" +
@@ -354,7 +397,7 @@ func file_edgerun_control_v1_route_proto_rawDescGZIP() []byte {
 	return file_edgerun_control_v1_route_proto_rawDescData
 }
 
-var file_edgerun_control_v1_route_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_edgerun_control_v1_route_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_edgerun_control_v1_route_proto_goTypes = []any{
 	(*CreateRouteRequest)(nil),  // 0: edgerun.control.v1.CreateRouteRequest
 	(*CreateRouteResponse)(nil), // 1: edgerun.control.v1.CreateRouteResponse
@@ -362,22 +405,26 @@ var file_edgerun_control_v1_route_proto_goTypes = []any{
 	(*ListRoutesResponse)(nil),  // 3: edgerun.control.v1.ListRoutesResponse
 	(*DeleteRouteRequest)(nil),  // 4: edgerun.control.v1.DeleteRouteRequest
 	(*DeleteRouteResponse)(nil), // 5: edgerun.control.v1.DeleteRouteResponse
-	(*Route)(nil),               // 6: edgerun.control.v1.Route
+	nil,                         // 6: edgerun.control.v1.CreateRouteRequest.LabelsEntry
+	nil,                         // 7: edgerun.control.v1.ListRoutesRequest.MatchLabelsEntry
+	(*Route)(nil),               // 8: edgerun.control.v1.Route
 }
 var file_edgerun_control_v1_route_proto_depIdxs = []int32{
-	6, // 0: edgerun.control.v1.CreateRouteResponse.route:type_name -> edgerun.control.v1.Route
-	6, // 1: edgerun.control.v1.ListRoutesResponse.routes:type_name -> edgerun.control.v1.Route
-	0, // 2: edgerun.control.v1.RouteService.CreateRoute:input_type -> edgerun.control.v1.CreateRouteRequest
-	2, // 3: edgerun.control.v1.RouteService.ListRoutes:input_type -> edgerun.control.v1.ListRoutesRequest
-	4, // 4: edgerun.control.v1.RouteService.DeleteRoute:input_type -> edgerun.control.v1.DeleteRouteRequest
-	1, // 5: edgerun.control.v1.RouteService.CreateRoute:output_type -> edgerun.control.v1.CreateRouteResponse
-	3, // 6: edgerun.control.v1.RouteService.ListRoutes:output_type -> edgerun.control.v1.ListRoutesResponse
-	5, // 7: edgerun.control.v1.RouteService.DeleteRoute:output_type -> edgerun.control.v1.DeleteRouteResponse
-	5, // [5:8] is the sub-list for method output_type
-	2, // [2:5] is the sub-list for method input_type
-	2, // [2:2] is the sub-list for extension type_name
-	2, // [2:2] is the sub-list for extension extendee
-	0, // [0:2] is the sub-list for field type_name
+	6, // 0: edgerun.control.v1.CreateRouteRequest.labels:type_name -> edgerun.control.v1.CreateRouteRequest.LabelsEntry
+	8, // 1: edgerun.control.v1.CreateRouteResponse.route:type_name -> edgerun.control.v1.Route
+	7, // 2: edgerun.control.v1.ListRoutesRequest.match_labels:type_name -> edgerun.control.v1.ListRoutesRequest.MatchLabelsEntry
+	8, // 3: edgerun.control.v1.ListRoutesResponse.routes:type_name -> edgerun.control.v1.Route
+	0, // 4: edgerun.control.v1.RouteService.CreateRoute:input_type -> edgerun.control.v1.CreateRouteRequest
+	2, // 5: edgerun.control.v1.RouteService.ListRoutes:input_type -> edgerun.control.v1.ListRoutesRequest
+	4, // 6: edgerun.control.v1.RouteService.DeleteRoute:input_type -> edgerun.control.v1.DeleteRouteRequest
+	1, // 7: edgerun.control.v1.RouteService.CreateRoute:output_type -> edgerun.control.v1.CreateRouteResponse
+	3, // 8: edgerun.control.v1.RouteService.ListRoutes:output_type -> edgerun.control.v1.ListRoutesResponse
+	5, // 9: edgerun.control.v1.RouteService.DeleteRoute:output_type -> edgerun.control.v1.DeleteRouteResponse
+	7, // [7:10] is the sub-list for method output_type
+	4, // [4:7] is the sub-list for method input_type
+	4, // [4:4] is the sub-list for extension type_name
+	4, // [4:4] is the sub-list for extension extendee
+	0, // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_edgerun_control_v1_route_proto_init() }
@@ -392,7 +439,7 @@ func file_edgerun_control_v1_route_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_edgerun_control_v1_route_proto_rawDesc), len(file_edgerun_control_v1_route_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   6,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

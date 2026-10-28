@@ -165,7 +165,7 @@ func TestOnlyWorkerScopeMayCall(t *testing.T) {
 func TestArtifactsStreamInChunksAndTheWorkersFetcherVerifiesThem(t *testing.T) {
 	r := newRig(t)
 	module := bytes.Repeat([]byte("0123456789abcdef"), 220_000) // ~3.4 MiB: several 1 MiB chunks
-	f, _ := r.st.CreateFunction(ctx, "fn")
+	f, _ := r.st.CreateFunction(ctx, "fn", nil)
 	v, err := r.st.CreateVersion(ctx, store.NewVersion{FunctionID: f.Id, Module: module, ABI: "wagi-1"})
 	if err != nil {
 		t.Fatal(err)

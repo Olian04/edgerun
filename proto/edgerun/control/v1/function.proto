@@ -36,10 +36,25 @@ service FunctionService {
   // invalid_argument. An empty list closes the function off again. Whatever is
   // listed here, the network service may still refuse a destination.
   rpc SetEgress(SetEgressRequest) returns (SetEgressResponse);
+
+  // SetLabels replaces the function's labels (an empty map clears them).
+  // Labels are validated as described in docs/protocol.md.
+  rpc SetLabels(SetLabelsRequest) returns (SetLabelsResponse);
 }
+
+// Every request that changes something has a validate_only field. With it set
+// the server does everything the call would do, against the real state, and
+// stops short of committing: it performs every check (the request's form, the
+// existence of what it names, conflicts with what is stored, limits), answers
+// with the error the call would have answered with or, if there is none, with
+// the response it would have returned, and changes nothing. Ids in the
+// response of a validate-only create are empty. See "Validate-only" in
+// docs/protocol.md.
 
 message CreateFunctionRequest {
   string name = 1;
+  map<string, string> labels = 2;
+  bool validate_only = 3;
 }
 
 message CreateFunctionResponse {
@@ -59,6 +74,9 @@ message ListFunctionsRequest {
   uint32 page_size = 1;
   // Opaque; empty for the first page.
   string page_token = 2;
+  // Only functions that carry every one of these labels with exactly these
+  // values. Empty: all.
+  map<string, string> match_labels = 3;
 }
 
 message ListFunctionsResponse {
@@ -69,6 +87,7 @@ message ListFunctionsResponse {
 
 message DeleteFunctionRequest {
   string function_id = 1;
+  bool validate_only = 2;
 }
 
 message DeleteFunctionResponse {}
@@ -82,6 +101,8 @@ message CreateVersionRequest {
   edgerun.common.v1.Limits limits = 4;
   // Deploy the new version immediately.
   bool activate = 5;
+  map<string, string> labels = 6;
+  bool validate_only = 7;
 }
 
 message CreateVersionResponse {
@@ -92,6 +113,8 @@ message ListVersionsRequest {
   string function_id = 1;
   uint32 page_size = 2;
   string page_token = 3;
+  // Only versions that carry every one of these labels with exactly these values.
+  map<string, string> match_labels = 4;
 }
 
 message ListVersionsResponse {
@@ -103,6 +126,7 @@ message ListVersionsResponse {
 message ActivateVersionRequest {
   string function_id = 1;
   string version_id = 2;
+  bool validate_only = 3;
 }
 
 message ActivateVersionResponse {
@@ -112,13 +136,19 @@ message ActivateVersionResponse {
 message SetEnvRequest {
   string function_id = 1;
   EnvEntry entry = 2;
+  bool validate_only = 3;
 }
 
-message SetEnvResponse {}
+message SetEnvResponse {
+  // The entry as stored: a secret's value is empty, and the revision is that
+  // of the value just set.
+  EnvEntry entry = 1;
+}
 
 message DeleteEnvRequest {
   string function_id = 1;
   string name = 2;
+  bool validate_only = 3;
 }
 
 message DeleteEnvResponse {}
@@ -130,6 +160,18 @@ message ListEnvRequest {
 message SetEgressRequest {
   string function_id = 1;
   repeated string allow = 2;
+  bool validate_only = 3;
+}
+
+message SetLabelsRequest {
+  string function_id = 1;
+  map<string, string> labels = 2;
+  bool validate_only = 3;
+}
+
+message SetLabelsResponse {
+  // The function with its new labels.
+  Function function = 1;
 }
 
 message SetEgressResponse {

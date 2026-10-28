@@ -17,12 +17,12 @@ import (
 	"github.com/Olian04/edgerun/internal/egress/policy"
 )
 
-const functionCols = `id::text, name, coalesce(active_version_id::text, ''), created_at, egress_allow`
+const functionCols = `id::text, name, coalesce(active_version_id::text, ''), created_at, egress_allow, labels`
 
 func scanFunction(row pgx.Row) (*controlv1.Function, error) {
 	var f controlv1.Function
 	var created time.Time
-	if err := row.Scan(&f.Id, &f.Name, &f.ActiveVersionId, &created, &f.EgressAllow); err != nil {
+	if err := row.Scan(&f.Id, &f.Name, &f.ActiveVersionId, &created, &f.EgressAllow, &f.Labels); err != nil {
 		return nil, err
 	}
 	f.CreateTime = timestamppb.New(created)
@@ -30,9 +30,12 @@ func scanFunction(row pgx.Row) (*controlv1.Function, error) {
 }
 
 // CreateFunction creates a function with no versions.
-func (s *Store) CreateFunction(ctx context.Context, name string) (*controlv1.Function, error) {
-	f, err := scanFunction(s.pool.QueryRow(ctx,
-		`INSERT INTO functions (name) VALUES ($1) RETURNING `+functionCols, name))
+func (s *Store) CreateFunction(ctx context.Context, name string, labels map[string]string) (*controlv1.Function, error) {
+	if err := ValidateLabels(labels); err != nil {
+		return nil, err
+	}
+	f, err := scanFunction(s.q(ctx).QueryRow(ctx,
+		`INSERT INTO functions (name, labels) VALUES ($1, $2) RETURNING `+functionCols, name, labelArg(labels)))
 	switch pgCode(err) {
 	case "":
 		return f, err
@@ -50,7 +53,7 @@ func (s *Store) GetFunction(ctx context.Context, id string) (*controlv1.Function
 	if err != nil {
 		return nil, err
 	}
-	f, err := scanFunction(s.pool.QueryRow(ctx, `SELECT `+functionCols+` FROM functions WHERE id = $1`, id))
+	f, err := scanFunction(s.q(ctx).QueryRow(ctx, `SELECT `+functionCols+` FROM functions WHERE id = $1`, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, notFound("function %s", id)
 	}
@@ -58,7 +61,7 @@ func (s *Store) GetFunction(ctx context.Context, id string) (*controlv1.Function
 }
 
 // ListFunctions pages through functions ordered by name.
-func (s *Store) ListFunctions(ctx context.Context, size uint32, token string) ([]*controlv1.Function, string, error) {
+func (s *Store) ListFunctions(ctx context.Context, size uint32, token string, match map[string]string) ([]*controlv1.Function, string, error) {
 	after, err := decodeToken(token, 1)
 	if err != nil {
 		return nil, "", err
@@ -68,8 +71,8 @@ func (s *Store) ListFunctions(ctx context.Context, size uint32, token string) ([
 	if after != nil {
 		last = after[0]
 	}
-	rows, err := s.pool.Query(ctx,
-		`SELECT `+functionCols+` FROM functions WHERE name > $1 ORDER BY name LIMIT $2`, last, n+1)
+	rows, err := s.q(ctx).Query(ctx,
+		`SELECT `+functionCols+` FROM functions WHERE name > $1 AND labels @> $3 ORDER BY name LIMIT $2`, last, n+1, labelArg(match))
 	if err != nil {
 		return nil, "", err
 	}
@@ -100,7 +103,7 @@ func (s *Store) DeleteFunction(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	tag, err := s.pool.Exec(ctx, `DELETE FROM functions WHERE id = $1`, id)
+	tag, err := s.q(ctx).Exec(ctx, `DELETE FROM functions WHERE id = $1`, id)
 	if err != nil {
 		return err
 	}
@@ -117,6 +120,7 @@ type NewVersion struct {
 	FunctionID string
 	Module     []byte
 	ABI        string
+	Labels     map[string]string
 	Limits     *commonv1.Limits
 	// Activate deploys the version in the same transaction.
 	Activate bool
@@ -130,13 +134,13 @@ func Digest(b []byte) string {
 
 const versionCols = `id::text, function_id::text, number, artifact_digest, abi,
 	(SELECT size_bytes FROM artifacts a WHERE a.digest = artifact_digest),
-	memory_limit_bytes, max_response_bytes, created_at`
+	memory_limit_bytes, max_response_bytes, created_at, labels`
 
 func scanVersion(row pgx.Row) (*controlv1.FunctionVersion, error) {
 	var v controlv1.FunctionVersion
 	var mem, resp, size int64
 	var created time.Time
-	if err := row.Scan(&v.Id, &v.FunctionId, &v.Number, &v.ArtifactDigest, &v.Abi, &size, &mem, &resp, &created); err != nil {
+	if err := row.Scan(&v.Id, &v.FunctionId, &v.Number, &v.ArtifactDigest, &v.Abi, &size, &mem, &resp, &created, &v.Labels); err != nil {
 		return nil, err
 	}
 	v.SizeBytes = uint64(size)
@@ -158,6 +162,9 @@ func (s *Store) CreateVersion(ctx context.Context, nv NewVersion) (*controlv1.Fu
 		return nil, invalid("module is empty")
 	case nv.ABI == "":
 		return nil, invalid("abi is required")
+	}
+	if err := ValidateLabels(nv.Labels); err != nil {
+		return nil, err
 	}
 	mem, resp := nv.Limits.GetMemoryLimitBytes(), nv.Limits.GetMaxResponseBytes()
 	if mem > math.MaxInt64 || resp > math.MaxInt64 {
@@ -182,9 +189,9 @@ func (s *Store) CreateVersion(ctx context.Context, nv NewVersion) (*controlv1.Fu
 		}
 		var vid string
 		if err := tx.QueryRow(ctx, `INSERT INTO function_versions
-			(function_id, number, artifact_digest, abi, memory_limit_bytes, max_response_bytes)
-			VALUES ($1, (SELECT coalesce(max(number), 0) + 1 FROM function_versions WHERE function_id = $1), $2, $3, $4, $5)
-			RETURNING id::text`, fid, digest, nv.ABI, int64(mem), int64(resp)).Scan(&vid); err != nil {
+			(function_id, number, artifact_digest, abi, memory_limit_bytes, max_response_bytes, labels)
+			VALUES ($1, (SELECT coalesce(max(number), 0) + 1 FROM function_versions WHERE function_id = $1), $2, $3, $4, $5, $6)
+			RETURNING id::text`, fid, digest, nv.ABI, int64(mem), int64(resp), labelArg(nv.Labels)).Scan(&vid); err != nil {
 			return err
 		}
 		if nv.Activate {
@@ -200,7 +207,7 @@ func (s *Store) CreateVersion(ctx context.Context, nv NewVersion) (*controlv1.Fu
 }
 
 // ListVersions pages through a function's versions, newest first.
-func (s *Store) ListVersions(ctx context.Context, functionID string, size uint32, token string) ([]*controlv1.FunctionVersion, string, error) {
+func (s *Store) ListVersions(ctx context.Context, functionID string, size uint32, token string, match map[string]string) ([]*controlv1.FunctionVersion, string, error) {
 	fid, err := parseID("function", functionID)
 	if err != nil {
 		return nil, "", err
@@ -219,8 +226,8 @@ func (s *Store) ListVersions(ctx context.Context, functionID string, size uint32
 		return nil, "", err
 	}
 	n := pageSize(size)
-	rows, err := s.pool.Query(ctx, `SELECT `+versionCols+` FROM function_versions
-		WHERE function_id = $1 AND number < $2 ORDER BY number DESC LIMIT $3`, fid, below, n+1)
+	rows, err := s.q(ctx).Query(ctx, `SELECT `+versionCols+` FROM function_versions
+		WHERE function_id = $1 AND number < $2 AND labels @> $4 ORDER BY number DESC LIMIT $3`, fid, below, n+1, labelArg(match))
 	if err != nil {
 		return nil, "", err
 	}
@@ -255,7 +262,7 @@ func (s *Store) ActivateVersion(ctx context.Context, functionID, versionID strin
 	if err != nil {
 		return nil, err
 	}
-	f, err := scanFunction(s.pool.QueryRow(ctx,
+	f, err := scanFunction(s.q(ctx).QueryRow(ctx,
 		`UPDATE functions SET active_version_id = $2 WHERE id = $1 RETURNING `+functionCols, fid, vid))
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
@@ -278,7 +285,7 @@ func (s *Store) SetEgress(ctx context.Context, functionID string, allow []string
 	if err != nil {
 		return nil, invalid("%v", err)
 	}
-	f, err := scanFunction(s.pool.QueryRow(ctx,
+	f, err := scanFunction(s.q(ctx).QueryRow(ctx,
 		`UPDATE functions SET egress_allow = $2 WHERE id = $1 RETURNING `+functionCols, fid, canon))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, notFound("function %s", fid)
@@ -289,7 +296,7 @@ func (s *Store) SetEgress(ctx context.Context, functionID string, allow []string
 // GetArtifact returns module bytes by digest.
 func (s *Store) GetArtifact(ctx context.Context, digest string) ([]byte, error) {
 	var data []byte
-	err := s.pool.QueryRow(ctx, `SELECT data FROM artifacts WHERE digest = $1`, digest).Scan(&data)
+	err := s.q(ctx).QueryRow(ctx, `SELECT data FROM artifacts WHERE digest = $1`, digest).Scan(&data)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, notFound("artifact %s", digest)
 	}

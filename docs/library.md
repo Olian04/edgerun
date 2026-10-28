@@ -37,7 +37,8 @@ Only what every caller would otherwise write, identically, for itself:
 - **The token.** `NewX(baseURL, token, opts...)` presents it on every call.
 - **No envelopes.** `ctl.GetFunction(ctx, &req)` returns the response message, not a `connect.Response`.
 - **Iterators for paged lists.** `AllFunctions`, `AllVersions`, `AllRoutes`, `AllInvocations` are
-  `iter.Seq2[T, error]`; they fetch pages as you consume them.
+  `iter.Seq2[T, error]`; they fetch pages as you consume them. `AllFunctionsMatching`, `AllVersionsMatching` and `AllRoutesMatching` take a label
+  filter (`match_labels`).
 - **Streams as readers.** `Invoke`, `Execute` and `Fetch` return as soon as the response head arrives
   (`Status()`, `Header()`); the body is an `io.ReadCloser`. A failure after the head is returned by `Read`,
   never as `io.EOF`: a body that ends cleanly is complete. `Execution.Summary()` is available once the body has
@@ -49,6 +50,18 @@ Only what every caller would otherwise write, identically, for itself:
   other side. The control protocol has no reasons: its errors are plain Connect codes (`not_found`,
   `already_exists`, `invalid_argument`), and you branch on those with `connect.CodeOf`.
 - **Digests.** `Digest(b)` is the `sha256:<hex>` the protocols identify an artifact by.
+
+## Managing declaratively
+
+Three things of `control.v1` exist for tools that manage edgerun from a description of what it should look like
+(a GitOps service, a Terraform provider), and the library has nothing to add to them: they are fields and one RPC.
+
+- **Labels** (`labels` on a function, version and route, `SetLabels`, `match_labels` on the lists): mark what
+  you own and find it again. Key them under a namespace of your own.
+- **Revisions** (`EnvEntry.revision`): a write-only secret cannot be read back, but its revision can be compared.
+  Remember the revision your last write returned; a different one later means someone else changed the value.
+- **`validate_only`** on every change: all the checks against the real state, nothing kept. A dry run built on it
+  cannot disagree with the apply.
 
 ## What it does not do
 
