@@ -24,7 +24,10 @@ import (
 )
 
 // This file builds a real edgerun stack out of real processes: a private
-// PostgreSQL, the orchestrator and a worker, compiled from the edgerun checkout
+// PostgreSQL, the orchestrator and a worker, compiled from an edgerun source
+// tree: the one named by $GITOPS_EDGERUN_SRC (a snapshot of a commit, made with
+// `git worktree add --detach <dir> HEAD`, so that a working tree that is being
+// edited does not leak into the stack under test) or, by default, the checkout
 // two directories up. Nothing of edgerun's internals is imported.
 //
 // Ports are taken from 21000-21099; every file lives under one temp directory.
@@ -39,7 +42,8 @@ const (
 
 var env struct {
 	root     string // temp dir of this test run
-	repoRoot string // the edgerun checkout
+	repoRoot string // the edgerun checkout this module builds against
+	srcRoot  string // the tree the orchestrator, worker and example guests are built from
 	bin      string
 	pgBin    string
 	pgSock   string
@@ -86,18 +90,24 @@ func setupEnv() error {
 	if env.repoRoot, err = filepath.Abs("../../.."); err != nil {
 		return err
 	}
+	env.srcRoot = env.repoRoot
+	if d := os.Getenv("GITOPS_EDGERUN_SRC"); d != "" {
+		if env.srcRoot, err = filepath.Abs(d); err != nil {
+			return err
+		}
+	}
 	env.bin = filepath.Join(env.root, "bin")
 	os.MkdirAll(env.bin, 0o755)
 
 	// 1. Compile the components and the guests.
 	for _, c := range []string{"orchestrator", "worker"} {
-		if err := sh(env.repoRoot, nil, "go", "build", "-o", filepath.Join(env.bin, c), "./cmd/"+c); err != nil {
+		if err := sh(env.srcRoot, nil, "go", "build", "-o", filepath.Join(env.bin, c), "./cmd/"+c); err != nil {
 			return err
 		}
 	}
 	wasm := []string{"GOOS=wasip1", "GOARCH=wasm", "CGO_ENABLED=0"}
 	hello := filepath.Join(env.bin, "hello.wasm")
-	if err := sh(env.repoRoot, wasm, "go", "build", "-trimpath", "-o", hello, "./examples/hello"); err != nil {
+	if err := sh(env.srcRoot, wasm, "go", "build", "-trimpath", "-o", hello, "./examples/hello"); err != nil {
 		return err
 	}
 	if env.hello, err = os.ReadFile(hello); err != nil {
@@ -397,6 +407,7 @@ type Harness struct {
 	R      *Repo
 	Env    map[string]string // the "process environment" secrets are read from
 	Mutate func(*Config)
+	Opts   []edgerun.Option // client options of the service's control client
 	G      *GitOps
 	out    *bytes.Buffer
 }
@@ -407,10 +418,19 @@ func (h *Harness) config() *Config {
 		Orchestrator: h.S.URL, AdminToken: adminToken, Owner: "test", Interval: time.Second, RPCTimeout: 20 * time.Second,
 		Getenv: func(k string) (string, bool) { v, ok := h.Env[k]; return v, ok },
 	}
+	c.ClientOptions = h.Opts
 	if h.Mutate != nil {
 		h.Mutate(c)
 	}
 	return c
+}
+
+// LogRPC makes the service's control client record its calls.
+func (h *Harness) LogRPC() *rpcLog {
+	l := &rpcLog{}
+	h.Opts = append(h.Opts, l.Option())
+	h.G = nil
+	return l
 }
 
 // Run does one pass and returns its result, its error and what it printed.
@@ -431,5 +451,5 @@ func (h *Harness) Run(dry bool) (*Result, error, string) {
 
 func newHarness(t *testing.T) *Harness {
 	s := newStack(t)
-	return &Harness{t: t, S: s, R: newRepo(t, s.dir), Env: map[string]string{"GITOPS_FINGERPRINT_KEY": "k-1"}}
+	return &Harness{t: t, S: s, R: newRepo(t, s.dir), Env: map[string]string{}}
 }

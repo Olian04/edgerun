@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"path"
-	"regexp"
 	"sort"
 	"strings"
 
@@ -51,26 +50,16 @@ type RouteSpec struct {
 	Function string `yaml:"function"`
 }
 
-// The rules below are copied from docs/protocol.md ("Control semantics"). The
-// protocol has no validate-only call, so a dry run can only know a request is
-// acceptable if the client re-implements the server's rules. Every one of them
-// is a place where this program can disagree with the orchestrator.
-var (
-	nameRe    = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
-	envNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-	reserved  = map[string]bool{
-		"GATEWAY_INTERFACE": true, "SERVER_PROTOCOL": true, "REQUEST_METHOD": true, "SERVER_NAME": true,
-		"PATH_INFO": true, "QUERY_STRING": true, "REMOTE_ADDR": true, "CONTENT_LENGTH": true, "CONTENT_TYPE": true,
-	}
-	abiRe = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
-)
-
+// maxEnvVars is the one server rule this program still carries: a function
+// holds at most 64 variables. validate_only judges each request alone against
+// the stored state, so it cannot see that a file declares 70 variables for a
+// function that does not exist yet (or for one that has 60), and the 65th write
+// would fail in the middle of an apply. Everything else the server checks
+// (names, reserved variables, sizes, egress syntax, label syntax...) is left to
+// the server, through validate_only.
 const (
-	maxEnvVars   = 64
-	maxEnvValue  = 32 << 10
-	maxEgress    = 64
-	defaultABI   = "wagi-1"
-	markerEnvVar = "GITOPS_STATE" // ours: ownership and secret fingerprints, see marker.go
+	maxEnvVars = 64
+	defaultABI = "wagi-1"
 )
 
 // ParseSpec decodes and validates the YAML. Unknown keys are errors: a typo in
@@ -106,7 +95,8 @@ func (s *Spec) normalize() {
 
 // normHost and normPrefix mirror what the orchestrator does on write, so that
 // "the route in the YAML" and "the route the server returns" compare equal.
-// Without them every run would delete and recreate the route.
+// Without them every run would delete and recreate the route. This is not
+// validation: it is the price of comparing a file with stored state.
 func normHost(h string) string { return strings.ToLower(h) }
 
 func normPrefix(p string) string {
@@ -132,13 +122,18 @@ func canonEgress(in []string) []string {
 	return out
 }
 
+// Validate checks what only this program can know: the file's own consistency
+// (a name declared twice, a route to a function the file does not declare, two
+// routes that are one after normalisation, a variable that is both plain and
+// secret) and that a module path stays inside the repository. Whether the
+// orchestrator will accept each value is asked of the orchestrator.
 func (s *Spec) Validate() error {
 	var errs []error
 	add := func(f string, a ...any) { errs = append(errs, fmt.Errorf(f, a...)) }
 	names := map[string]bool{}
 	for _, f := range s.Functions {
-		if !nameRe.MatchString(f.Name) {
-			add("function %q: name must be 1-63 lower-case letters, digits or '-', not starting or ending with '-'", f.Name)
+		if f.Name == "" {
+			add("a function has no name")
 			continue
 		}
 		if names[f.Name] {
@@ -150,58 +145,18 @@ func (s *Spec) Validate() error {
 		} else if err := checkRepoPath(f.Module); err != nil {
 			add("function %q: module: %v", f.Name, err)
 		}
-		if !abiRe.MatchString(f.ABI) {
-			add("function %q: abi %q is not a short lower-case name", f.Name, f.ABI)
-		}
-		n := 1 // our own marker variable
-		check := func(name, val string) {
-			n++
-			switch {
-			case !envNameRe.MatchString(name):
-				add("function %q: env %q: not a valid variable name", f.Name, name)
-			case reserved[name] || strings.HasPrefix(name, "HTTP_"):
-				add("function %q: env %q: reserved by the guest ABI", f.Name, name)
-			case name == markerEnvVar:
-				add("function %q: env %q: reserved by gitops", f.Name, name)
-			case len(val) > maxEnvValue:
-				add("function %q: env %q: value over %d bytes", f.Name, name, maxEnvValue)
-			case strings.ContainsRune(val, 0):
-				add("function %q: env %q: value contains NUL", f.Name, name)
-			}
-		}
-		for k, v := range f.Env {
-			check(k, v)
+		for k := range f.Env {
 			if _, dup := f.SecretEnv[k]; dup {
 				add("function %q: %q is both env and secret_env", f.Name, k)
 			}
 		}
-		for k, ref := range f.SecretEnv {
-			check(k, "")
-			if !envNameRe.MatchString(ref) {
-				add("function %q: secret_env %q: %q is not a variable name", f.Name, k, ref)
-			}
-		}
-		if n > maxEnvVars {
-			add("function %q: %d variables (including gitops' own %s), at most %d", f.Name, n, markerEnvVar, maxEnvVars)
-		}
-		if len(f.Egress) > maxEgress {
-			add("function %q: %d egress entries, at most %d", f.Name, len(f.Egress), maxEgress)
-		}
-		for _, e := range f.Egress {
-			if e == "*" || strings.ContainsAny(e, " \t/") || strings.Contains(e, "://") {
-				add("function %q: egress %q: want host, host:port, *.suffix or an IP literal", f.Name, e)
-			}
+		if n := len(f.Env) + len(f.SecretEnv); n > maxEnvVars {
+			add("function %q: %d variables, at most %d", f.Name, n, maxEnvVars)
 		}
 	}
 	keys := map[string]bool{}
 	for _, r := range s.Routes {
 		id := fmt.Sprintf("route %s%s", r.Host, r.Path)
-		if r.Host == "" {
-			add("%s: host is required", id)
-		}
-		if !strings.HasPrefix(r.Path, "/") || strings.Contains(r.Path, "//") || strings.ContainsAny(r.Path, "?# \t\n") {
-			add("%s: path must start with '/' and may not contain '//', '?', '#' or whitespace", id)
-		}
 		if !names[r.Function] {
 			add("%s: function %q is not declared in this file", id, r.Function)
 		}

@@ -401,6 +401,70 @@ func (h *harness) validateOnly(t *testing.T) {
 		})
 	}
 
+	// The order of checks is part of the protocol (docs/protocol.md, "Validate-only"): the form of a
+	// request first, then the existence of what it names, then conflicts. A consumer plans on it.
+	t.Run("the form of a request is checked before what it names is looked up", func(t *testing.T) {
+		nothing := missing // well formed, and nothing has it
+		type step struct {
+			name       string
+			malformed  func(vo bool) error
+			wellFormed func(vo bool) error
+		}
+		steps := []step{
+			{"CreateVersion",
+				func(vo bool) error {
+					_, err := h.fn.CreateVersion(ctx, connect.NewRequest(&controlv1.CreateVersionRequest{FunctionId: nothing, Module: h.module("o1"), Abi: "NOT AN ABI", ValidateOnly: vo}))
+					return err
+				},
+				func(vo bool) error {
+					_, err := h.fn.CreateVersion(ctx, connect.NewRequest(&controlv1.CreateVersionRequest{FunctionId: nothing, Module: h.module("o1"), Abi: abi, ValidateOnly: vo}))
+					return err
+				}},
+			{"SetEnv",
+				func(vo bool) error {
+					_, err := h.fn.SetEnv(ctx, connect.NewRequest(&controlv1.SetEnvRequest{FunctionId: nothing, Entry: &controlv1.EnvEntry{Name: "PATH_INFO", Value: "x"}, ValidateOnly: vo}))
+					return err
+				},
+				func(vo bool) error {
+					_, err := h.fn.SetEnv(ctx, connect.NewRequest(&controlv1.SetEnvRequest{FunctionId: nothing, Entry: &controlv1.EnvEntry{Name: "FINE", Value: "x"}, ValidateOnly: vo}))
+					return err
+				}},
+			{"SetEgress",
+				func(vo bool) error {
+					_, err := h.fn.SetEgress(ctx, connect.NewRequest(&controlv1.SetEgressRequest{FunctionId: nothing, Allow: []string{"a.example.com:99999"}, ValidateOnly: vo}))
+					return err
+				},
+				func(vo bool) error {
+					_, err := h.fn.SetEgress(ctx, connect.NewRequest(&controlv1.SetEgressRequest{FunctionId: nothing, Allow: []string{"a.example.com"}, ValidateOnly: vo}))
+					return err
+				}},
+			{"SetLabels",
+				func(vo bool) error {
+					_, err := h.fn.SetLabels(ctx, connect.NewRequest(&controlv1.SetLabelsRequest{FunctionId: nothing, Labels: lbls("BAD", "x"), ValidateOnly: vo}))
+					return err
+				},
+				func(vo bool) error {
+					_, err := h.fn.SetLabels(ctx, connect.NewRequest(&controlv1.SetLabelsRequest{FunctionId: nothing, Labels: lbls("fine", "x"), ValidateOnly: vo}))
+					return err
+				}},
+			{"CreateRoute",
+				func(vo bool) error {
+					_, err := h.rt.CreateRoute(ctx, connect.NewRequest(&controlv1.CreateRouteRequest{HostPattern: h.host(), PathPrefix: "no-leading-slash", FunctionId: nothing, ValidateOnly: vo}))
+					return err
+				},
+				func(vo bool) error {
+					_, err := h.rt.CreateRoute(ctx, connect.NewRequest(&controlv1.CreateRouteRequest{HostPattern: h.host(), PathPrefix: "/", FunctionId: nothing, ValidateOnly: vo}))
+					return err
+				}},
+		}
+		for _, st := range steps {
+			for _, vo := range []bool{true, false} {
+				checkCode(t, st.malformed(vo), connect.CodeInvalidArgument, st.name, fmt.Sprintf("malformed, naming nothing (validate_only=%v)", vo))
+				checkCode(t, st.wellFormed(vo), connect.CodeNotFound, st.name, fmt.Sprintf("well formed, naming nothing (validate_only=%v)", vo))
+			}
+		}
+	})
+
 	t.Run("a validate-only create names no id, and reserves nothing", func(t *testing.T) {
 		name := h.name("vo-twice")
 		r, err := h.fn.CreateFunction(ctx, connect.NewRequest(&controlv1.CreateFunctionRequest{Name: name, ValidateOnly: true}))

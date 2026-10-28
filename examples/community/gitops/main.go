@@ -5,8 +5,12 @@
 //
 // The admin token is read from EDGERUN_ADMIN_TOKEN (not a flag: argv is
 // world-readable). Secret values come from the process environment, named by
-// secret_env in the YAML; GITOPS_FINGERPRINT_KEY keys the fingerprints that let
-// this tool tell whether a (write-only) secret changed.
+// secret_env in the YAML.
+//
+// Everything the service creates is labelled gitops.example.com/owner=<--owner>
+// (functions, versions, routes); that label is how it finds what is its own.
+// --dry-run asks the orchestrator to validate every step (validate_only) and
+// changes nothing.
 package main
 
 import (
@@ -32,6 +36,7 @@ type Config struct {
 	Once, DryRun, ExitCode      bool
 	Interval, RPCTimeout        time.Duration
 	Getenv                      func(string) (string, bool)
+	ClientOptions               []edgerun.Option // for the control client: a proxy, TLS, an interceptor
 }
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
@@ -45,12 +50,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&c.File, "file", "edgerun.yaml", "path of the YAML file inside the repository")
 	fs.StringVar(&c.WorkDir, "workdir", "", "where the bare clone lives (default: a cache directory)")
 	fs.StringVar(&c.Orchestrator, "orchestrator", os.Getenv("EDGERUN_URL"), "orchestrator base URL (default $EDGERUN_URL)")
-	fs.StringVar(&c.Owner, "owner", "gitops", "identity of this instance; it only manages (and prunes) functions it created")
+	fs.StringVar(&c.Owner, "owner", "gitops", "identity of this instance, the value of the gitops.example.com/owner label; it only manages (and prunes) what carries it")
 	fs.BoolVar(&c.Prune, "prune", false, "delete functions this instance created that the file no longer declares")
-	fs.BoolVar(&c.Adopt, "adopt", false, "take over functions that already exist but were not created by this tool")
+	fs.BoolVar(&c.Adopt, "adopt", false, "take over functions that already exist without an owner label (labels them)")
 	fs.BoolVar(&c.AllowEmpty, "allow-empty", false, "allow --prune with a file that declares no functions")
 	fs.BoolVar(&c.Once, "once", false, "reconcile once and exit")
-	fs.BoolVar(&c.DryRun, "dry-run", false, "print what would change, change nothing, exit")
+	fs.BoolVar(&c.DryRun, "dry-run", false, "validate every change with the orchestrator, print what would change, change nothing, exit")
 	fs.BoolVar(&c.ExitCode, "detailed-exitcode", false, "with --dry-run: exit 2 if there is a difference")
 	fs.DurationVar(&c.Interval, "interval", 30*time.Second, "poll interval")
 	fs.DurationVar(&c.RPCTimeout, "rpc-timeout", 30*time.Second, "deadline of each step against the orchestrator")
@@ -116,17 +121,13 @@ func New(c *Config, out io.Writer) *GitOps {
 	if c.Getenv == nil {
 		c.Getenv = os.LookupEnv
 	}
-	var key []byte
-	if k, ok := c.Getenv("GITOPS_FINGERPRINT_KEY"); ok {
-		key = []byte(k)
-	}
 	return &GitOps{
 		c: c, out: out,
 		src: &Source{URL: c.Repo, Branch: c.Branch, Dir: dir},
 		rec: &Reconciler{
-			Ctl:   edgerun.NewControl(c.Orchestrator, c.AdminToken),
+			Ctl:   edgerun.NewControl(c.Orchestrator, c.AdminToken, c.ClientOptions...),
 			Owner: c.Owner, Prune: c.Prune, Adopt: c.Adopt, AllowEmpty: c.AllowEmpty,
-			FPKey: key, Getenv: c.Getenv, Timeout: c.RPCTimeout,
+			Getenv: c.Getenv, Timeout: c.RPCTimeout,
 		},
 	}
 }
@@ -164,15 +165,18 @@ func (g *GitOps) Reconcile(ctx context.Context) (*Result, error) {
 		}
 		mods[f.Name] = NewModule(data)
 	}
-	plan, err := g.rec.Plan(ctx, spec, mods, modErr)
+	plan, err := g.rec.Plan(ctx, spec, mods, modErr, snap.Rev)
 	if err != nil {
 		return nil, err
 	}
+	// The same check for a dry run and for an apply: every step goes to the
+	// orchestrator with validate_only before anything is changed.
+	plan.Validate(ctx, g.rec)
 	res := &Result{Rev: snap.Rev, Plan: plan, Clean: plan.Empty() && len(plan.Problems) == 0}
 
 	kind := "difference"
 	if g.lastApplied == snap.Rev && !plan.Empty() {
-		kind = "DRIFT (same commit as the last pass, so someone changed the orchestrator)"
+		kind = "DRIFT (same commit as the last pass, so the orchestrator or a secret in the process environment changed)"
 	}
 	fmt.Fprintf(g.out, "commit %s: ", snap.Rev[:10])
 	switch {
@@ -181,6 +185,10 @@ func (g *GitOps) Reconcile(ctx context.Context) (*Result, error) {
 	case g.c.DryRun:
 		fmt.Fprintf(g.out, "%d %s(s), %d problem(s); dry run, nothing changed\n", len(plan.Items), kind, len(plan.Problems))
 		plan.Print(g.out)
+		if len(plan.Problems) > 0 {
+			// The apply would fail the same way.
+			return res, fmt.Errorf("dry run: %d problem(s); an apply would not succeed", len(plan.Problems))
+		}
 	default:
 		fmt.Fprintf(g.out, "%d %s(s), %d problem(s); applying\n", len(plan.Items), kind, len(plan.Problems))
 		for _, n := range plan.Notes {

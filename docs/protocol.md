@@ -302,6 +302,14 @@ the stored value without revealing it:
 - `SetEnv` returns the entry as stored (a secret's value empty) with the revision of the value just set, and
   `ListEnv` returns the same revision for it later. A tool that remembers the revision its last write returned
   can tell that someone else has since changed the value: the revision it reads back differs.
+- To learn what revision a **candidate** value would have, without writing it, send the `SetEnv` with
+  `validate_only`: the response carries the entry as it would be stored, revision included. That is how a tool
+  asks "is the stored secret what I want it to be?": compare the revision `ListEnv` shows with the one the
+  validate-only call returns.
+- A revision is specific to the function, the name, the kind of entry and the orchestrator's key. The same value
+  has another revision in another function, and in a function that was deleted and created again. If the
+  orchestrator's key is rotated, **every** revision changes at once, which a tool will see as drift in every
+  secret: it is safe to write them all again, and not a sign that anyone tampered with them.
 
 ### Validate-only
 
@@ -310,14 +318,24 @@ Every request that changes something (`CreateFunction`, `DeleteFunction`, `Creat
 it set the orchestrator does everything the call would do, **against the real state**, up to but not including
 the commit:
 
-- it performs every check: the request's form, the existence of what it names, conflicts with what is
-  stored (`already_exists`), and the limits (a module's size, the number of variables or labels);
+- it performs every check, **in this order, and stops at the first that fails**: first the *form* of the
+  request (a name, a label, an ABI, an environment variable name, an egress entry, a route's host and path,
+  sizes, whatever can be judged from the request alone), then the *existence* of what it names (`not_found`),
+  then *conflicts* with what is stored (`already_exists`) and the limits that depend on what is stored (the
+  number of variables). A request that is malformed is therefore `invalid_argument` whether or not what it
+  names exists, and a consumer may rely on that;
 - it answers with the error the call itself would answer with, the same code and the same message, or, if there is
   none, with the response the call would have returned, **except that the ids of a created function, version or
   route are empty** (there is no such resource);
 - it changes nothing: no resource, no number (a version that was validated does not use up its number), no
   cached state, so no effect is visible to `Invoke` or to any list;
 - it needs the same credentials as the call.
+
+Each validate-only call stands alone: it is judged against the stored state, never against the validate-only
+calls before it, so a function that a validate-only `CreateFunction` accepted does not exist for the
+`CreateVersion` that follows it (which answers `not_found`). To check the later steps of a plan that begins
+with a creation, use the order above: send them with the id of nothing (a well-formed, unused id), and read
+`invalid_argument` as a rejection and `not_found` as "every check that does not need the function passed".
 
 It is a check against the state at that moment, not a reservation: the real call can still fail if something
 changed in between. A tool uses it for a dry run that cannot disagree with the apply, instead of re-implementing

@@ -52,6 +52,28 @@ routes:
 	if code, out := run("--dry-run", "--detailed-exitcode"); code != 0 || !strings.Contains(out, "in sync") {
 		t.Fatalf("second dry run: %d\n%s", code, out)
 	}
+
+	// A change the orchestrator would refuse: the dry run says so and exits 1 (not 2:
+	// it is not a difference, it is a failure), the real run fails the same way, and
+	// neither creates anything.
+	h.R.Commit("bad", files("edgerun.yaml", `
+functions:
+  - {name: hello, module: m.wasm, env: {GREETING: CLI}}
+  - {name: bad, module: m.wasm, egress: ["a.example.com:99999"]}
+routes:
+  - {host: hello.test, path: /, function: hello}
+`))
+	if code, out := run("--dry-run", "--detailed-exitcode"); code != 1 || !strings.Contains(out, "rejected by the orchestrator (validate_only)") || !strings.Contains(out, "99999") {
+		t.Fatalf("dry run of a rejected change: %d\n%s", code, out)
+	}
+	if code, out := run("--once"); code != 1 || !strings.Contains(out, "99999") {
+		t.Fatalf("apply of a rejected change: %d\n%s", code, out)
+	}
+	if _, ok := h.S.functions(t)["bad"]; ok {
+		t.Fatal("a rejected function was created")
+	}
+	h.R.Revert()
+
 	if code, out := run("--once", "--file", "nope.yaml"); code != 1 || !strings.Contains(out, "nope.yaml") {
 		t.Fatalf("missing file: %d\n%s", code, out)
 	}

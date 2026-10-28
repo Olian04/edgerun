@@ -63,6 +63,20 @@ Three things of `control.v1` exist for tools that manage edgerun from a descript
 - **`validate_only`** on every change: all the checks against the real state, nothing kept. A dry run built on it
   cannot disagree with the apply.
 
+Things a tool learns the hard way (the rules are in `protocol.md`, "Control semantics"):
+
+- A validate-only call is judged against the stored state only, never against the validate-only calls before it. To
+  validate the later steps of a plan that starts by creating a function, send them with the id of nothing and treat
+  `not_found` as "passed every check that does not need the function": the order of checks (form, then existence,
+  then conflicts) is guaranteed for exactly this.
+- The revision a candidate secret would have is what a validate-only `SetEnv` returns. Compare it with the one
+  `ListEnv` shows to ask "is the stored secret what I want?". Revisions differ per function, and all change if the
+  orchestrator's key rotates.
+- `SetLabels` replaces the whole map, so changing one label is a read, an edit and a write: two writers can lose
+  each other's updates. A filter that is nil or empty means *everything*, and a typo in a key matches nothing: never
+  prune on the strength of a filter alone.
+- A validate-only `CreateVersion` carries the whole module, so a dry run followed by an apply uploads it twice.
+
 ## What it does not do
 
 No retries, caches, connection management beyond Connect's, heartbeat loops or workflows (there is no

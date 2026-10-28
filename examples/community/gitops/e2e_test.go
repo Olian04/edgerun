@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -210,11 +212,13 @@ routes:
 	ctx := context.Background()
 	ctl := h.S.Ctl
 	fn := h.S.functions(t)["hello"]
-	// 1 edit an env var, 2 add a stray one, 3 add a stray route, 4 delete the real route,
-	// 5 point the function at a different version, 6 change egress.
+	// 1 edit an env var, 2 add a stray one, 3 add a stray route of ours (labelled) and
+	// one that is nobody's (unlabelled), 4 delete the real route, 5 point the function
+	// at a different version, 6 change egress.
 	ctl.SetEnv(ctx, &controlv1.SetEnvRequest{FunctionId: fn.Id, Entry: &controlv1.EnvEntry{Name: "GREETING", Value: "Hacked"}})
 	ctl.SetEnv(ctx, &controlv1.SetEnvRequest{FunctionId: fn.Id, Entry: &controlv1.EnvEntry{Name: "EXTRA", Value: "1"}})
-	ctl.CreateRoute(ctx, &controlv1.CreateRouteRequest{HostPattern: "stray.test", PathPrefix: "/", FunctionId: fn.Id})
+	ctl.CreateRoute(ctx, &controlv1.CreateRouteRequest{HostPattern: "stray.test", PathPrefix: "/", FunctionId: fn.Id, Labels: ownerLabels("test")})
+	ctl.CreateRoute(ctx, &controlv1.CreateRouteRequest{HostPattern: "handmade.test", PathPrefix: "/", FunctionId: fn.Id})
 	ctl.DeleteRoute(ctx, &controlv1.DeleteRouteRequest{RouteId: h.S.routes(t)["hello.test/"].Id})
 	v2, err := ctl.CreateVersion(ctx, &controlv1.CreateVersionRequest{FunctionId: fn.Id, Module: env.guest["v2"], Abi: "wagi-1", Activate: true})
 	if err != nil {
@@ -248,6 +252,11 @@ routes:
 	}
 	if _, ok := h.S.routes(t)["stray.test/"]; ok {
 		t.Fatal("stray route survived")
+	}
+	// A route nobody labelled is not ours, even if it points at one of our
+	// functions: ownership is the label, not the function it leads to.
+	if _, ok := h.S.routes(t)["handmade.test/"]; !ok {
+		t.Fatal("a route this service does not own was deleted")
 	}
 }
 
@@ -324,72 +333,110 @@ routes:
 	}
 }
 
-func TestConflictAdoptAndRecovery(t *testing.T) {
+// Something that exists and carries no owner label is never taken silently, not
+// even when it is empty (what a run that died after CreateFunction used to leave
+// behind: that case cannot occur any more, see TestNoWindowBetweenCreateAndClaim).
+// --adopt labels it, and keeps the labels other people put on it.
+func TestConflictAndAdopt(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	ctl := h.S.Ctl
-	// "hello" exists, was made by hand, has content.
-	fn, _ := ctl.CreateFunction(ctx, &controlv1.CreateFunctionRequest{Name: "hello"})
+	// "hello" exists, was made by hand, has content and somebody else's label.
+	fn, _ := ctl.CreateFunction(ctx, &controlv1.CreateFunctionRequest{Name: "hello", Labels: map[string]string{"team": "payments"}})
 	ctl.SetEnv(ctx, &controlv1.SetEnvRequest{FunctionId: fn.Function.Id, Entry: &controlv1.EnvEntry{Name: "MINE", Value: "1"}})
-	// "crashed" exists and is completely empty: what a run that died after
-	// CreateFunction leaves behind.
-	ctl.CreateFunction(ctx, &controlv1.CreateFunctionRequest{Name: "crashed"})
+	// "empty" exists and is completely empty. The old recovery heuristic would have
+	// called it "mine".
+	ctl.CreateFunction(ctx, &controlv1.CreateFunctionRequest{Name: "empty"})
+	// "theirs" belongs to another owner.
+	ctl.CreateFunction(ctx, &controlv1.CreateFunctionRequest{Name: "theirs", Labels: ownerLabels("someone-else")})
 	// A route of somebody else's function.
 	ctl.CreateRoute(ctx, &controlv1.CreateRouteRequest{HostPattern: "taken.test", PathPrefix: "/", FunctionId: fn.Function.Id})
 
 	h.R.Commit("c", files("m.wasm", env.hello, "edgerun.yaml", `
 functions:
   - {name: hello, module: m.wasm}
-  - {name: crashed, module: m.wasm}
+  - {name: empty, module: m.wasm}
+  - {name: theirs, module: m.wasm}
   - {name: fresh, module: m.wasm}
 routes:
   - {host: taken.test, path: /, function: fresh}
   - {host: fresh.test, path: /, function: fresh}
-  - {host: crashed.test, path: /, function: crashed}
+  - {host: empty.test, path: /, function: empty}
 `))
 	_, err, out := h.Run(false)
 	if err == nil {
 		t.Fatalf("conflicts must fail the run:\n%s", out)
 	}
-	for _, want := range []string{"hello: exists but was not created by this service", "taken.test/ is taken by function \"hello\""} {
+	for _, want := range []string{
+		"hello: exists but was not created by this service",
+		"empty: exists but was not created by this service",
+		`theirs: exists and belongs to another owner ("someone-else")`,
+		`taken.test/ is taken by a route to function "hello"`,
+	} {
 		if !strings.Contains(err.Error()+out, want) {
 			t.Errorf("missing %q in:\n%v\n%s", want, err, out)
 		}
 	}
-	// The conflicting function is untouched; the rest was applied.
+	// The conflicting functions are untouched; the independent one was applied.
 	fs := h.S.functions(t)
-	if fs["hello"].ActiveVersionId != "" {
-		t.Fatal("hello was deployed over")
+	for _, n := range []string{"hello", "empty", "theirs"} {
+		if fs[n].ActiveVersionId != "" {
+			t.Fatalf("%s was deployed over", n)
+		}
+	}
+	if fs["empty"].Labels[labelOwner] != "" || fs["hello"].Labels[labelOwner] != "" {
+		t.Fatal("an unowned function was claimed without --adopt")
 	}
 	ev, _ := ctl.ListEnv(ctx, &controlv1.ListEnvRequest{FunctionId: fn.Function.Id})
 	if len(ev.Entries) != 1 || ev.Entries[0].Name != "MINE" {
 		t.Fatalf("hello's env was changed: %v", ev.Entries)
 	}
-	if !strings.Contains(out, "claim existing empty function") {
-		t.Errorf("crashed was not recovered:\n%s", out)
+	if _, ok := h.S.routes(t)["empty.test/"]; ok {
+		t.Fatal("a route was created for a function that is in conflict")
 	}
-	if h.S.mustInvoke(t, "crashed.test", "/") == "" || h.S.mustInvoke(t, "fresh.test", "/") == "" {
-		t.Fatal("independent functions should have been deployed")
-	}
+	h.S.mustInvoke(t, "fresh.test", "/")
 
-	// With --adopt, hello is taken over: its foreign env var is removed.
+	// With --adopt, hello and empty are labelled (hello keeps its team label), hello's
+	// foreign env var is removed, and its hand-made route, at a key the file
+	// declares for another function of ours, is replaced. "theirs" stays theirs.
 	h.Mutate = func(c *Config) { c.Adopt = true }
 	_, err, out = h.Run(false)
-	if err == nil || !strings.Contains(out, "ADOPT") {
-		t.Fatalf("adopt: err=%v\n%s", err, out)
+	if err == nil || !strings.Contains(err.Error(), "theirs") {
+		t.Fatalf("theirs must still be a conflict: %v\n%s", err, out)
 	}
-	// The route is still someone else's... until hello is ours, which it now is:
-	// the next pass retargets it.
-	if _, _, out = mustRun2(t, h); !strings.Contains(out, "retargeting") {
-		t.Fatalf("no retarget:\n%s", out)
+	if !strings.Contains(out, "ADOPT") || !strings.Contains(out, "replacing it with a labelled one") {
+		t.Fatalf("adopt:\n%s", out)
 	}
-	mustBeInSync(t, h)
+	fs = h.S.functions(t)
+	if fs["hello"].Labels[labelOwner] != "test" || fs["hello"].Labels["team"] != "payments" {
+		t.Fatalf("adopted labels: %v", fs["hello"].Labels)
+	}
+	if fs["empty"].Labels[labelOwner] != "test" || fs["theirs"].Labels[labelOwner] != "someone-else" {
+		t.Fatalf("owners: %v %v", fs["empty"].Labels, fs["theirs"].Labels)
+	}
 	ev, _ = ctl.ListEnv(ctx, &controlv1.ListEnvRequest{FunctionId: fn.Function.Id})
-	for _, e := range ev.Entries {
-		if e.Name == "MINE" {
-			t.Fatal("MINE should have been removed by adoption")
-		}
+	if len(ev.Entries) != 0 {
+		t.Fatalf("MINE should have been removed by adoption: %v", ev.Entries)
 	}
+	rs := h.S.routes(t)
+	if rs["taken.test/"].FunctionId != fs["fresh"].Id || rs["taken.test/"].Labels[labelOwner] != "test" {
+		t.Fatalf("taken.test not retargeted and labelled: %v", rs["taken.test/"])
+	}
+	h.S.mustInvoke(t, "empty.test", "/")
+
+	// Once "theirs" is out of the file everything is in sync, with --adopt no longer needed.
+	h.R.Commit("drop theirs", files("edgerun.yaml", `
+functions:
+  - {name: hello, module: m.wasm}
+  - {name: empty, module: m.wasm}
+  - {name: fresh, module: m.wasm}
+routes:
+  - {host: taken.test, path: /, function: fresh}
+  - {host: fresh.test, path: /, function: fresh}
+  - {host: empty.test, path: /, function: empty}
+`))
+	h.Mutate = nil
+	mustBeInSync(t, h)
 }
 
 func mustRun2(t *testing.T, h *Harness) (*Result, error, string) {
@@ -424,9 +471,12 @@ routes:
 		t.Fatal("route created for a function that does not exist")
 	}
 
-	// A step that fails on the server, after earlier steps succeeded: the function
-	// stays half configured, the later steps of that function are skipped, and the
-	// next pass (with the file fixed) finishes the job.
+	// A step the orchestrator rejects. It used to pass the hand-written validator
+	// ("a.example.com:99999"), the dry run said fine, and the apply created the
+	// function, uploaded and activated the version, and only then failed at
+	// SetEgress. Now every step is validated with validate_only before anything is
+	// applied, so the dry run fails where the apply would, and nothing of "half" is
+	// created.
 	h.R.Commit("p2", files("edgerun.yaml", `
 functions:
   - {name: good, module: m.wasm}
@@ -436,21 +486,23 @@ functions:
 routes:
   - {host: half.test, path: /, function: half}
 `))
-	// The dry run cannot know: the protocol has no validate-only call and this
-	// program's copy of the egress rules does not check port ranges.
-	if res, err, out := h.Run(true); err != nil || res.Clean || len(res.Plan.Problems) != 0 {
-		t.Fatalf("dry run should look fine: %v\n%s", err, out)
+	before := len(h.S.functions(t))
+	res, err, out := h.Run(true)
+	if err == nil || res.Clean || len(res.Plan.Problems) != 1 || !strings.Contains(out, "a.example.com:99999") || !strings.Contains(out, "port") {
+		t.Fatalf("the dry run must report the rejection: %v\n%s", err, out)
+	}
+	if got := len(h.S.functions(t)); got != before {
+		t.Fatalf("the dry run changed the orchestrator: %d -> %d functions", before, got)
 	}
 	_, err, out = h.Run(false)
-	t.Logf("server-side rejection:\n%s\n%v", out, err)
-	if err == nil {
-		t.Skip("the server accepted the entry; nothing to demonstrate")
+	if err == nil || !strings.Contains(err.Error(), "99999") {
+		t.Fatalf("the apply must fail the same way: %v\n%s", err, out)
+	}
+	if _, ok := h.S.functions(t)["half"]; ok {
+		t.Fatalf("half was created although a step of it is invalid:\n%s", out)
 	}
 	if _, ok := h.S.routes(t)["half.test/"]; ok {
-		t.Fatal("route created although an earlier step of its function failed")
-	}
-	if h.S.functions(t)["half"].ActiveVersionId == "" {
-		t.Fatal("expected the version to have been deployed before the egress step failed")
+		t.Fatal("route created for a function that was rejected")
 	}
 	h.R.Commit("p3", files("edgerun.yaml", `
 functions:
@@ -461,6 +513,43 @@ routes:
 `))
 	mustRun(t, h)
 	h.S.mustInvoke(t, "half.test", "/")
+	mustBeInSync(t, h)
+}
+
+// A step that fails at apply time although validation passed (the orchestrator
+// changed in between, or went away): the later steps of that function are
+// skipped, the others are applied, and the next pass finishes the job.
+func TestApplyFailureSkipsTheRestOfTheFunction(t *testing.T) {
+	h := newHarness(t)
+	h.R.Commit("a", files("m.wasm", env.hello, "edgerun.yaml", `
+functions:
+  - {name: good, module: m.wasm}
+  - {name: flaky, module: m.wasm, egress: [a.example.com]}
+routes:
+  - {host: good.test, path: /, function: good}
+  - {host: flaky.test, path: /, function: flaky}
+`))
+	l := h.LogRPC()
+	l.Fail = func(proc string, vo bool) error {
+		if proc == "SetEgress" && !vo {
+			return connect.NewError(connect.CodeUnavailable, errors.New("injected"))
+		}
+		return nil
+	}
+	_, err, out := h.Run(false)
+	if err == nil || !strings.Contains(err.Error(), "injected") {
+		t.Fatalf("want the injected failure: %v\n%s", err, out)
+	}
+	h.S.mustInvoke(t, "good.test", "/")
+	if _, ok := h.S.routes(t)["flaky.test/"]; ok {
+		t.Fatal("the route of a function whose egress step failed was created")
+	}
+	if !strings.Contains(out, "skipped flaky: route flaky.test/") {
+		t.Fatalf("the skip is not reported:\n%s", out)
+	}
+	l.Fail = nil
+	mustRun(t, h)
+	h.S.mustInvoke(t, "flaky.test", "/")
 	mustBeInSync(t, h)
 }
 
@@ -509,62 +598,206 @@ func TestControlErrorsCarryNoReason(t *testing.T) {
 	}
 }
 
-// Secrets are write-only, so an out-of-band change of a secret is invisible to
-// this tool: the evidence for FINDINGS.md. A change of *kind* (plain/secret) is
-// visible, because ListEnv returns the flag.
-func TestSecretDriftIsInvisible(t *testing.T) {
+// Secrets are write-only, but every env entry has a revision. The service
+// remembers the revision of each secret it wrote (a label of the function), asks
+// the orchestrator which revision the desired value would have (a validate-only
+// SetEnv), and so sees a secret changed behind its back, names it, and puts it
+// back; and writes nothing when nothing differs. (This used to be the evidence
+// that such a change was invisible.)
+func TestSecretDriftIsVisible(t *testing.T) {
 	h := newHarness(t)
 	h.Env["K"] = "good"
+	h.Env["K2"] = "other"
 	h.R.Commit("s", files("m.wasm", env.guest["v1"], "edgerun.yaml", `
 functions:
-  - {name: echo, module: m.wasm, secret_env: {API_KEY: K}}
+  - {name: echo, module: m.wasm, secret_env: {API_KEY: K, SECOND: K2}}
 routes:
   - {host: echo.test, path: /, function: echo}
 `))
+	l := h.LogRPC()
 	mustRun(t, h)
 	if got := h.S.mustInvoke(t, "echo.test", "/"); !strings.Contains(got, "secret=good") {
 		t.Fatal(got)
 	}
 	fn := h.S.functions(t)["echo"]
 	ctx := context.Background()
-	h.S.Ctl.SetEnv(ctx, &controlv1.SetEnvRequest{FunctionId: fn.Id, Entry: &controlv1.EnvEntry{Name: "API_KEY", Value: "tampered", Secret: true}})
+	ctl := h.S.Ctl
+
+	// The record: one label per ten secrets, nothing readable in it.
+	rec := decodeSecrets(fn.Labels)
+	if len(rec) != 2 || fn.Labels[labelOwner] != "test" {
+		t.Fatalf("labels: %v", fn.Labels)
+	}
+	for k, v := range fn.Labels {
+		if strings.Contains(k+v, "good") || strings.Contains(k+v, "other") {
+			t.Fatalf("label %s=%s leaks a value", k, v)
+		}
+	}
+
+	// An unchanged secret causes no write: a second run changes nothing, and the
+	// calls it makes are reads and validate-only calls.
+	l.Reset()
+	res, _ := mustRun(t, h)
+	if !res.Clean || res.Applied != 0 {
+		t.Fatal("second run changed something")
+	}
+	if w := l.Writes(); len(w) != 0 {
+		t.Fatalf("second run wrote: %v", w)
+	}
+	if l.Count("SetEnv") != 2 {
+		t.Fatalf("expected one validate-only SetEnv per secret to learn the desired revisions, got %d", l.Count("SetEnv"))
+	}
+
+	// Tampering: API_KEY is overwritten out of band.
+	ctl.SetEnv(ctx, &controlv1.SetEnvRequest{FunctionId: fn.Id, Entry: &controlv1.EnvEntry{Name: "API_KEY", Value: "tampered", Secret: true}})
 	if got := h.S.mustInvoke(t, "echo.test", "/"); !strings.Contains(got, "secret=tampered") {
 		t.Fatal(got)
 	}
+	l.Reset()
 	res, err, out := h.Run(true)
-	if err != nil || !res.Clean {
-		t.Fatalf("the tampering is undetectable in-band, yet a difference was reported: %v\n%s", err, out)
+	if err != nil || res.Clean {
+		t.Fatalf("the tampering is visible now, yet nothing was reported: %v\n%s", err, out)
 	}
-	t.Log("confirmed: a secret changed out of band is reported as in sync")
+	if !strings.Contains(out, "secret API_KEY: DRIFT") || strings.Contains(out, "SECOND") || strings.Contains(out, "tampered") {
+		t.Fatalf("drift must name API_KEY (and only it) and not show values:\n%s", out)
+	}
+	if w := l.Writes(); len(w) != 0 {
+		t.Fatalf("the dry run wrote: %v", w)
+	}
+	if got := h.S.mustInvoke(t, "echo.test", "/"); !strings.Contains(got, "secret=tampered") {
+		t.Fatal("the dry run corrected the secret")
+	}
+	// The pass puts it back.
+	l.Reset()
+	_, out = mustRun(t, h)
+	if !strings.Contains(out, "secret API_KEY: DRIFT") {
+		t.Fatalf("%s", out)
+	}
+	if got := h.S.mustInvoke(t, "echo.test", "/"); !strings.Contains(got, "secret=good") {
+		t.Fatalf("not corrected: %s", got)
+	}
+	if n := l.Count("SetEnv"); n < 1 || strings.Join(l.Writes(), ",") != "SetEnv,SetLabels" {
+		t.Fatalf("only the drifted secret and the record should have been written: %v", l.Writes())
+	}
+	mustBeInSync(t, h)
 
-	// Same name, but now a plain variable: visible.
-	h.S.Ctl.SetEnv(ctx, &controlv1.SetEnvRequest{FunctionId: fn.Id, Entry: &controlv1.EnvEntry{Name: "API_KEY", Value: "tampered", Secret: false}})
+	// Writing the same value again is a no-op for the orchestrator (same revision),
+	// so a hand-made "change" to the value the file wants is not drift.
+	ctl.SetEnv(ctx, &controlv1.SetEnvRequest{FunctionId: fn.Id, Entry: &controlv1.EnvEntry{Name: "API_KEY", Value: "good", Secret: true}})
+	mustBeInSync(t, h)
+
+	// A rotation in the process environment is a change, not drift.
+	h.Env["K"] = "good-2"
+	_, out = mustRun(t, h)
+	if !strings.Contains(out, "secret API_KEY changed in the process environment") || strings.Contains(out, "secret API_KEY: DRIFT") {
+		t.Fatalf("rotation:\n%s", out)
+	}
+	if got := h.S.mustInvoke(t, "echo.test", "/"); !strings.Contains(got, "secret=good-2") {
+		t.Fatal(got)
+	}
+	mustBeInSync(t, h)
+
+	// Somebody applies the rotation by hand before the service does: the value is
+	// already what the file wants, so nothing is written but the record.
+	h.Env["K"] = "good-3"
+	ctl.SetEnv(ctx, &controlv1.SetEnvRequest{FunctionId: fn.Id, Entry: &controlv1.EnvEntry{Name: "API_KEY", Value: "good-3", Secret: true}})
+	l.Reset()
+	_, out = mustRun(t, h)
+	if strings.Join(l.Writes(), ",") != "SetLabels" || strings.Contains(out, "secret API_KEY") {
+		t.Fatalf("only the record should change: %v\n%s", l.Writes(), out)
+	}
+	mustBeInSync(t, h)
+
+	// A change of kind (plain instead of secret) is visible as before.
+	ctl.SetEnv(ctx, &controlv1.SetEnvRequest{FunctionId: fn.Id, Entry: &controlv1.EnvEntry{Name: "API_KEY", Value: "tampered", Secret: false}})
 	_, out = mustRun(t, h)
 	if !strings.Contains(out, "was plain, now secret") {
 		t.Fatalf("kind change not seen:\n%s", out)
 	}
-	if got := h.S.mustInvoke(t, "echo.test", "/"); !strings.Contains(got, "secret=good") {
+	if got := h.S.mustInvoke(t, "echo.test", "/"); !strings.Contains(got, "secret=good-3") {
 		t.Fatal(got)
 	}
+	mustBeInSync(t, h)
 
-	// Running without the fingerprint key is a plan-time error, not a silent downgrade.
-	delete(h.Env, "GITOPS_FINGERPRINT_KEY")
-	h.G = nil
-	res, _, out = h.Run(true)
-	if len(res.Plan.Problems) == 0 || !strings.Contains(out, "GITOPS_FINGERPRINT_KEY") {
-		t.Fatalf("expected a problem about the key:\n%s", out)
+	// A secret that is no longer in the file is deleted and its record goes with it.
+	h.R.Commit("one secret", files("edgerun.yaml", `
+functions:
+  - {name: echo, module: m.wasm, secret_env: {API_KEY: K}}
+routes:
+  - {host: echo.test, path: /, function: echo}
+`))
+	mustRun(t, h)
+	if got := decodeSecrets(h.S.functions(t)["echo"].Labels); len(got) != 1 {
+		t.Fatalf("stale record: %v", got)
+	}
+	mustBeInSync(t, h)
+
+	// A secret whose process variable is unset is a plan-time problem, not a silent skip.
+	delete(h.Env, "K")
+	res, err, out = h.Run(true)
+	if err == nil || len(res.Plan.Problems) == 0 || !strings.Contains(out, "environment variable K is not set") {
+		t.Fatalf("expected a problem about K: %v\n%s", err, out)
 	}
 }
 
-// More than one page of functions: the iterators page, and ownership (which is
-// an environment variable) costs one ListEnv per function when pruning.
+// The guest sees the function's real environment and nothing else, and all 64
+// slots are the user's. (The marker variable used to be visible to the guest and
+// to take one slot.) The largest function also shows that the record of secret
+// revisions fits the label limits with a dozen secrets.
+func TestGuestSeesOnlyItsEnvAndAll64SlotsAreTheUsers(t *testing.T) {
+	h := newHarness(t)
+	var yaml strings.Builder
+	yaml.WriteString("functions:\n  - name: big\n    module: m.wasm\n    env:\n")
+	for i := 0; i < 52; i++ {
+		fmt.Fprintf(&yaml, "      PLAIN_%02d: v%d\n", i, i)
+	}
+	yaml.WriteString("    secret_env:\n")
+	for i := 0; i < 12; i++ {
+		fmt.Fprintf(&yaml, "      SECRET_%02d: S%d\n", i, i)
+		h.Env[fmt.Sprintf("S%d", i)] = fmt.Sprintf("value-%d", i)
+	}
+	yaml.WriteString("routes:\n  - {host: big.test, path: /, function: big}\n")
+	h.R.Commit("big", files("m.wasm", env.guest["v1"], "edgerun.yaml", yaml.String()))
+	mustRun(t, h)
+	mustBeInSync(t, h)
+
+	got := h.S.mustInvoke(t, "big.test", "/env")
+	if strings.Contains(got, "GITOPS") || strings.Contains(strings.ToLower(got), "owner") {
+		t.Fatalf("the guest sees a gitops variable: %s", got)
+	}
+	if n := strings.Count(got, "PLAIN_") + strings.Count(got, "SECRET_"); n != 64 {
+		t.Fatalf("the guest should see exactly the 64 declared variables, saw %d: %s", n, got)
+	}
+	fn := h.S.functions(t)["big"]
+	ev, err := h.S.Ctl.ListEnv(context.Background(), &controlv1.ListEnvRequest{FunctionId: fn.Id})
+	if err != nil || len(ev.Entries) != 64 {
+		t.Fatalf("%d variables stored (%v)", len(ev.Entries), err)
+	}
+	if len(fn.Labels) != 3 { // owner + 12 secrets in 2 labels
+		t.Fatalf("labels: %v", fn.Labels)
+	}
+	// Any one of the twelve is noticed, by name.
+	h.S.Ctl.SetEnv(context.Background(), &controlv1.SetEnvRequest{FunctionId: fn.Id, Entry: &controlv1.EnvEntry{Name: "SECRET_07", Value: "x", Secret: true}})
+	_, _, out := h.Run(true)
+	if !strings.Contains(out, "secret SECRET_07: DRIFT") || strings.Count(out, "it was changed in the orchestrator") != 1 {
+		t.Fatalf("%s", out)
+	}
+}
+
+// More than one page of functions. Ownership is a label, so finding what to
+// prune is one filtered list, not one ListEnv per function (130 functions used to
+// cost 130 ListEnv calls and 335 ms).
 func TestManyFunctions(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	const n = 130
 	for i := 0; i < n; i++ {
 		name := "bulk-" + strings.Repeat("0", 3-len(itoa(i))) + itoa(i)
-		if _, err := h.S.Ctl.CreateFunction(ctx, &controlv1.CreateFunctionRequest{Name: name}); err != nil {
+		labels := map[string]string{}
+		if i%2 == 0 {
+			labels[labelOwner] = "someone-else"
+		}
+		if _, err := h.S.Ctl.CreateFunction(ctx, &controlv1.CreateFunctionRequest{Name: name, Labels: labels}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -579,14 +812,28 @@ func TestManyFunctions(t *testing.T) {
 	}
 	h.R.Commit("m", files("m.wasm", env.hello, "edgerun.yaml", "functions:\n  - {name: hello, module: m.wasm}\n"))
 	h.Mutate = func(c *Config) { c.Prune = true }
+	l := h.LogRPC()
 	start := time.Now()
 	res, err, out := h.Run(true)
 	if err != nil {
 		t.Fatal(err, out)
 	}
-	t.Logf("dry run with --prune over %d foreign functions took %s (one ListEnv each)", n, time.Since(start))
+	t.Logf("dry run with --prune over %d foreign functions took %s, %d calls", n, time.Since(start), l.Total())
 	if len(res.Plan.Items) == 0 || strings.Contains(out, "bulk-") {
 		t.Fatalf("foreign functions must never be pruned:\n%s", out)
+	}
+	if c := l.Count("ListEnv"); c != 0 {
+		t.Fatalf("%d ListEnv calls: ownership should not need to read any function's env", c)
+	}
+	// Once hello exists and is ours, steady state reads: the owner filter, the
+	// function's own env and versions, one full scan (hello was not in the filter
+	// the first time); never an env per function.
+	mustRun(t, h)
+	l.Reset()
+	mustBeInSync(t, h)
+	t.Logf("steady state next to %d foreign functions: %d calls", n, l.Total())
+	if c := l.Count("ListEnv"); c > 4 {
+		t.Fatalf("%d ListEnv calls for a one-function file", c)
 	}
 }
 
