@@ -145,6 +145,15 @@ func (h *harness) deregistration(t *testing.T) {
 		}
 		return false
 	})
+	// Before leaving it told the orchestrator it was draining, so that nothing
+	// new was sent its way.
+	draining := false
+	for _, hb := range h.reg.heartbeatsOf(id) {
+		draining = draining || hb.State == egressv1.ServiceState_SERVICE_STATE_DRAINING
+	}
+	if !draining {
+		t.Error("the service left without ever reporting DRAINING: work could still have been routed to it while it was stopping")
+	}
 }
 
 // coverage: a service carries what it declared, and nothing else, whatever the

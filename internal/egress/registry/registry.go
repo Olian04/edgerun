@@ -62,6 +62,18 @@ func (c *Client) Poke() {
 	}
 }
 
+// HeartbeatNow sends one heartbeat, with the current state, and waits for the
+// answer: a service that is about to stop uses it to be sure the orchestrator
+// has heard that it is draining before it goes. Best effort.
+func (c *Client) HeartbeatNow(ctx context.Context) error {
+	id := c.ServiceID()
+	if id == "" {
+		return nil
+	}
+	_, err := c.cfg.Registry.Heartbeat(ctx, connect.NewRequest(&egressv1.HeartbeatRequest{ServiceId: id, State: c.cfg.State()}))
+	return err
+}
+
 // ServiceID returns the id the orchestrator assigned, or "" before the first
 // registration has completed.
 func (c *Client) ServiceID() string {

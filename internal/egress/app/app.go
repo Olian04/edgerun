@@ -163,7 +163,12 @@ func (s *Server) Addr() string { return s.ln.Addr().String() }
 // lets requests in flight finish up to the shutdown timeout, then leaves.
 func (s *Server) Stop(ctx context.Context) error {
 	s.draining.Store(true)
-	s.reg.Poke()
+	// Nothing new is sent here once the orchestrator knows; do not leave before it does.
+	hctx, hcancel := context.WithTimeout(context.Background(), 3*time.Second)
+	if err := s.reg.HeartbeatNow(hctx); err != nil {
+		s.cfg.Log.Warn("could not tell the orchestrator this service is draining", "error", err)
+	}
+	hcancel()
 	sctx, cancel := context.WithTimeout(ctx, s.cfg.ShutdownTimeout)
 	defer cancel()
 	err := s.http.Shutdown(sctx)
