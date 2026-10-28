@@ -79,6 +79,12 @@ type Error struct {
 
 func (e *Error) Error() string { return e.Reason.String() + ": " + e.Msg }
 
+// InvalidError is a request the worker cannot make sense of: the caller has a
+// bug, so it is invalid_argument with no reason (docs/protocol.md).
+type InvalidError struct{ Msg string }
+
+func (e *InvalidError) Error() string { return "invalid request: " + e.Msg }
+
 func fail(reason commonv1.ErrorReason, format string, args ...any) *Error {
 	return &Error{Reason: reason, Msg: fmt.Sprintf(format, args...)}
 }
@@ -218,7 +224,7 @@ func (e *Engine) Run(ctx context.Context, inv Invocation) (*Result, error) {
 
 	env, err := Env(inv.Request, inv.Env)
 	if err != nil {
-		return nil, fail(commonv1.ErrorReason_ERROR_REASON_INTERNAL, "%v", err)
+		return nil, &InvalidError{Msg: err.Error()}
 	}
 	b, err := e.bucket(ctx, size)
 	if err != nil {

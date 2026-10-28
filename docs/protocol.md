@@ -56,13 +56,18 @@ Every request carries `Authorization: Bearer <token>`. A token has one scope:
 | `admin` | everything in `edgerun.control.v1` |
 | `egress` | `EgressService` (when called *on* a network service) |
 | `network` | `RegistryService` (when called *on* the orchestrator) |
+| `execute` | `ExecutionService` (when called *on* a worker) |
 
 The orchestrator authenticates workers via the `worker` scope; workers authenticate the
 orchestrator on `ExecutionService` with a separate shared secret configured on the worker; a
 network service authenticates workers via the `egress` scope, and the orchestrator authenticates network
 services that register via the `network` scope.
 Missing or invalid credentials fail with `UNAUTHENTICATED`; a valid token of the wrong scope
-fails with `PERMISSION_DENIED`. TLS or mTLS is expected between components in production; the
+fails with `PERMISSION_DENIED`. A server only knows the tokens it is configured with, so "valid" means
+valid *there*: a worker knows one token (`execute`), and presenting it any other, including a token that is
+valid on the orchestrator, is unknown to it and `UNAUTHENTICATED`. `PERMISSION_DENIED` is for servers that
+know several tokens of different scopes (the orchestrator, a network service that is also told the `network`
+token). TLS or mTLS is expected between components in production; the
 token scheme does not replace it.
 
 ## Versioning and compatibility
@@ -280,6 +285,32 @@ Workers dial in to the orchestrator (`FleetService`, `ArtifactService`, scope `w
   unknown is `ARTIFACT_NOT_FOUND`; one that is not a digest at all is `ARTIFACT_NOT_FOUND` as well,
   since nothing is stored under it.
 
+## Worker execution semantics
+
+`ExecutionService` is guarded by one shared secret, scope `execute`, configured on the worker and
+presented by the orchestrator. A worker checks an `Execute` in this order, and answers:
+
+| Condition | Answer |
+|---|---|
+| no `request` in the message | `invalid_argument`, no reason |
+| `abi` is not one the worker advertised | `ABI_MISMATCH` |
+| `artifact_digest` is not `sha256:` and 64 lowercase hex digits | `invalid_argument`, no reason |
+| an environment variable name is not `[A-Za-z_][A-Za-z0-9_]*`, or collides with a CGI variable (table below) | `invalid_argument`, no reason |
+| no free slot, **or the worker is draining** | `NO_CAPACITY`, at once; never queued |
+| the orchestrator does not know the artifact | `ARTIFACT_NOT_FOUND` |
+| the fetched bytes do not hash to the digest | `INTERNAL`: they are never compiled or run; the fault is in the orchestrator or the path to it, not in the function |
+| the bytes are not a valid WebAssembly module, are not a WASI command, or import more than the ABI allows | `ABI_MISMATCH` |
+| the budget runs out, before or during the run | `DEADLINE_EXCEEDED` |
+
+A malformed request is the caller's bug, so it has no reason: nothing should branch on it.
+
+When a request sets no limit, the worker applies its own default. The reference worker's are 128 MiB of memory,
+6 MiB of response, and, when the RPC carries no deadline, a 30 s budget. They are observable, but they are not
+part of the protocol: a worker that differs is conforming, and should document its own.
+
+The status line a guest writes must be 200-599 (the proto comment "100-599 excluding 1xx" says the same
+thing); anything else is `ABI_MISMATCH`.
+
 ## Network access (egress)
 
 A guest has no network. The worker gives it none: there is no socket it could open. What a guest
@@ -426,8 +457,8 @@ on **WASI preview 1** (`wasip1`). Anything that compiles to a preview-1 command 
 | `PATH_INFO` | path |
 | `QUERY_STRING` | raw query, no `?` |
 | `REMOTE_ADDR` | client address |
-| `CONTENT_LENGTH` | body length in bytes |
-| `CONTENT_TYPE` | request `content-type`, if any |
+| `CONTENT_LENGTH` | body length in bytes, as measured; a `content-length` header is not also passed |
+| `CONTENT_TYPE` | request `content-type`, if any; it is not also passed as `HTTP_CONTENT_TYPE` |
 | `HTTP_<NAME>` | each other header, upper-cased, `-` → `_`; repeated headers joined with `, ` |
 
 User-defined environment variables are added after these. Names colliding with the table, or

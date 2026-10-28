@@ -194,9 +194,12 @@ func (s *Server) run(ctx context.Context, m *workerv1.ExecuteRequest) (*runtime.
 		return res, nil
 	}
 	var re *runtime.Error
+	var inv *runtime.InvalidError
 	switch {
 	case errors.As(err, &re):
 		return nil, errs.New(re.Reason, "%s", re.Msg)
+	case errors.As(err, &inv):
+		return nil, errs.Invalid("%s", inv.Msg)
 	case errors.Is(err, context.Canceled):
 		return nil, connect.NewError(connect.CodeCanceled, err)
 	default:

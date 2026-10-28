@@ -98,6 +98,8 @@ generated handlers in `gen/` directly (`workerv1connect.NewExecutionServiceHandl
 Then point the conformance executable at it (`edgerun-conformance --role worker --target ...`, see
 [`protocol.md`](protocol.md), "Conformance"): pass it and your implementation can replace the in-repo one.
 
+For other languages, see [`other-languages.md`](other-languages.md).
+
 ## Stability
 
 The protocols are versioned in their package names and guarded by `buf breaking`; `v1` does not change

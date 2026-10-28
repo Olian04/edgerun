@@ -231,6 +231,9 @@ res, err := ing.Invoke(ctx, &ingressv1.InvokeRequest{Request: &commonv1.HttpRequ
 It is the protocols and nothing more (an RPC, a method), plus tokens, iterators over paged lists, streamed
 bodies as readers and typed errors. See [`docs/library.md`](docs/library.md).
 
+Not a Go shop? The protocols are plain protobuf over Connect; see [`docs/other-languages.md`](docs/other-languages.md)
+(a worker in Node.js passes the conformance suite).
+
 ## Development
 
 ```sh

@@ -14,8 +14,14 @@ import (
 
 // TestConformance runs the worker conformance suite against the in-repo worker,
 // assembled by the same app.Run that cmd/worker uses.
-func TestConformance(t *testing.T) {
-	workerconf.Run(t, workerconf.Target{
+func TestConformance(t *testing.T) { runConformance(t, 2) }
+
+// With one slot every invocation is the whole capacity: the edge where
+// "all slots busy" is easiest to see too early.
+func TestConformanceWithOneSlot(t *testing.T) { runConformance(t, 1) }
+
+func runConformance(t *testing.T, slots uint32) {
+	workerconf.Run(t, workerconf.Target{Env: workerconf.Env{MaxConcurrency: slots},
 		Launch: func(t testing.TB, env workerconf.Env) func() {
 			ctx, cancel := context.WithCancel(context.Background())
 			done := make(chan error, 1)

@@ -156,6 +156,7 @@ func Run(t *testing.T, target Target) {
 	t.Run("MemoryLimit", h.memoryLimit)
 	t.Run("ResponseLimit", h.responseLimit)
 	t.Run("ABIViolations", h.abiViolations)
+	t.Run("MalformedRequests", h.malformedRequests)
 	t.Run("RealTimeAndEntropy", h.timeAndEntropy)
 	t.Run("Network", h.network)
 	t.Run("Capacity", h.capacity)
@@ -648,6 +649,24 @@ func (h *harness) abiViolations(t *testing.T) {
 	}
 }
 
+// malformedRequests: a request the worker cannot make sense of is the caller's
+// bug, so it is invalid_argument with no reason (docs/protocol.md).
+func (h *harness) malformedRequests(t *testing.T) {
+	for _, name := range []string{"1BAD", "BAD-NAME", "BAD NAME", ""} {
+		out := h.call(t, invocation{path: "/echo", env: []*commonv1.EnvVar{{Name: name, Value: "x"}}})
+		if out.err == nil {
+			t.Errorf("environment variable %q: expected invalid_argument, got success", name)
+			continue
+		}
+		if got := connect.CodeOf(out.err); got != connect.CodeInvalidArgument {
+			t.Errorf("environment variable %q: code = %v (%v), want invalid_argument", name, got, out.err)
+		}
+		if r, _ := reasonOf(out.err); r != commonv1.ErrorReason_ERROR_REASON_UNSPECIFIED {
+			t.Errorf("environment variable %q: a malformed request carries no reason, got %v", name, r)
+		}
+	}
+}
+
 func (h *harness) timeAndEntropy(t *testing.T) {
 	a := h.ok(t, invocation{path: "/random"})
 	b := h.ok(t, invocation{path: "/random"})
@@ -674,13 +693,25 @@ func (h *harness) timeAndEntropy(t *testing.T) {
 
 func (h *harness) capacity(t *testing.T) {
 	h.ok(t, invocation{path: "/echo"}) // warm
+	// Only heartbeats sent after the sleepers have been launched may say that the
+	// slots are busy. One sent while the warm-up request was still running reports
+	// a full house that no longer exists (with a limit of 1 it is enough for the
+	// probe below to be admitted), so first wait for a heartbeat that follows the
+	// warm-up, and look only at those that follow that.
+	h.orch.mu.Lock()
+	n0 := len(h.orch.heartbeats)
+	h.orch.mu.Unlock()
+	h.orch.waitFor(t, "a heartbeat after the warm-up request", 10*time.Second, func() bool { return len(h.orch.heartbeats) > n0 })
+	h.orch.mu.Lock()
+	from := len(h.orch.heartbeats)
+	h.orch.mu.Unlock()
 	done := make(chan outcome, h.env.MaxConcurrency)
 	for range h.env.MaxConcurrency {
 		go func() { done <- h.call(t, invocation{path: "/sleep", query: "ms=1500"}) }()
 	}
 	h.orch.waitFor(t, "all slots to be reported busy", 10*time.Second, func() bool {
-		for i := len(h.orch.heartbeats) - 1; i >= 0 && i >= len(h.orch.heartbeats)-3; i-- {
-			if h.orch.heartbeats[i].InFlight == h.env.MaxConcurrency {
+		for _, hb := range h.orch.heartbeats[min(from, len(h.orch.heartbeats)):] {
+			if hb.InFlight == h.env.MaxConcurrency {
 				return true
 			}
 		}
