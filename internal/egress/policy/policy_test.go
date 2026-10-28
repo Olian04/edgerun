@@ -19,6 +19,8 @@ func TestParseRule(t *testing.T) {
 		"[2001:db8:0:0::1]:80":  "[2001:db8::1]:80",
 		"a":                     "a",
 		"xn--bcher-kva.example": "xn--bcher-kva.example",
+		"a1.example":            "a1.example", // digits in a label are fine; a number as the last label is not
+		"1.example":             "1.example",
 	} {
 		r, err := ParseRule(in)
 		if err != nil || r.String() != want {
@@ -29,7 +31,7 @@ func TestParseRule(t *testing.T) {
 		"", "*", "*.", ".", "example.", ".example.com", "a..b", "-a.com", "a-.com", "a_b.com", "a b.com", "exa mple.com",
 		"http://example.com", "example.com/path", "user@example.com", "example.com:", "example.com:0", "example.com:65536",
 		"example.com:80a", "example.com:080", "*.192.0.2.1", "::1", "[::1", "[::1]x", "[192.0.2.1]", "[fe80::1%eth0]",
-		"*example.com", "a.*.com", "**.example.com", "bücher.example", strings.Repeat("a", 64) + ".com", strings.Repeat("a.", 130) + "com",
+		"127.1", "2130706433", "0x7f.1", "a.0x1", "a.1", "*.0x7f", "*example.com", "a.*.com", "**.example.com", "bücher.example", strings.Repeat("a", 64) + ".com", strings.Repeat("a.", 130) + "com",
 	} {
 		if r, err := ParseRule(in); err == nil {
 			t.Errorf("ParseRule(%q) = %v, want an error", in, r)
@@ -121,6 +123,8 @@ func TestParseCover(t *testing.T) {
 		"corp.internal":         "corp.internal",
 		"*.corp.internal":       "*.corp.internal",
 		"xn--bcher-kva.example": "xn--bcher-kva.example",
+		"a1.example":            "a1.example", // digits in a label are fine; a number as the last label is not
+		"1.example":             "1.example",
 	} {
 		c, err := ParseCover(in)
 		if err != nil || c.String() != want {
@@ -259,5 +263,18 @@ func TestTheMostPreciseCoverWins(t *testing.T) {
 	}
 	if CompareRank([2]int{4, 0}, [2]int{3, 99}) <= 0 || CompareRank([2]int{3, 5}, [2]int{3, 9}) >= 0 || CompareRank([2]int{1, 0}, [2]int{1, 0}) != 0 {
 		t.Error("rank order")
+	}
+}
+
+func TestSpecialUseAndLegacyHosts(t *testing.T) {
+	for host, want := range map[string]bool{"localhost": true, "LOCALHOST.": true, "a.localhost": true, "localhost.example.com": false, "notlocalhost": false} {
+		if got := IsLocalhostName(host); got != want {
+			t.Errorf("IsLocalhostName(%q) = %v, want %v", host, got, want)
+		}
+	}
+	for host, want := range map[string]bool{"127.1": true, "2130706433": true, "0x7f.1": true, "a.1": true, "1.2.3.4": false, "::1": false, "example.com": false, "1.example": false} {
+		if got := IsLegacyNumericHost(host); got != want {
+			t.Errorf("IsLegacyNumericHost(%q) = %v, want %v", host, got, want)
+		}
 	}
 }

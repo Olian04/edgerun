@@ -7,6 +7,8 @@ import (
 	"net"
 	"net/netip"
 	"time"
+
+	"github.com/Olian04/edgerun/internal/egress/policy"
 )
 
 // deniedError is a destination the service itself never reaches.
@@ -74,6 +76,12 @@ func (g *guardedDialer) DialContext(ctx context.Context, network, addr string) (
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		return nil, err
+	}
+	// Special-use names mean this machine whatever a resolver says (a resolver
+	// that has no "localhost", such as one inside a tunnel, must not turn the
+	// refusal into a mere failure).
+	if policy.IsLocalhostName(host) {
+		return nil, &deniedError{fmt.Sprintf("%s is a name for this machine, which this service does not connect to", host)}
 	}
 	var ips []netip.Addr
 	if ip, err := netip.ParseAddr(host); err == nil {

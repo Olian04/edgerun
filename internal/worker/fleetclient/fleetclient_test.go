@@ -141,6 +141,17 @@ func TestReregistersWhenForgotten(t *testing.T) {
 	})
 }
 
+// A draining worker that the orchestrator has forgotten does not register
+// again: it would be listed as ready and given work it is trying to refuse.
+func TestADrainingWorkerDoesNotReregister(t *testing.T) {
+	f := &fakeFleet{interval: 10 * time.Millisecond, forget: "w1"}
+	_, _, _ = setup(t, f, &source{state: workerv1.WorkerState_WORKER_STATE_DRAINING})
+	eventually(t, "several heartbeats, the first of them answered reregister", func() bool { _, h := f.snapshot(); return len(h) >= 4 })
+	if r, _ := f.snapshot(); r != 1 {
+		t.Errorf("%d registrations: a draining worker must not register again", r)
+	}
+}
+
 func TestPokeHeartbeatsImmediately(t *testing.T) {
 	f := &fakeFleet{interval: time.Hour}
 	src := &source{state: workerv1.WorkerState_WORKER_STATE_READY}

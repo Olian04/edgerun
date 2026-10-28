@@ -195,7 +195,11 @@ func (s *Service) Fetch(ctx context.Context, req *connect.Request[egressv1.Fetch
 		out.Header.Add(h.GetName(), h.GetValue())
 	}
 	// Without this Go would add its own Accept-Encoding and undo the encoding.
-	// An absent header means "no preference"; leave it so.
+	// An absent header means "no preference"; leave it so. The same goes for
+	// User-Agent: a guest that sent none sends none, not Go's.
+	if _, ok := out.Header["User-Agent"]; !ok {
+		out.Header["User-Agent"] = []string{""}
+	}
 
 	resp, err := s.client.Do(out)
 	if err != nil {
@@ -255,8 +259,15 @@ func (s *Service) Fetch(ctx context.Context, req *connect.Request[egressv1.Fetch
 
 // check validates a request and returns its parsed URL and allow list.
 func (s *Service) check(r *egressv1.FetchRequest) (*url.URL, policy.List, error) {
-	if !token.MatchString(r.GetMethod()) {
-		return nil, nil, errs.Invalid("method %q is not an HTTP method", r.GetMethod())
+	if !token.MatchString(r.GetMethod()) || r.GetMethod() == "CONNECT" {
+		return nil, nil, errs.Invalid("method %q is not an HTTP method this service makes", r.GetMethod())
+	}
+	// A space or a non-ASCII byte anywhere in the URL would put a malformed
+	// request line on the wire: the caller must percent-encode.
+	for i := 0; i < len(r.GetUrl()); i++ {
+		if c := r.GetUrl()[i]; c <= 0x20 || c >= 0x7f {
+			return nil, nil, errs.Invalid("url: byte %d is not allowed: percent-encode spaces, control and non-ASCII characters", i)
+		}
 	}
 	if uint64(len(r.GetBody())) > s.cfg.MaxRequestBody {
 		return nil, nil, errs.New(commonv1.ErrorReason_ERROR_REASON_REQUEST_TOO_LARGE,
@@ -283,6 +294,8 @@ func (s *Service) check(r *egressv1.FetchRequest) (*url.URL, policy.List, error)
 		return nil, nil, errs.Invalid("url %q: credentials in a URL are not accepted", r.GetUrl())
 	case !ascii(u.Host):
 		return nil, nil, errs.Invalid("url %q: host names must be ASCII (punycode)", r.GetUrl())
+	case policy.IsLegacyNumericHost(u.Hostname()):
+		return nil, nil, errs.Invalid("url %q: a host name may not end in a number (write an address in full)", r.GetUrl())
 	}
 	if p := u.Port(); p != "" {
 		if n, err := strconv.Atoi(p); err != nil || n < 1 || n > 65535 {

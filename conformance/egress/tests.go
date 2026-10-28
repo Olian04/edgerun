@@ -44,6 +44,19 @@ func (h *harness) requests(t *testing.T) {
 		}
 	})
 
+	t.Run("the origin sees the guest's request and nothing a service adds", func(t *testing.T) {
+		r := h.fetch(t, &egressv1.FetchRequest{Method: "GET", Url: h.origin.url("/echo"), Allow: allow}, 0)
+		if r.err != nil {
+			t.Fatal(r.err)
+		}
+		seen := h.origin.lastRequest("/echo")
+		for _, name := range []string{"User-Agent", "Accept-Encoding", "Via", "X-Forwarded-For", "Forwarded"} {
+			if v := seen.Header.Values(name); len(v) != 0 {
+				t.Errorf("the guest sent no %s, the origin saw %q: a service adds nothing to the request", name, v)
+			}
+		}
+	})
+
 	t.Run("path and query as given", func(t *testing.T) {
 		r := h.fetch(t, &egressv1.FetchRequest{Method: "GET", Url: h.origin.url("/echo?a=1&b=%20x&a=2#fragment"), Allow: allow}, 0)
 		if r.err != nil {
@@ -176,27 +189,38 @@ func (h *harness) validation(t *testing.T) {
 		return &egressv1.FetchRequest{Method: method, Url: url, Allow: allow, Headers: headers}
 	}
 	bad := map[string]*egressv1.FetchRequest{
-		"no method":                     mk("", h.origin.url("/echo"), allow),
-		"method with a space":           mk("GE T", h.origin.url("/echo"), allow),
-		"method with a newline":         mk("GET\n", h.origin.url("/echo"), allow),
-		"no URL":                        mk("GET", "", allow),
-		"relative URL":                  mk("GET", "echo", allow),
-		"a path":                        mk("GET", "/echo", allow),
-		"ftp":                           mk("GET", "ftp://"+h.origin.addr()+"/", allow),
-		"file":                          mk("GET", "file:///etc/passwd", allow),
-		"no host":                       mk("GET", "http:///echo", allow),
-		"credentials":                   mk("GET", "http://user:pw@"+h.origin.addr()+"/echo", allow),
-		"port zero":                     mk("GET", "http://127.0.0.1:0/", []string{"127.0.0.1:1"}),
-		"port too large":                mk("GET", "http://127.0.0.1:99999/", []string{"127.0.0.1:1"}),
-		"non-ASCII host":                mk("GET", "http://bücher.example/", []string{"example.com"}),
-		"space in host":                 mk("GET", "http://exa mple.com/", []string{"example.com"}),
-		"a newline in a header value":   mk("GET", h.origin.url("/echo"), allow, hdr("X-A", "b\r\nX-Injected: 1")),
-		"a bad header name":             mk("GET", h.origin.url("/echo"), allow, hdr("X A", "b")),
-		"a bare wildcard":               mk("GET", h.origin.url("/echo"), []string{"*"}),
-		"an empty entry":                mk("GET", h.origin.url("/echo"), []string{""}),
-		"an entry that is a URL":        mk("GET", h.origin.url("/echo"), []string{"http://" + h.origin.addr()}),
-		"an entry with a path":          mk("GET", h.origin.url("/echo"), []string{h.origin.addr() + "/echo"}),
-		"a bad entry beside a good one": mk("GET", h.origin.url("/echo"), []string{h.origin.entry(), "not an entry"}),
+		"no method":                      mk("", h.origin.url("/echo"), allow),
+		"method with a space":            mk("GE T", h.origin.url("/echo"), allow),
+		"method with a newline":          mk("GET\n", h.origin.url("/echo"), allow),
+		"no URL":                         mk("GET", "", allow),
+		"relative URL":                   mk("GET", "echo", allow),
+		"a path":                         mk("GET", "/echo", allow),
+		"ftp":                            mk("GET", "ftp://"+h.origin.addr()+"/", allow),
+		"file":                           mk("GET", "file:///etc/passwd", allow),
+		"no host":                        mk("GET", "http:///echo", allow),
+		"credentials":                    mk("GET", "http://user:pw@"+h.origin.addr()+"/echo", allow),
+		"port zero":                      mk("GET", "http://127.0.0.1:0/", []string{"127.0.0.1:1"}),
+		"port too large":                 mk("GET", "http://127.0.0.1:99999/", []string{"127.0.0.1:1"}),
+		"non-ASCII host":                 mk("GET", "http://bücher.example/", []string{"example.com"}),
+		"space in host":                  mk("GET", "http://exa mple.com/", []string{"example.com"}),
+		"a newline in a header value":    mk("GET", h.origin.url("/echo"), allow, hdr("X-A", "b\r\nX-Injected: 1")),
+		"a bad header name":              mk("GET", h.origin.url("/echo"), allow, hdr("X A", "b")),
+		"CONNECT":                        mk("CONNECT", h.origin.url("/echo"), allow),
+		"a space in the query":           mk("GET", h.origin.url("/echo?a=b c"), allow),
+		"a space in the path":            mk("GET", h.origin.url("/ec ho"), allow),
+		"a control byte in the path":     mk("GET", h.origin.url("/ec\x01ho"), allow),
+		"a non-ASCII byte in the path":   mk("GET", h.origin.url("/caf\u00e9"), allow),
+		"a host spelled 127.1":           mk("GET", "http://127.1/", []string{"example.com"}),
+		"a host spelled as an integer":   mk("GET", "http://2130706433/", []string{"example.com"}),
+		"a host spelled in hex":          mk("GET", "http://0x7f.1/", []string{"example.com"}),
+		"an entry spelled 127.1":         mk("GET", h.origin.url("/echo"), []string{"127.1"}),
+		"an entry spelled as an integer": mk("GET", h.origin.url("/echo"), []string{"2130706433"}),
+		"a bare IPv6 entry":              mk("GET", h.origin.url("/echo"), []string{"::1"}),
+		"a bare wildcard":                mk("GET", h.origin.url("/echo"), []string{"*"}),
+		"an empty entry":                 mk("GET", h.origin.url("/echo"), []string{""}),
+		"an entry that is a URL":         mk("GET", h.origin.url("/echo"), []string{"http://" + h.origin.addr()}),
+		"an entry with a path":           mk("GET", h.origin.url("/echo"), []string{h.origin.addr() + "/echo"}),
+		"a bad entry beside a good one":  mk("GET", h.origin.url("/echo"), []string{h.origin.entry(), "not an entry"}),
 	}
 	var many []string
 	for i := 0; i < 65; i++ {
@@ -453,6 +477,26 @@ func (h *harness) forbidden(t *testing.T) {
 		"6to4 embedding loopback":     {"http://[2002:7f00:1::]/", "[2002:7f00:1::]"},
 		"NAT64 embedding loopback":    {"http://[64:ff9b::7f00:1]/", "[64:ff9b::7f00:1]"},
 	}
+	// Every forbidden range, at both of its ends: an implementation that has
+	// the range a little too small refuses the middle and lets the edge through.
+	// Only addresses inside the ranges are used, so nothing is ever sent to an
+	// address that is not forbidden.
+	for _, cidr := range forbiddenRanges {
+		p := netip.MustParsePrefix(cidr)
+		for which, a := range map[string]netip.Addr{"first": p.Masked().Addr(), "last": lastAddr(p)} {
+			cases["range "+cidr+", "+which+" address "+a.String()] = struct{ url, entry string }{
+				"http://" + bracket(a.String()) + "/", bracket(a.String())}
+		}
+	}
+	for name, addr := range map[string]string{
+		"IPv4-mapped private":         "::ffff:10.1.2.3",
+		"IPv4-mapped link-local":      "::ffff:169.254.169.254",
+		"IPv6 outside 2000::/3":       "4000::1",
+		"IPv6 multicast":              "ff02::1",
+		"NAT64 embedding a public v4": "64:ff9b::808:808",
+	} {
+		cases[name] = struct{ url, entry string }{"http://" + bracket(addr) + "/", bracket(addr)}
+	}
 	// The suite's own web server is a forbidden destination only if it is on
 	// a forbidden address (loopback, a private network...).
 	if a, err := netip.ParseAddr(h.origin.host()); err == nil && (a.IsLoopback() || a.IsPrivate() || a.IsLinkLocalUnicast()) {
@@ -477,4 +521,27 @@ func (h *harness) forbidden(t *testing.T) {
 			}
 		})
 	}
+}
+
+// forbiddenRanges is the table in docs/protocol.md ("What a network service
+// does with a Fetch", step 3), kept here independently of any implementation.
+var forbiddenRanges = []string{
+	// IPv4
+	"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12",
+	"192.0.0.0/24", "192.0.2.0/24", "192.88.99.0/24", "192.168.0.0/16", "198.18.0.0/15",
+	"198.51.100.0/24", "203.0.113.0/24", "224.0.0.0/4", "240.0.0.0/4",
+	// IPv6, inside 2000::/3 (everything outside it is refused too)
+	"2001::/23", "2001:db8::/32", "2002::/16", "3fff::/20",
+	// IPv6, outside 2000::/3
+	"::/128", "::1/128", "fc00::/7", "fe80::/10", "ff00::/8", "64:ff9b::/96",
+}
+
+// lastAddr is the highest address of a prefix.
+func lastAddr(p netip.Prefix) netip.Addr {
+	a := p.Masked().Addr().AsSlice()
+	for bit := p.Bits(); bit < len(a)*8; bit++ {
+		a[bit/8] |= 0x80 >> (bit % 8)
+	}
+	out, _ := netip.AddrFromSlice(a)
+	return out
 }

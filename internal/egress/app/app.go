@@ -49,8 +49,12 @@ type Config struct {
 	// MaxRequestBody and MaxResponseBody bound one exchange.
 	MaxRequestBody, MaxResponseBody uint64
 	ShutdownTimeout                 time.Duration // Default 30s.
-	Version                         string
-	Log                             *slog.Logger
+	// DrainGrace is how long the service keeps answering after it has said it is
+	// draining, so that orchestrators stop granting it before it goes, and calls
+	// from invocations that started earlier are not refused. Default 3s.
+	DrainGrace time.Duration
+	Version    string
+	Log        *slog.Logger
 }
 
 // Server is a running network service.
@@ -85,6 +89,9 @@ func Start(_ context.Context, cfg Config) (*Server, error) {
 	cfg.Covers = covers
 	if cfg.ShutdownTimeout == 0 {
 		cfg.ShutdownTimeout = 30 * time.Second
+	}
+	if cfg.DrainGrace == 0 {
+		cfg.DrainGrace = 3 * time.Second
 	}
 	if cfg.Log == nil {
 		cfg.Log = slog.Default()
@@ -167,6 +174,12 @@ func (s *Server) Stop(ctx context.Context) error {
 		s.cfg.Log.Warn("could not tell the orchestrator this service is draining", "error", err)
 	}
 	hcancel()
+	// Grants are made when an invocation starts, so older invocations may still
+	// call: stay up for a grace period before closing the door.
+	select {
+	case <-time.After(s.cfg.DrainGrace):
+	case <-ctx.Done():
+	}
 	sctx, cancel := context.WithTimeout(ctx, s.cfg.ShutdownTimeout)
 	defer cancel()
 	err := s.http.Shutdown(sctx)

@@ -162,6 +162,12 @@ func (c *Client) heartbeats(ctx context.Context, id string, interval time.Durati
 			continue
 		}
 		if resp.GetReregister() {
+			if c.cfg.State() == egressv1.ServiceState_SERVICE_STATE_DRAINING {
+				// Leaving: registering again would list us as ready, and
+				// something would be sent to us that we are trying not to take.
+				c.cfg.Log.Info("the orchestrator does not know this draining instance; not registering again")
+				continue
+			}
 			return nil
 		}
 	}

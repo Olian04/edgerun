@@ -193,3 +193,16 @@ func (h *harness) requireOriginCovered(t *testing.T) {
 		}
 	}
 }
+
+// requireOriginReachable asks the service for the suite's own web server and
+// stops the suite, saying why, if it cannot be had. Without it a service that
+// cannot reach the suite (a tunnel, a proxy, another network) makes every case
+// run into its deadline, and the suite looks hung for minutes.
+func (h *harness) requireOriginReachable(t *testing.T) {
+	r := h.fetch(t, &egressv1.FetchRequest{Method: "GET", Url: h.origin.url("/echo"), Allow: []string{h.origin.entry()}}, 10*time.Second)
+	if r.err != nil || r.head == nil || r.head.GetStatus() != 200 {
+		t.Fatalf("the network service cannot reach the suite's web server at %s (%v): every case that fetches from it would only time out. "+
+			"The suite's servers must be reachable from where the service makes its requests: see --listen and --advertise "+
+			"(for a service behind a tunnel or a proxy, the address its far end can reach).", h.origin.addr(), r.err)
+	}
+}

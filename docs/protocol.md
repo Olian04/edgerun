@@ -277,7 +277,8 @@ Workers dial in to the orchestrator (`FleetService`, `ArtifactService`, scope `w
   heartbeat interval the worker must keep. Registering an endpoint that is already known replaces
   that entry (the worker restarted).
 - `Heartbeat` states are `READY` or `DRAINING` (anything else is `invalid_argument`). For an unknown
-  `worker_id` it answers `reregister = true`, and the worker must register again.
+  `worker_id` it answers `reregister = true`, and the worker must register again, unless it is draining: a
+  worker that is leaving does not register again, since it would be listed as ready.
 - A worker that has not heartbeated for three intervals is not alive and receives no work. One that
   reports `DRAINING` receives no new work either, and stays listed.
 - `Deregister` is idempotent: an unknown id is not an error.
@@ -342,10 +343,24 @@ no grant, and a guest asking for it is told it is not allowed.
 | `*.example.com` | any name under it, however deep, but not `example.com` itself |
 | `192.0.2.7`, `[2001:db8::1]:8080` | that address (IPv6 in brackets); no wildcards for addresses |
 
-Host names are ASCII (internationalised names in punycode). A trailing dot and case are not part of
-the name, and an IPv4 address written in its IPv6 form is the IPv4 address. A bare `*` is not an
-entry: a list names destinations. A list holds at most 64 entries and is stored lower-cased,
-deduplicated and sorted; a malformed entry is `invalid_argument`.
+Host names are ASCII (internationalised names in punycode), of dot-separated labels of letters, digits and
+hyphens, each 1-63 characters and neither starting nor ending with a hyphen, at most 253 characters in all, and
+the **last label is not a number** (`127.1`, `2130706433` and `0x7f.1` are legacy spellings of addresses and are
+refused). Case is not significant. A trailing dot is not part of the name of a *request's* host (a URL for
+`api.example.com.` matches `api.example.com`) but is not accepted in an *entry*. An IPv6 address is always
+in brackets in an entry (a bare `::1` is ambiguous with host and port, and is refused) and carries no zone id; an
+IPv4 address written in its IPv6 form is the IPv4 address. A port is 1-65535, written without leading zeros. A
+wildcard is `*.` followed by a name (`*.com` is a valid entry; `*.192.0.2.1`, `*example.com` and `a.*.com` are
+not). A bare `*` is not an entry: a list names destinations. A list holds at most 64 entries and is stored
+lower-cased, deduplicated and sorted; a malformed entry is `invalid_argument`.
+
+Test vectors. Accepted, and what they are stored as: `Example.COM` → `example.com`; `*.Example.com:8443` →
+`*.example.com:8443`; `[2001:DB8::1]` → `[2001:db8::1]`; `[2001:db8:0:0::1]:80` → `[2001:db8::1]:80`;
+`192.0.2.1:8080`; `a`; `xn--bcher-kva.example`; `a1.example`; `1.example`. Refused: the empty string, `*`, `*.`, `.`,
+`example.`, `.example.com`, `a..b`, `-a.com`, `a-.com`, `a_b.com`, `a b.com`, `http://example.com`,
+`example.com/path`, `user@example.com`, `example.com:`, `example.com:0`, `example.com:65536`, `example.com:080`,
+`example.com:80a`, `*.192.0.2.1`, `::1`, `[::1`, `[::1]x`, `[192.0.2.1]`, `[fe80::1%eth0]`, `*example.com`,
+`a.*.com`, `**.example.com`, `127.1`, `2130706433`, `0x7f.1`, `a.1`, `bücher.example`, a label of 64 characters.
 
 ### What a network service carries
 
@@ -393,31 +408,64 @@ Services register with the orchestrator, as workers do (`egress.v1` `RegistrySer
   operator, not retried silently forever. When it is asked to stop it reports `DRAINING`, finishes what it is
   doing, and deregisters.
 - `control.v1` `ListNetworkServices` shows the operator what has registered, with its coverage and state.
+- A service registers its coverage **in canonical form itself** (lower-cased, ranges as their networks,
+  deduplicated, sorted by the byte order of the text), and `Describe` reports the same `covers`, non-zero
+  limits, and requires the `egress` token like every other call. Heartbeats that come late are tolerated up
+  to three intervals.
+- **Draining.** Grants are made when an invocation *starts*, so a service that has said `DRAINING` can still
+  receive `Fetch` calls from invocations that began earlier, for as long as their budget. It keeps answering for
+  at least one heartbeat interval after reporting `DRAINING` (so every orchestrator has stopped granting it), and
+  until what it is doing is done, bounded by its own shutdown timeout; only then does it deregister. A call
+  that arrives after it has gone is an ordinary failure to the guest (`-2`). If `Heartbeat` answers
+  `reregister = true` while it is draining, it does not register again.
+- A `Fetch` whose `Content-Length` is declared larger than the bound is refused with `RESPONSE_TOO_LARGE`
+  before the head, so that nothing the caller must throw away is delivered; never more than the bound is
+  delivered, and exactly the bound is allowed (for the request body as well as the response).
 
 ### What a network service does with a `Fetch`
 
 In this order, stopping at the first failure:
 
-1. Refuses a malformed request with `invalid_argument` (no reason): the method is an HTTP token, the
-   URL is absolute with scheme `http` or `https`, has a host, no user information and an ASCII host,
-   and every `allow` entry is well formed. A body larger than `max_request_body_bytes` is
-   `REQUEST_TOO_LARGE`.
+1. Refuses a malformed request with `invalid_argument` (no reason): the method is an HTTP token and not
+   `CONNECT`; the URL is absolute with scheme `http` or `https`, has a host, no user information, and **no
+   byte that is a space, a control character or non-ASCII anywhere in it** (the caller percent-encodes; a space
+   left in a query would put a malformed request line on the wire); a host name has an ASCII host and does
+   **not end in a number** (`127.1`, `2130706433`, `0x7f.1` are legacy spellings of addresses that different
+   resolvers read differently: write an address in full); and every `allow` entry is well formed. A body
+   larger than `max_request_body_bytes` is `REQUEST_TOO_LARGE`. Because that is only known after the message
+   is decoded, a service **caps what its transport will read** at `max_request_body_bytes` plus a margin for
+   the rest of the request (the reference uses 256 KiB): beyond the cap the transport refuses the message with a
+   bare `resource_exhausted`, as the orchestrator does for ingress. Without a cap an arbitrary body is held in
+   memory first.
 2. Checks the URL against `allow` (scheme, host, port), and its host against what the service carries. A
    miss on either is `EGRESS_DENIED`. This happens before any name is resolved, so a refused request
    reveals nothing about the network.
-3. Resolves the host and refuses, with `EGRESS_DENIED`, any destination the *service itself* never
-   reaches, whatever the caller allowed: loopback, unspecified, link-local (cloud metadata services
-   live there), private (RFC 1918, unique-local), carrier-grade NAT, multicast, broadcast, reserved,
-   documentation and benchmarking ranges, and IPv4 addresses embedded in IPv6 forms. This is checked on the
-   address actually connected to, for every address the name resolves to, so a name that resolves
-   somewhere forbidden (or changes its answer between lookups) gets nowhere. A service's operator may
-   allow particular networks, which is how a service inside a private network reaches it; the default
-   allows none.
-4. Makes the request. It sets `Host` from the URL (a caller-supplied `Host` is dropped, or an
-   allowed name could be used to reach another virtual host), drops connection-level headers
-   (`connection`, `keep-alive`, `proxy-*`, `te`, `trailer`, `transfer-encoding`, `upgrade`), neither
-   adds nor undoes content encodings, and does not follow redirects. A certificate that does not
-   verify is a failure, not a warning.
+3. Resolves the host and refuses, with `EGRESS_DENIED`, any destination the *service itself* never reaches,
+   whatever the caller allowed. The forbidden destinations are these, exactly:
+
+   | Family | Forbidden |
+   |---|---|
+   | IPv4 | `0.0.0.0/8` (this network), `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` (private), `100.64.0.0/10` (carrier-grade NAT), `127.0.0.0/8` (loopback), `169.254.0.0/16` (link-local; cloud metadata services live here), `192.0.0.0/24` (IETF protocol assignments), `192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24` (documentation), `192.88.99.0/24` (6to4 relay), `198.18.0.0/15` (benchmarking), `224.0.0.0/4` (multicast), `240.0.0.0/4` (reserved, including the broadcast address) |
+   | IPv6 | **everything outside `2000::/3`** (so unspecified, loopback, `64:ff9b::/96` NAT64, unique-local `fc00::/7`, link-local `fe80::/10`, multicast `ff00::/8`, and the rest), and inside it `2001::/23` (protocol assignments, Teredo), `2001:db8::/32` (documentation), `2002::/16` (6to4) and `3fff::/20` (documentation) |
+   | IPv4 in IPv6 | an IPv4-mapped address (`::ffff:a.b.c.d`) is judged as the IPv4 address `a.b.c.d`; other embeddings (NAT64, 6to4) are covered by the IPv6 rows |
+
+   and, by name, `localhost` and every name under `.localhost` (RFC 6761), refused **before any lookup**, because
+   a resolver that has no `localhost` (one inside a tunnel, say) would otherwise turn a refusal into a mere failure.
+   The check is on the address actually connected to, for every address the name resolves to: **resolve once,
+   check every address returned, and connect to one of the addresses checked**. A dial that is handed the *name*
+   resolves it again, and a name that changes its answer between lookups gets past the check, so it is wrong
+   whatever check came before it. A service that resolves through a tunnel or a proxy must not consult the local
+   resolver at all. A service's operator may allow particular networks, which is how a service inside a private
+   network reaches it; an address inside one is exempt from the table, matched against the address in its
+   unmapped form. The default allows none.
+4. Makes the request, which is the guest's request with exactly these changes and no others: `Host` is set from
+   the URL (a caller-supplied `Host` is dropped, or an allowed name could be used to reach another virtual
+   host); connection-level headers (`connection`, `keep-alive`, `proxy-*`, `te`, `trailer`,
+   `transfer-encoding`, `upgrade`) and `content-length` are dropped (the length is the body's); and nothing is
+   added: no `User-Agent`, no `Accept-Encoding`, no `Via` or `X-Forwarded-*`, and content encodings are
+   neither added nor undone (a library's compression default must be switched off). Environment proxy
+   settings (`HTTP_PROXY`...) are ignored: they would be a way around the checks. Redirects are not followed.
+   A certificate that does not verify is a failure, not a warning.
 5. Streams the response: the head, then chunks of at most 1 MiB, with connection-level headers
    removed. An upstream 4xx or 5xx is a response and is forwarded as it is.
 
@@ -558,11 +606,24 @@ suite. What they must be able to do is what the orchestrator suite proves the or
 ### The executable
 
 `edgerun-conformance` (`make conformance`, which also compiles the test guests into it, so it needs no Go
-toolchain where it runs) is pointed at an address and told which role to test:
+toolchain where it runs) is pointed at an address and told which role to test. From a module that depends on
+edgerun, `go build github.com/Olian04/edgerun/cmd/edgerun-conformance` also works; without the guests compiled in
+it builds them with the local Go toolchain when a suite needs them (the worker and orchestrator suites; the egress
+and frontend suites need none).
 
 ```
 edgerun-conformance --role worker --target 10.0.0.5:9000 --listen :7000 --advertise 10.0.0.2
 ```
+
+**Judging a service that cannot reach the machine the suite runs on** (behind a tunnel, a proxy, another
+network): the suite's web servers must be reachable *from where the service makes its requests*. Give
+`--advertise` an address that is true from there (for a tunnel, an address its far end routes to the suite, by
+forwarding or by running the suite there), and configure the service to carry and be allowed to reach it. Before
+anything else the egress suite fetches its own web server through the service and stops, saying why, if it
+cannot: a service that cannot reach the suite would otherwise make every case wait out its deadline. The
+suite also expects the service to refuse `localhost` by name (see "What a network service does with a
+`Fetch`") and registers it at the `--target` address: a service that registers any other address "never
+registered".
 
 Because the suite plays the roles around the implementation, the implementation must be configured to reach
 the suite (a worker must be told the suite is its orchestrator), and the suite must be reachable from it.

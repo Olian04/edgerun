@@ -56,6 +56,7 @@ func main() {
 	flag.StringVar(&cfg.AdvertiseURL, "advertise-url", env("EDGERUN_EGRESS_ADVERTISE_URL", ""), "URL workers use to reach this service (default: the listen address)")
 	flag.StringVar(&covers, "covers", env("EDGERUN_EGRESS_COVERS", ""), "what this service carries, comma-separated: * (everything), hosts, *.domains, addresses, ranges such as 10.0.0.0/8 (required)")
 	flag.Var(&allow, "allow-network", "CIDR range to connect to although it is refused by default, e.g. 10.20.0.0/16 (repeatable)")
+	flag.DurationVar(&cfg.DrainGrace, "drain-grace", 0, "how long to keep answering after reporting DRAINING (default 3s)")
 	flag.Uint64Var(&cfg.MaxRequestBody, "max-request-bytes", 0, "largest request body accepted (default 1 MiB)")
 	flag.Uint64Var(&cfg.MaxResponseBody, "max-response-bytes", 0, "largest response body returned (default 4 MiB)")
 	if v := os.Getenv("EDGERUN_EGRESS_ALLOW_NETWORKS"); v != "" {

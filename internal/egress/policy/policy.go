@@ -121,7 +121,11 @@ func validName(s string) bool {
 	if s == "" || len(s) > 253 {
 		return false
 	}
-	for _, label := range strings.Split(s, ".") {
+	labels := strings.Split(s, ".")
+	if legacyNumeric(labels[len(labels)-1]) {
+		return false
+	}
+	for _, label := range labels {
 		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
 			return false
 		}
@@ -133,6 +137,43 @@ func validName(s string) bool {
 		}
 	}
 	return true
+}
+
+// legacyNumeric reports whether a last label looks like a number ("1", "0x7f").
+// No top-level domain is numeric, but resolvers read "127.1", "2130706433" and
+// "0x7f.1" as IPv4 addresses, each in its own way: a name like that is refused
+// rather than left to mean different things to different resolvers.
+func legacyNumeric(label string) bool {
+	if label == "" {
+		return false
+	}
+	if strings.HasPrefix(label, "0x") {
+		return true
+	}
+	for i := 0; i < len(label); i++ {
+		if label[i] < '0' || label[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// IsLegacyNumericHost reports whether host is a name (not an address) written
+// with a numeric last label.
+func IsLegacyNumericHost(host string) bool {
+	host = NormalizeHost(host)
+	if _, err := netip.ParseAddr(host); err == nil {
+		return false
+	}
+	i := strings.LastIndexByte(host, '.')
+	return legacyNumeric(host[i+1:])
+}
+
+// IsLocalhostName reports whether host is "localhost" or under ".localhost":
+// special-use names (RFC 6761) that mean this machine whatever a resolver says.
+func IsLocalhostName(host string) bool {
+	host = NormalizeHost(host)
+	return host == "localhost" || strings.HasSuffix(host, ".localhost")
 }
 
 // Canonical validates entries and returns them in canonical form: lower-case,

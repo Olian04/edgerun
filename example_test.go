@@ -6,7 +6,12 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/signal"
+	"sync/atomic"
+	"syscall"
 	"time"
+
+	"connectrpc.com/connect"
 
 	"github.com/Olian04/edgerun"
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
@@ -82,32 +87,81 @@ func ExampleIngress_Invoke() {
 	}
 }
 
-// Be a network service of your own: say what you carry, and keep saying that
-// you are there. Workers then reach it through the same orchestrators as every
-// other service.
+// Be a network service of your own: say what you carry, keep saying that you
+// are there, and leave properly. Workers then reach it through the same
+// orchestrators as every other service.
+//
+// This is the whole lifecycle, and it is deliberately not a library function:
+// what to do when a registration is refused, how long to go on answering while
+// draining, and how to count what is in flight are the service's decisions.
 func ExampleRegistry() {
-	ctx := context.Background()
 	reg := edgerun.NewRegistry("http://orchestrator:8080", os.Getenv("EDGERUN_NETWORK_TOKEN"))
-
-	r, err := reg.Register(ctx, &egressv1.RegisterRequest{
-		Endpoint: "http://10.0.0.7:9100", // where workers reach this service
-		Info: &egressv1.ServiceInfo{
-			Implementation: &commonv1.Implementation{Name: "my-proxy", Version: "1"},
-			Covers:         []string{"*.corp.example.com", "10.0.0.0/8"},
-		},
-	})
-	if err != nil {
-		log.Fatal(err)
+	info := &egressv1.ServiceInfo{
+		Implementation: &commonv1.Implementation{Name: "my-proxy", Version: "1"},
+		Covers:         []string{"*.corp.example.com", "10.0.0.0/8"}, // canonical: lower-case, sorted
 	}
-	for range time.Tick(r.HeartbeatInterval.AsDuration()) {
-		hb, err := reg.Heartbeat(ctx, &egressv1.HeartbeatRequest{ServiceId: r.ServiceId, State: egressv1.ServiceState_SERVICE_STATE_READY})
-		if err != nil {
-			log.Print(err)
-			continue
+	endpoint := "http://10.0.0.7:9100" // where workers reach this service
+
+	var draining atomic.Bool // set when the process is asked to stop
+	stop := make(chan struct{})
+	go func() {
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, syscall.SIGTERM, os.Interrupt)
+		<-sig
+		draining.Store(true)
+		close(stop)
+	}()
+	state := func() egressv1.ServiceState {
+		if draining.Load() {
+			return egressv1.ServiceState_SERVICE_STATE_DRAINING
 		}
-		if hb.Reregister {
+		return egressv1.ServiceState_SERVICE_STATE_READY
+	}
+	ctx := context.Background()
+
+	// Register, retrying with a growing pause: the orchestrator may not be up yet.
+	register := func() (id string, every time.Duration) {
+		for pause := 500 * time.Millisecond; ; pause = min(pause*2, 30*time.Second) {
+			r, err := reg.Register(ctx, &egressv1.RegisterRequest{Endpoint: endpoint, Info: info})
+			if err == nil {
+				return r.ServiceId, r.HeartbeatInterval.AsDuration()
+			}
+			if connect.CodeOf(err) == connect.CodeInvalidArgument {
+				log.Fatalf("the orchestrator refuses this registration, which retrying will not change: %v", err)
+			}
+			log.Printf("registering: %v; trying again in %v", err, pause)
+			select {
+			case <-time.After(pause):
+			case <-stop:
+				return "", 0
+			}
+		}
+	}
+
+	id, every := register()
+	tick := time.NewTicker(every)
+	defer tick.Stop()
+	for id != "" {
+		select {
+		case <-tick.C:
+		case <-stop:
+			// Say so at once, then go on answering for a heartbeat interval: grants are
+			// made when an invocation starts, so older invocations still call.
+			reg.Heartbeat(ctx, &egressv1.HeartbeatRequest{ServiceId: id, State: state()})
+			time.Sleep(every)
+			// ... wait here for the requests in flight to finish, then:
+			reg.Deregister(ctx, &egressv1.DeregisterRequest{ServiceId: id})
+			return
+		}
+		hb, err := reg.Heartbeat(ctx, &egressv1.HeartbeatRequest{ServiceId: id, State: state()})
+		switch {
+		case err != nil:
+			log.Printf("heartbeat: %v", err) // transient: the next one will tell
+		case hb.Reregister && !draining.Load():
 			// The orchestrator forgot us (it restarted, or we were too quiet).
-			return // a real service registers again here
+			if id, every = register(); id != "" {
+				tick.Reset(every)
+			}
 		}
 	}
 }

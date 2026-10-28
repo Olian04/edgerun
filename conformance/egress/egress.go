@@ -119,6 +119,7 @@ func Run(t *testing.T, target Target) {
 	t.Run("Authentication", open.authentication)
 	t.Run("Coverage", open.coverage)
 	open.requireOriginCovered(t)
+	open.requireOriginReachable(t)
 	t.Run("Requests", open.requests)
 	t.Run("Responses", open.responses)
 	t.Run("Validation", open.validation)

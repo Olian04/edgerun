@@ -120,14 +120,14 @@ production: the tokens do not replace it.
 
 | Flag | Environment | Default | |
 |---|---|---|---|
-| `--database-url` | `EDGERUN_DATABASE_URL` | | Postgres connection string. Migrations run at start under an advisory lock, so several instances may start together. |
+| `--database-url` | `EDGERUN_DATABASE_URL` | **required** | Postgres connection string. Migrations run at start under an advisory lock, so several instances may start together. |
 | `--listen` | `EDGERUN_ORCHESTRATOR_LISTEN` | `:8080` | Serves ingress, fleet, artifact and control, plus `/healthz`. |
 | `--ingress-token` | `EDGERUN_INGRESS_TOKEN` | | Presented by frontends. |
 | `--worker-token` | `EDGERUN_WORKER_TOKEN` | | Presented by workers. |
 | `--admin-token` | `EDGERUN_ADMIN_TOKEN` | | Presented by the admin UI and the CLI. |
 | `--execution-token` | `EDGERUN_EXECUTION_TOKEN` | | Presented *to* workers. |
 | `--network-token` | `EDGERUN_NETWORK_TOKEN` | | Presented by network services when they register. Without one none may, and functions have no network. |
-| `--secret-key` | `EDGERUN_SECRET_KEY` | | base64 of 32 random bytes; seals secret variables (AES-GCM). Losing it loses the secrets. |
+| `--secret-key` | `EDGERUN_SECRET_KEY` | **required** | base64 of 32 random bytes; seals secret variables (AES-GCM). Losing it loses the secrets. |
 | `--heartbeat-interval` | | `5s` | Dictated to workers. A worker is alive for three intervals. |
 | `--invocation-retention` | | `336h` | Older invocation records are deleted. |
 
