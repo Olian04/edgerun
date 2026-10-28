@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/Olian04/edgerun"
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
 	controlv1 "github.com/Olian04/edgerun/gen/edgerun/control/v1"
 	ingressv1 "github.com/Olian04/edgerun/gen/edgerun/ingress/v1"
@@ -35,7 +36,7 @@ import (
 )
 
 // IngressScope is the token scope a frontend presents.
-const IngressScope = "ingress"
+const IngressScope = edgerun.ScopeIngress
 
 // Recorder receives one record per routed invocation.
 type Recorder interface{ Record(*controlv1.Invocation) }

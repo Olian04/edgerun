@@ -12,6 +12,7 @@ import (
 
 	"connectrpc.com/connect"
 
+	"github.com/Olian04/edgerun"
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
 	controlv1 "github.com/Olian04/edgerun/gen/edgerun/control/v1"
 	"github.com/Olian04/edgerun/gen/edgerun/control/v1/controlv1connect"
@@ -22,7 +23,7 @@ import (
 )
 
 // AdminScope is the token scope operators present.
-const AdminScope = "admin"
+const AdminScope = edgerun.ScopeAdmin
 
 var abiPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{0,31}$`)
 

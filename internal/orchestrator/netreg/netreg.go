@@ -12,6 +12,7 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/durationpb"
 
+	"github.com/Olian04/edgerun"
 	egressv1 "github.com/Olian04/edgerun/gen/edgerun/egress/v1"
 	"github.com/Olian04/edgerun/gen/edgerun/egress/v1/egressv1connect"
 	"github.com/Olian04/edgerun/internal/authn"
@@ -21,7 +22,7 @@ import (
 )
 
 // Scope is the token scope network services present to the orchestrator.
-const Scope = "network"
+const Scope = edgerun.ScopeNetwork
 
 // Store is what the service needs. *store.Store implements it.
 type Store interface {

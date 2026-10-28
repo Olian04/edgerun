@@ -22,6 +22,7 @@ import (
 
 	"connectrpc.com/connect"
 
+	"github.com/Olian04/edgerun"
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
 	egressv1 "github.com/Olian04/edgerun/gen/edgerun/egress/v1"
 	"github.com/Olian04/edgerun/gen/edgerun/egress/v1/egressv1connect"
@@ -31,7 +32,7 @@ import (
 )
 
 // Scope is the token scope workers present to a network service.
-const Scope = "egress"
+const Scope = edgerun.ScopeEgress
 
 const (
 	// ChunkBytes bounds one streamed chunk (docs/protocol.md: at most 1 MiB).

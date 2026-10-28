@@ -12,6 +12,7 @@ import (
 
 	"connectrpc.com/connect"
 
+	"github.com/Olian04/edgerun"
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
 	workerv1 "github.com/Olian04/edgerun/gen/edgerun/worker/v1"
 	"github.com/Olian04/edgerun/gen/edgerun/worker/v1/workerv1connect"
@@ -23,7 +24,7 @@ import (
 
 const (
 	// ExecuteScope is the token scope the orchestrator presents to workers.
-	ExecuteScope = "execute"
+	ExecuteScope = edgerun.ScopeExecute
 
 	chunkSize = 64 << 10
 	// maxRequestBytes bounds one Execute message: the protocol's request body

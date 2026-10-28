@@ -10,13 +10,11 @@ import (
 	"sync"
 	"time"
 
-	"connectrpc.com/connect"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/Olian04/edgerun"
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
 	controlv1 "github.com/Olian04/edgerun/gen/edgerun/control/v1"
-	"github.com/Olian04/edgerun/gen/edgerun/control/v1/controlv1connect"
-	"github.com/Olian04/edgerun/internal/authn"
 )
 
 // maxListed bounds how many rows the UI pulls for a table it lets webui sort
@@ -25,9 +23,7 @@ const maxListed = 10000
 
 // Control is the UI's view of the control protocol.
 type Control struct {
-	fn   controlv1connect.FunctionServiceClient
-	rt   controlv1connect.RouteServiceClient
-	insp controlv1connect.InspectionServiceClient
+	lib *edgerun.Control
 
 	mu       sync.Mutex
 	names    map[string]string // function id -> name
@@ -37,22 +33,19 @@ type Control struct {
 
 // NewControl returns a client for the orchestrator at baseURL.
 func NewControl(httpc *http.Client, baseURL, adminToken string) *Control {
-	opt := connect.WithInterceptors(authn.Client(adminToken))
 	return &Control{
-		fn:       controlv1connect.NewFunctionServiceClient(httpc, baseURL, opt),
-		rt:       controlv1connect.NewRouteServiceClient(httpc, baseURL, opt),
-		insp:     controlv1connect.NewInspectionServiceClient(httpc, baseURL, opt),
+		lib:      edgerun.NewControl(baseURL, adminToken, edgerun.WithHTTPClient(httpc)),
 		versions: map[string]int64{},
 	}
 }
 
 // Info describes the orchestrator.
 func (c *Control) Info(ctx context.Context) (*controlv1.DescribeResponse, error) {
-	r, err := c.insp.Describe(ctx, connect.NewRequest(&controlv1.DescribeRequest{}))
+	r, err := c.lib.Describe(ctx, &controlv1.DescribeRequest{})
 	if err != nil {
 		return nil, err
 	}
-	return r.Msg, nil
+	return r, nil
 }
 
 // Functions lists every function, by name.
@@ -60,12 +53,12 @@ func (c *Control) Functions(ctx context.Context) ([]*controlv1.Function, error) 
 	var all []*controlv1.Function
 	token := ""
 	for len(all) < maxListed {
-		r, err := c.fn.ListFunctions(ctx, connect.NewRequest(&controlv1.ListFunctionsRequest{PageSize: 500, PageToken: token}))
+		r, err := c.lib.ListFunctions(ctx, &controlv1.ListFunctionsRequest{PageSize: 500, PageToken: token})
 		if err != nil {
 			return nil, err
 		}
-		all = append(all, r.Msg.Functions...)
-		if token = r.Msg.NextPageToken; token == "" {
+		all = append(all, r.Functions...)
+		if token = r.NextPageToken; token == "" {
 			break
 		}
 	}
@@ -75,11 +68,11 @@ func (c *Control) Functions(ctx context.Context) ([]*controlv1.Function, error) 
 
 // Function returns one function.
 func (c *Control) Function(ctx context.Context, id string) (*controlv1.Function, error) {
-	r, err := c.fn.GetFunction(ctx, connect.NewRequest(&controlv1.GetFunctionRequest{FunctionId: id}))
+	r, err := c.lib.GetFunction(ctx, &controlv1.GetFunctionRequest{FunctionId: id})
 	if err != nil {
 		return nil, err
 	}
-	return r.Msg.Function, nil
+	return r.Function, nil
 }
 
 // Versions lists a function's versions, newest first.
@@ -87,12 +80,12 @@ func (c *Control) Versions(ctx context.Context, fid string) ([]*controlv1.Functi
 	var all []*controlv1.FunctionVersion
 	token := ""
 	for len(all) < maxListed {
-		r, err := c.fn.ListVersions(ctx, connect.NewRequest(&controlv1.ListVersionsRequest{FunctionId: fid, PageSize: 500, PageToken: token}))
+		r, err := c.lib.ListVersions(ctx, &controlv1.ListVersionsRequest{FunctionId: fid, PageSize: 500, PageToken: token})
 		if err != nil {
 			return nil, err
 		}
-		all = append(all, r.Msg.Versions...)
-		if token = r.Msg.NextPageToken; token == "" {
+		all = append(all, r.Versions...)
+		if token = r.NextPageToken; token == "" {
 			break
 		}
 	}
@@ -150,12 +143,12 @@ func (c *Control) Routes(ctx context.Context) ([]*controlv1.Route, error) {
 	var all []*controlv1.Route
 	token := ""
 	for len(all) < maxListed {
-		r, err := c.rt.ListRoutes(ctx, connect.NewRequest(&controlv1.ListRoutesRequest{PageSize: 500, PageToken: token}))
+		r, err := c.lib.ListRoutes(ctx, &controlv1.ListRoutesRequest{PageSize: 500, PageToken: token})
 		if err != nil {
 			return nil, err
 		}
-		all = append(all, r.Msg.Routes...)
-		if token = r.Msg.NextPageToken; token == "" {
+		all = append(all, r.Routes...)
+		if token = r.NextPageToken; token == "" {
 			break
 		}
 	}
@@ -164,31 +157,31 @@ func (c *Control) Routes(ctx context.Context) ([]*controlv1.Route, error) {
 
 // Env lists a function's environment variables.
 func (c *Control) Env(ctx context.Context, fid string) ([]*controlv1.EnvEntry, error) {
-	r, err := c.fn.ListEnv(ctx, connect.NewRequest(&controlv1.ListEnvRequest{FunctionId: fid}))
+	r, err := c.lib.ListEnv(ctx, &controlv1.ListEnvRequest{FunctionId: fid})
 	if err != nil {
 		return nil, err
 	}
-	return r.Msg.Entries, nil
+	return r.Entries, nil
 }
 
 // Workers lists the fleet.
 func (c *Control) Workers(ctx context.Context) ([]*controlv1.WorkerStatus, error) {
-	r, err := c.insp.ListWorkers(ctx, connect.NewRequest(&controlv1.ListWorkersRequest{}))
+	r, err := c.lib.ListWorkers(ctx, &controlv1.ListWorkersRequest{})
 	if err != nil {
 		return nil, err
 	}
-	ws := r.Msg.Workers
+	ws := r.Workers
 	sort.SliceStable(ws, func(i, j int) bool { return ws[i].Endpoint < ws[j].Endpoint })
 	return ws, nil
 }
 
 // NetworkServices lists the network services that have registered.
 func (c *Control) NetworkServices(ctx context.Context) ([]*controlv1.NetworkServiceStatus, error) {
-	r, err := c.insp.ListNetworkServices(ctx, connect.NewRequest(&controlv1.ListNetworkServicesRequest{}))
+	r, err := c.lib.ListNetworkServices(ctx, &controlv1.ListNetworkServicesRequest{})
 	if err != nil {
 		return nil, err
 	}
-	ns := r.Msg.Services
+	ns := r.Services
 	sort.SliceStable(ns, func(i, j int) bool { return ns[i].Endpoint < ns[j].Endpoint })
 	return ns, nil
 }
@@ -196,12 +189,12 @@ func (c *Control) NetworkServices(ctx context.Context) ([]*controlv1.NetworkServ
 // Invocations returns one page of invocation records, newest first. after is
 // the token from the previous page, "" for the first.
 func (c *Control) Invocations(ctx context.Context, functionID, after string, limit int) ([]*controlv1.Invocation, string, error) {
-	r, err := c.insp.ListInvocations(ctx, connect.NewRequest(&controlv1.ListInvocationsRequest{
-		FunctionId: functionID, PageSize: uint32(limit), PageToken: after}))
+	r, err := c.lib.ListInvocations(ctx, &controlv1.ListInvocationsRequest{
+		FunctionId: functionID, PageSize: uint32(limit), PageToken: after})
 	if err != nil {
 		return nil, "", err
 	}
-	return r.Msg.Invocations, r.Msg.NextPageToken, nil
+	return r.Invocations, r.NextPageToken, nil
 }
 
 // FunctionNames maps function ids to names, for tables that show records by
@@ -237,65 +230,65 @@ func (c *Control) rememberNames(fns []*controlv1.Function) {
 // --- writes ------------------------------------------------------------------
 
 func (c *Control) CreateFunction(ctx context.Context, name string) (*controlv1.Function, error) {
-	r, err := c.fn.CreateFunction(ctx, connect.NewRequest(&controlv1.CreateFunctionRequest{Name: name}))
+	r, err := c.lib.CreateFunction(ctx, &controlv1.CreateFunctionRequest{Name: name})
 	if err != nil {
 		return nil, err
 	}
 	c.invalidateNames()
-	return r.Msg.Function, nil
+	return r.Function, nil
 }
 
 func (c *Control) DeleteFunction(ctx context.Context, id string) error {
-	_, err := c.fn.DeleteFunction(ctx, connect.NewRequest(&controlv1.DeleteFunctionRequest{FunctionId: id}))
+	_, err := c.lib.DeleteFunction(ctx, &controlv1.DeleteFunctionRequest{FunctionId: id})
 	c.invalidateNames()
 	return err
 }
 
 // Deploy uploads a module as a new version of a function.
 func (c *Control) Deploy(ctx context.Context, fid string, module []byte, abi string, limits *commonv1.Limits, activate bool) (*controlv1.FunctionVersion, error) {
-	r, err := c.fn.CreateVersion(ctx, connect.NewRequest(&controlv1.CreateVersionRequest{
-		FunctionId: fid, Module: module, Abi: abi, Limits: limits, Activate: activate}))
+	r, err := c.lib.CreateVersion(ctx, &controlv1.CreateVersionRequest{
+		FunctionId: fid, Module: module, Abi: abi, Limits: limits, Activate: activate})
 	if err != nil {
 		return nil, err
 	}
-	return r.Msg.Version, nil
+	return r.Version, nil
 }
 
 func (c *Control) Activate(ctx context.Context, fid, vid string) error {
-	_, err := c.fn.ActivateVersion(ctx, connect.NewRequest(&controlv1.ActivateVersionRequest{FunctionId: fid, VersionId: vid}))
+	_, err := c.lib.ActivateVersion(ctx, &controlv1.ActivateVersionRequest{FunctionId: fid, VersionId: vid})
 	return err
 }
 
 func (c *Control) SetEnv(ctx context.Context, fid string, e *controlv1.EnvEntry) error {
-	_, err := c.fn.SetEnv(ctx, connect.NewRequest(&controlv1.SetEnvRequest{FunctionId: fid, Entry: e}))
+	_, err := c.lib.SetEnv(ctx, &controlv1.SetEnvRequest{FunctionId: fid, Entry: e})
 	return err
 }
 
 func (c *Control) DeleteEnv(ctx context.Context, fid, name string) error {
-	_, err := c.fn.DeleteEnv(ctx, connect.NewRequest(&controlv1.DeleteEnvRequest{FunctionId: fid, Name: name}))
+	_, err := c.lib.DeleteEnv(ctx, &controlv1.DeleteEnvRequest{FunctionId: fid, Name: name})
 	return err
 }
 
 // SetEgress replaces the function's network allow list and returns the function
 // with the list in canonical form.
 func (c *Control) SetEgress(ctx context.Context, fid string, allow []string) (*controlv1.Function, error) {
-	r, err := c.fn.SetEgress(ctx, connect.NewRequest(&controlv1.SetEgressRequest{FunctionId: fid, Allow: allow}))
+	r, err := c.lib.SetEgress(ctx, &controlv1.SetEgressRequest{FunctionId: fid, Allow: allow})
 	if err != nil {
 		return nil, err
 	}
-	return r.Msg.Function, nil
+	return r.Function, nil
 }
 
 func (c *Control) CreateRoute(ctx context.Context, host, prefix, fid string) (*controlv1.Route, error) {
-	r, err := c.rt.CreateRoute(ctx, connect.NewRequest(&controlv1.CreateRouteRequest{HostPattern: host, PathPrefix: prefix, FunctionId: fid}))
+	r, err := c.lib.CreateRoute(ctx, &controlv1.CreateRouteRequest{HostPattern: host, PathPrefix: prefix, FunctionId: fid})
 	if err != nil {
 		return nil, err
 	}
-	return r.Msg.Route, nil
+	return r.Route, nil
 }
 
 func (c *Control) DeleteRoute(ctx context.Context, id string) error {
-	_, err := c.rt.DeleteRoute(ctx, connect.NewRequest(&controlv1.DeleteRouteRequest{RouteId: id}))
+	_, err := c.lib.DeleteRoute(ctx, &controlv1.DeleteRouteRequest{RouteId: id})
 	return err
 }
 

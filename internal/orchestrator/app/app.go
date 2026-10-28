@@ -14,6 +14,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/Olian04/edgerun"
 	"github.com/Olian04/edgerun/internal/authn"
 	"github.com/Olian04/edgerun/internal/orchestrator/control"
 	"github.com/Olian04/edgerun/internal/orchestrator/fleet"
@@ -92,9 +93,9 @@ func (c *Config) validate() error {
 	if c.DatabaseURL == "" {
 		return errors.New("database URL is required")
 	}
-	tokens := map[string]string{"ingress": c.IngressToken, "worker": c.WorkerToken, "admin": c.AdminToken}
+	tokens := map[string]string{edgerun.ScopeIngress: c.IngressToken, edgerun.ScopeWorker: c.WorkerToken, edgerun.ScopeAdmin: c.AdminToken}
 	if c.NetworkToken != "" {
-		tokens["network"] = c.NetworkToken
+		tokens[edgerun.ScopeNetwork] = c.NetworkToken
 	}
 	seen := map[string]string{}
 	for role, tok := range tokens {

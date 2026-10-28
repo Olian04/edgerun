@@ -214,6 +214,23 @@ bin/edgerun-conformance --role worker --target 10.0.0.6:9000 --listen :7000 --ad
 `--print-config` says how to configure the implementation for the role (what the suite will present and require,
 and where the suite is). See "Conformance" in [`docs/protocol.md`](docs/protocol.md).
 
+## Library
+
+`github.com/Olian04/edgerun` is a Go client library over the generated protocols, for extending edgerun from
+outside: one typed client per seam (control, ingress, worker execution/fleet/artifacts, egress and its registry),
+so a program of yours can be an operator, a frontend, a worker or a network service of its own.
+
+```go
+ctl := edgerun.NewControl("http://orchestrator:8080", adminToken)
+fn, _ := ctl.CreateFunction(ctx, &controlv1.CreateFunctionRequest{Name: "hello"})
+
+ing := edgerun.NewIngress("http://orchestrator:8080", ingressToken)
+res, err := ing.Invoke(ctx, &ingressv1.InvokeRequest{Request: &commonv1.HttpRequest{Method: "GET", Host: "hello.example.com", Path: "/"}})
+```
+
+It is the protocols and nothing more (an RPC, a method), plus tokens, iterators over paged lists, streamed
+bodies as readers and typed errors. See [`docs/library.md`](docs/library.md).
+
 ## Development
 
 ```sh

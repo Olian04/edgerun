@@ -14,6 +14,7 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/durationpb"
 
+	"github.com/Olian04/edgerun"
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
 	workerv1 "github.com/Olian04/edgerun/gen/edgerun/worker/v1"
 	"github.com/Olian04/edgerun/gen/edgerun/worker/v1/workerv1connect"
@@ -24,7 +25,7 @@ import (
 )
 
 // WorkerScope is the token scope workers present to the orchestrator.
-const WorkerScope = "worker"
+const WorkerScope = edgerun.ScopeWorker
 
 // artifactChunk is the size of one GetArtifact message (docs/protocol.md: ≤ 1 MiB).
 const artifactChunk = 1 << 20

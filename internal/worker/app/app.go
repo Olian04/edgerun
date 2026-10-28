@@ -14,6 +14,7 @@ import (
 
 	"connectrpc.com/connect"
 
+	"github.com/Olian04/edgerun"
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
 	workerv1 "github.com/Olian04/edgerun/gen/edgerun/worker/v1"
 	"github.com/Olian04/edgerun/gen/edgerun/worker/v1/workerv1connect"
@@ -26,7 +27,7 @@ import (
 )
 
 // WorkerScope is the token scope a worker presents to the orchestrator.
-const WorkerScope = "worker"
+const WorkerScope = edgerun.ScopeWorker
 
 // Config configures a worker.
 type Config struct {
