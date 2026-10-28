@@ -40,10 +40,10 @@ type Config struct {
 	WorkerToken string
 	// ExecutionToken is required of the orchestrator on ExecutionService.
 	ExecutionToken string
-	// EgressURL is the network service guests' outbound requests go through,
-	// and EgressToken the credential presented to it. With none, guests have
-	// no network and the worker offers wagi-1 only.
-	EgressURL, EgressToken string
+	// EgressToken is the credential presented to network services, which the
+	// orchestrator routes a function's outbound requests to. With none, guests
+	// have no network and the worker offers wagi-1 only.
+	EgressToken string
 
 	MaxConcurrency uint32
 	Labels         map[string]string
@@ -86,9 +86,6 @@ func (c *Config) validate() error {
 		return fmt.Errorf("orchestrator URL: %w", err)
 	}
 	// An empty token would match an empty credential; refuse it outright.
-	if c.EgressURL != "" && c.EgressToken == "" {
-		return errors.New("the egress token is required when an egress URL is set")
-	}
 	if c.WorkerToken == "" || c.ExecutionToken == "" {
 		return errors.New("both the worker token and the execution token are required")
 	}
@@ -120,8 +117,8 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 
 	rtCfg := cfg.Runtime
-	if cfg.EgressURL != "" {
-		rtCfg.Network = egressclient.New(&http.Client{}, cfg.EgressURL, cfg.EgressToken)
+	if cfg.EgressToken != "" {
+		rtCfg.Network = egressclient.New(&http.Client{}, cfg.EgressToken)
 	}
 	engine, err := runtime.New(rtCfg)
 	if err != nil {

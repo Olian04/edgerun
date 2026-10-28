@@ -12,6 +12,7 @@ import (
 
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
 	controlv1 "github.com/Olian04/edgerun/gen/edgerun/control/v1"
+	egressv1 "github.com/Olian04/edgerun/gen/edgerun/egress/v1"
 	"github.com/Olian04/edgerun/internal/egress/policy"
 	"github.com/Olian04/edgerun/internal/wagi"
 	"github.com/Olian04/webui/pkg/webui"
@@ -449,12 +450,13 @@ var wasmMagic = []byte("\x00asm")
 
 // --- network ------------------------------------------------------------------------
 
-type egressRow struct{ Entry, Match, Port string }
+type egressRow struct{ Entry, Match, Port, Carrier string }
 
 var (
 	egressEntry = webui.String[egressRow]{Label: "Destination", Load: func(r egressRow) string { return r.Entry }}
 	egressMatch = webui.String[egressRow]{Label: "Matches", NoSort: true, Load: func(r egressRow) string { return r.Match }}
 	egressPort  = webui.String[egressRow]{Label: "Port", NoSort: true, Load: func(r egressRow) string { return r.Port }}
+	egressCarry = webui.String[egressRow]{Label: "Carried by", NoSort: true, Load: func(r egressRow) string { return r.Carrier }}
 )
 
 func describeRule(entry string) egressRow {
@@ -475,6 +477,42 @@ func describeRule(entry string) egressRow {
 	return row
 }
 
+// carriers names the network services that would carry an allowed destination:
+// of those alive and ready whose coverage names all of it, the most specific
+// ones (the same choice the orchestrator makes; among equals it spreads the
+// load, so several may be named).
+func carriers(entry string, services []*controlv1.NetworkServiceStatus) string {
+	rule, err := policy.ParseRule(entry)
+	if err != nil {
+		return "?"
+	}
+	var best []string
+	var bestRank [2]int
+	for _, n := range services {
+		if !n.Alive || n.State != egressv1.ServiceState_SERVICE_STATE_READY {
+			continue
+		}
+		covers, err := policy.ParseCovers(n.GetInfo().GetCovers())
+		if err != nil {
+			continue
+		}
+		c, ok := covers.BestFor(rule)
+		if !ok {
+			continue
+		}
+		switch cmp := policy.CompareRank(c.Rank(), bestRank); {
+		case len(best) == 0 || cmp > 0:
+			best, bestRank = []string{n.Endpoint}, c.Rank()
+		case cmp == 0:
+			best = append(best, n.Endpoint)
+		}
+	}
+	if len(best) == 0 {
+		return "no service: guests are told it is not allowed"
+	}
+	return strings.Join(best, ", ")
+}
+
 func (u *ui) egressTable() webui.Table[egressRow] {
 	return webui.Table[egressRow]{
 		Title: "Network",
@@ -486,13 +524,18 @@ func (u *ui) egressTable() webui.Table[egressRow] {
 			if err != nil {
 				return nil, err
 			}
+			services, err := u.c.NetworkServices(ctx)
+			if err != nil {
+				return nil, err
+			}
 			rows := make([]egressRow, len(f.EgressAllow))
 			for i, e := range f.EgressAllow {
 				rows[i] = describeRule(e)
+				rows[i].Carrier = carriers(e, services)
 			}
 			return rows, nil
 		},
-		Columns: []webui.Accessor[egressRow]{egressEntry, egressMatch, egressPort},
+		Columns: []webui.Accessor[egressRow]{egressEntry, egressMatch, egressPort, egressCarry},
 		Actions: []webui.Action[egressRow]{{
 			Label: "Remove", Role: webui.RoleDestructive, Guard: editGuard[egressRow],
 			Confirm: "Stop allowing this destination?",

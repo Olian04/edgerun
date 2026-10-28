@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sync"
 
 	"connectrpc.com/connect"
 
@@ -18,14 +19,24 @@ import (
 	"github.com/Olian04/edgerun/internal/worker/runtime"
 )
 
-// Client implements runtime.Network over egress.v1.
+// Client implements runtime.Network over egress.v1. It speaks to whichever
+// network service a request is routed to, presenting one credential to all.
 type Client struct {
-	svc egressv1connect.EgressServiceClient
+	hc    *http.Client
+	token string
+	svcs  sync.Map // base URL -> egressv1connect.EgressServiceClient
 }
 
-// New returns a client of the network service at baseURL, presenting token.
-func New(hc *http.Client, baseURL, token string) *Client {
-	return &Client{svc: egressv1connect.NewEgressServiceClient(hc, baseURL, connect.WithInterceptors(authn.Client(token)))}
+// New returns a client that presents token to the network services it calls.
+func New(hc *http.Client, token string) *Client { return &Client{hc: hc, token: token} }
+
+func (c *Client) service(baseURL string) egressv1connect.EgressServiceClient {
+	if s, ok := c.svcs.Load(baseURL); ok {
+		return s.(egressv1connect.EgressServiceClient)
+	}
+	s := egressv1connect.NewEgressServiceClient(c.hc, baseURL, connect.WithInterceptors(authn.Client(c.token)))
+	actual, _ := c.svcs.LoadOrStore(baseURL, s)
+	return actual.(egressv1connect.EgressServiceClient)
 }
 
 var _ runtime.Network = (*Client)(nil)
@@ -33,7 +44,7 @@ var _ runtime.Network = (*Client)(nil)
 // Fetch implements runtime.Network. The context's deadline is the budget the
 // service is given.
 func (c *Client) Fetch(ctx context.Context, req runtime.NetRequest) (*runtime.NetResponse, error) {
-	st, err := c.svc.Fetch(ctx, connect.NewRequest(&egressv1.FetchRequest{
+	st, err := c.service(req.Service).Fetch(ctx, connect.NewRequest(&egressv1.FetchRequest{
 		Method: req.Method, Url: req.URL, Headers: req.Headers, Body: req.Body,
 		Allow: req.Allow, MaxResponseBytes: req.MaxResponseBytes, InvocationId: req.InvocationID,
 	}))

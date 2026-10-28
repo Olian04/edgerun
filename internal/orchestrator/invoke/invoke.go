@@ -28,6 +28,7 @@ import (
 	"github.com/Olian04/edgerun/gen/edgerun/worker/v1/workerv1connect"
 	"github.com/Olian04/edgerun/internal/authn"
 	"github.com/Olian04/edgerun/internal/errs"
+	"github.com/Olian04/edgerun/internal/orchestrator/netroute"
 	"github.com/Olian04/edgerun/internal/orchestrator/sched"
 	"github.com/Olian04/edgerun/internal/orchestrator/snapshot"
 	"github.com/Olian04/edgerun/internal/orchestrator/store"
@@ -170,7 +171,8 @@ func (s *Service) Invoke(ctx context.Context, req *connect.Request[ingressv1.Inv
 
 	exec := &workerv1.ExecuteRequest{
 		InvocationId: rec.Id, ArtifactDigest: route.Version.Digest, Abi: route.Version.ABI,
-		Limits: route.Version.Limits, Env: route.Env, Request: r, EgressAllow: route.Egress,
+		Limits: route.Version.Limits, Env: route.Env, Request: r,
+		Egress: netroute.Resolve(route.Egress, s.cfg.Cache.NetworkServices()),
 	}
 	headSent := false
 	var lastErr error

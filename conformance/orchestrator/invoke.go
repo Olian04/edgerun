@@ -412,10 +412,18 @@ func (h *harness) retries(t *testing.T) {
 
 	t.Run("an unreachable worker is skipped", func(t *testing.T) {
 		abi := h.abi()
-		gone := h.worker(t, []string{abi}, respond("never"))
+		gone := h.worker(t, []string{abi}, respond("ok"))
 		live := h.worker(t, []string{abi}, respond("ok"))
 		fs := h.many(t, abi, n)
 		h.served(t, fs[0].host)
+		// Both workers must be known to the orchestrator before one goes away, or
+		// there would be no other to try. Which is asked first depends on the module.
+		check.Eventually(t, "both workers to be scheduled", settle, func() bool {
+			for _, f := range fs {
+				h.invoke(t, call{host: f.host})
+			}
+			return live.callCount() > 0 && gone.callCount() > 0
+		})
 		gone.closeListener() // still heartbeating: the orchestrator thinks it is there
 		for _, f := range fs {
 			if r := h.invoke(t, call{host: f.host}); r.err != nil || bodyOf(r) != "ok" {
@@ -824,16 +832,12 @@ func (h *harness) functionDeletion(t *testing.T) {
 func (h *harness) egressReachesTheWorker(t *testing.T) {
 	ctx, cancel := ctxT(60 * time.Second)
 	defer cancel()
+	svc := h.netService(t, "*")
 	w, f := h.stack(t, respond("ok"))
 	h.served(t, f.host)
-	last := func() []string {
-		t.Helper()
-		calls := w.calls()
-		return calls[len(calls)-1].req.GetEgressAllow()
-	}
 
 	h.mustInvoke(t, call{host: f.host})
-	if got := last(); len(got) != 0 {
+	if got := lastGrants(w); len(got) != 0 {
 		t.Errorf("a function nobody opened up was told %v: closed is the default", got)
 	}
 
@@ -845,20 +849,24 @@ func (h *harness) egressReachesTheWorker(t *testing.T) {
 		}
 	}
 	set("api.example.com", "*.cdn.example.com:8443")
-	h.mustInvoke(t, call{host: f.host})
-	if got := fmt.Sprint(last()); got != "[*.cdn.example.com:8443 api.example.com]" {
-		t.Errorf("the worker was told %s, want the function's list in canonical form", got)
+	check.Eventually(t, "the service to be known", settle, func() bool {
+		h.mustInvoke(t, call{host: f.host})
+		return len(lastGrants(w)) == 2
+	})
+	want := "[*.cdn.example.com:8443=" + svc.endpoint + " api.example.com=" + svc.endpoint + "]"
+	if got := fmt.Sprint(lastGrants(w)); got != want {
+		t.Errorf("the worker was told %s, want %s: the function's list in canonical form, each with its service", got, want)
 	}
 	set()
 	h.mustInvoke(t, call{host: f.host})
-	if got := last(); len(got) != 0 {
+	if got := lastGrants(w); len(got) != 0 {
 		t.Errorf("a list that was cleared reached the worker as %v", got)
 	}
 	// A new version keeps the list: it belongs to the function.
 	set("kept.example.com")
 	h.createVersion(t, f.fn.GetId(), f.abi, h.module("v2"), nil, true)
 	h.mustInvoke(t, call{host: f.host})
-	if got := fmt.Sprint(last()); got != "[kept.example.com]" {
+	if got := fmt.Sprint(lastGrants(w)); got != "[kept.example.com="+svc.endpoint+"]" {
 		t.Errorf("after a deploy the worker was told %s: the list is the function's, not a version's", got)
 	}
 }

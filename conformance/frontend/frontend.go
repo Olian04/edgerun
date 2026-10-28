@@ -13,7 +13,6 @@ package frontendconf
 import (
 	"context"
 	"net/http"
-	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -27,14 +26,14 @@ import (
 )
 
 const (
-	ingressToken = "conformance-ingress-token"
 	// bodyLimit is what the fake orchestrator reports as its request body
 	// limit: small, so that the tests need not send megabytes.
 	bodyLimit = 4096
 	settle    = 15 * time.Second
 )
 
-// Env tells the frontend under test how to be configured.
+// Env tells the frontend under test how to be configured. The suite's defaults
+// fill any field left empty in Target.Env.
 type Env struct {
 	// OrchestratorURL is the base URL of the suite's fake orchestrator.
 	OrchestratorURL string
@@ -44,21 +43,48 @@ type Env struct {
 	RequestTimeout time.Duration
 }
 
-// Target starts the implementation under test.
+func (e Env) withDefaults() Env {
+	if e.IngressToken == "" {
+		e.IngressToken = "conformance-ingress-token"
+	}
+	if e.RequestTimeout == 0 {
+		e.RequestTimeout = 3 * time.Second
+	}
+	return e
+}
+
+// Target is the implementation under test, and how to reach the suite.
 type Target struct {
 	// Launch starts a frontend configured per env and returns the base URL of
 	// its public HTTP listener (http://host:port) once it is serving.
-	// Arranging for it to stop at the end of the test is Launch's job.
+	// Arranging for it to stop at the end of the test is Launch's job. For a
+	// frontend that is already running, Launch only returns where it is.
 	Launch func(t testing.TB, env Env) (url string)
+	// Env overrides the suite's defaults for the token and the timeout it
+	// configures the frontend with.
+	Env Env
+	// Net says where the suite's fake orchestrator listens, and how the
+	// frontend reaches it. The fake orchestrator is the primary server: its
+	// port, if Net.Listen names one, is fixed, so that a frontend started
+	// beforehand can be configured with it.
+	Net check.Net
+	// Wait is how long to wait for the frontend to ask the fake orchestrator
+	// for its limits, which a frontend does when it starts. Default 15s.
+	Wait time.Duration
 }
 
 // Run runs the suite against target.
 func Run(t *testing.T, target Target) {
-	orch := newFakeOrchestrator(t)
-	env := Env{OrchestratorURL: orch.srv.URL, IngressToken: ingressToken, RequestTimeout: 3 * time.Second}
+	env := target.Env.withDefaults()
+	orch := newFakeOrchestrator(t, target.Net, env.IngressToken)
+	env.OrchestratorURL = orch.srv.URL
 	h := &harness{orch: orch, url: target.Launch(t, env), env: env}
+	wait := target.Wait
+	if wait == 0 {
+		wait = settle
+	}
 	// A frontend learns the body limit from Describe when it starts.
-	check.Eventually(t, "the frontend to ask the orchestrator for its limits", settle, func() bool { return orch.describes() > 0 })
+	check.Eventually(t, "the frontend to ask the suite's orchestrator at "+orch.srv.URL+" for its limits", wait, func() bool { return orch.describes() > 0 })
 
 	t.Run("RequestMapping", h.requestMapping)
 	t.Run("RequestIDs", h.requestIDs)
@@ -92,8 +118,8 @@ type seen struct {
 }
 
 type fakeOrchestrator struct {
-	t   *testing.T
-	srv *httptest.Server
+	token string
+	srv   *check.Server
 
 	mu       sync.Mutex
 	nDescr   int
@@ -102,12 +128,11 @@ type fakeOrchestrator struct {
 	describe http.Header
 }
 
-func newFakeOrchestrator(t *testing.T) *fakeOrchestrator {
-	o := &fakeOrchestrator{t: t}
+func newFakeOrchestrator(t *testing.T, n check.Net, token string) *fakeOrchestrator {
+	o := &fakeOrchestrator{token: token}
 	mux := http.NewServeMux()
 	mux.Handle(ingressv1connect.NewIngressServiceHandler(ingress{o}))
-	o.srv = httptest.NewServer(mux)
-	t.Cleanup(o.srv.Close)
+	o.srv = n.Serve(t, mux, true)
 	return o
 }
 
@@ -148,7 +173,7 @@ func (o *fakeOrchestrator) invocationsWith(id string) []seen {
 type ingress struct{ o *fakeOrchestrator }
 
 func (i ingress) authenticate(h http.Header) error {
-	if h.Get("Authorization") != "Bearer "+ingressToken {
+	if h.Get("Authorization") != "Bearer "+i.o.token {
 		return connect.NewError(connect.CodeUnauthenticated, nil)
 	}
 	return nil

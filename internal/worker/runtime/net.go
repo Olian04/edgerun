@@ -5,12 +5,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
+	"github.com/tetratelabs/wazero/sys"
 
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
+	"github.com/Olian04/edgerun/internal/egress/policy"
 	"github.com/Olian04/edgerun/internal/wagi"
 )
 
@@ -41,12 +45,24 @@ type Network interface {
 	Fetch(ctx context.Context, req NetRequest) (*NetResponse, error)
 }
 
+// Grant is one destination a function may reach, and the network service that
+// carries it.
+type Grant struct {
+	// Allow is the allow-list entry, in the grammar of docs/protocol.md.
+	Allow string
+	// Service is the base URL of the network service.
+	Service string
+}
+
 // NetRequest is one outbound request.
 type NetRequest struct {
 	Method, URL string
 	Headers     []*commonv1.Header
 	Body        []byte
-	// Allow is the destinations the function may reach; the Network enforces it.
+	// Service is the network service to make the request through: the one that
+	// carries the grant matching the URL.
+	Service string
+	// Allow is the grants' entries for that service; the service enforces them.
 	Allow []string
 	// MaxResponseBytes bounds the response body.
 	MaxResponseBytes uint64
@@ -82,12 +98,62 @@ func (e *NetError) Error() string { return e.Msg }
 // context the guest runs under.
 type netState struct {
 	net     Network
-	allow   []string
+	grants  []parsedGrant
 	id      string
 	maxResp uint64
 
 	fetches int
 	pending []byte
+}
+
+type parsedGrant struct {
+	Grant
+	rule policy.Rule
+}
+
+// parseGrants reads the grants, leaving out any whose entry it cannot parse:
+// a grant the worker cannot read lets nothing through.
+func parseGrants(gs []Grant) []parsedGrant {
+	out := make([]parsedGrant, 0, len(gs))
+	for _, g := range gs {
+		if r, err := policy.ParseRule(g.Allow); err == nil && g.Service != "" {
+			out = append(out, parsedGrant{g, r})
+		}
+	}
+	return out
+}
+
+// route picks the grant for a request URL and returns the service to use and
+// the entries that service carries for this function. ok is false if no grant
+// allows the URL, or the URL is not one the ABI carries.
+func (st *netState) route(rawURL string) (service string, allow []string, ok bool, invalid bool) {
+	u, err := url.Parse(rawURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
+		return "", nil, false, true
+	}
+	port := policy.DefaultPort(u.Scheme)
+	if p := u.Port(); p != "" {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 1 || n > 65535 {
+			return "", nil, false, true
+		}
+		port = n
+	}
+	for _, g := range st.grants {
+		if (policy.List{g.rule}).Allows(u.Scheme, u.Hostname(), port) {
+			service = g.Service
+			break
+		}
+	}
+	if service == "" {
+		return "", nil, false, false
+	}
+	for _, g := range st.grants {
+		if g.Service == service {
+			allow = append(allow, g.Allow)
+		}
+	}
+	return service, allow, true, false
 }
 
 type netKey struct{}
@@ -133,15 +199,28 @@ func hostFetch(ctx context.Context, mod api.Module, stack []uint64) {
 		result(stack, netInvalid)
 		return
 	}
-	// Closed by default: with nothing allowed there is nothing to ask.
-	if len(st.allow) == 0 {
+	// Closed by default: nothing is asked for unless a grant allows it.
+	service, allow, ok, invalid := st.route(req.URL)
+	switch {
+	case invalid:
+		result(stack, netInvalid)
+		return
+	case !ok:
 		result(stack, netDenied)
 		return
 	}
-	req.Allow, req.MaxResponseBytes, req.InvocationID = st.allow, min(st.maxResp, maxFetchResponse), st.id
+	req.Service, req.Allow, req.MaxResponseBytes, req.InvocationID = service, allow, min(st.maxResp, maxFetchResponse), st.id
 
 	resp, err := st.net.Fetch(ctx, *req)
 	if err != nil {
+		// The budget ran out while the request was in flight. The guest must not
+		// be allowed to carry on and finish as if it had merely been refused.
+		switch cerr := ctx.Err(); {
+		case errors.Is(cerr, context.DeadlineExceeded):
+			mod.CloseWithExitCode(ctx, sys.ExitCodeDeadlineExceeded)
+		case cerr != nil:
+			mod.CloseWithExitCode(ctx, sys.ExitCodeContextCanceled)
+		}
 		var ne *NetError
 		switch {
 		case errors.As(err, &ne) && ne.Kind == NetDenied:

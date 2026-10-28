@@ -20,6 +20,7 @@ import (
 
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
 	controlv1 "github.com/Olian04/edgerun/gen/edgerun/control/v1"
+	egressv1 "github.com/Olian04/edgerun/gen/edgerun/egress/v1"
 	"github.com/Olian04/edgerun/internal/admin"
 	"github.com/Olian04/edgerun/internal/egress/policy"
 )
@@ -43,6 +44,7 @@ usage: edgerunctl [--url URL] [--token TOKEN] <command> [arguments]
   egress NAME                     list the network destinations a function may reach (none by default)
   allow NAME DEST...              let a function reach DEST: host, *.domain, or address, with :port if not 80/443
   deny NAME DEST...               stop letting a function reach DEST
+  networks                        list network services and what each carries
   workers                         list workers
   invocations [--function NAME] [--limit N]
 
@@ -132,6 +134,8 @@ func (c *client) run(cmd string, args []string) error {
 		return c.allow(args, true)
 	case "deny":
 		return c.allow(args, false)
+	case "networks":
+		return c.networks()
 	case "workers":
 		return c.workers()
 	case "invocations":
@@ -467,6 +471,26 @@ func (c *client) allow(args []string, add bool) error {
 		fmt.Fprintf(c.out, "%s may reach: %s\n", f.Name, strings.Join(updated.EgressAllow, ", "))
 	}
 	return nil
+}
+
+func (c *client) networks() error {
+	ns, err := c.c.NetworkServices(c.ctx)
+	if err != nil {
+		return err
+	}
+	w := c.table()
+	fmt.Fprintln(w, "ENDPOINT\tSTATE\tCARRIES")
+	for _, n := range ns {
+		state := "ready"
+		switch {
+		case !n.Alive:
+			state = "unresponsive"
+		case n.State == egressv1.ServiceState_SERVICE_STATE_DRAINING:
+			state = "draining"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\n", n.Endpoint, state, strings.Join(n.GetInfo().GetCovers(), ", "))
+	}
+	return w.Flush()
 }
 
 func (c *client) unset(args []string) error {

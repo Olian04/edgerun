@@ -37,23 +37,31 @@ func TestAFunctionsNetworkIsClosedUntilItsOperatorOpensIt(t *testing.T) {
 	t.Cleanup(origin.Close)
 	originAddr := strings.TrimPrefix(origin.URL, "http://")
 
-	// The network service may reach loopback (the origin is there); by default it may not.
-	eg, err := egressapp.Start(ctx, egressapp.Config{
-		Listen: "127.0.0.1:0", Token: egressToken, Log: quiet,
-		AllowNetworks: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")},
-	})
-	if err != nil {
-		t.Fatal(err)
+	// Two network services, as a deployment with a private network and the
+	// public internet would have: one carries loopback (standing in for the
+	// private network) and is allowed to connect to it; the other carries
+	// everything, and, as by default, refuses loopback.
+	startService := func(covers []string, allow ...netip.Prefix) *egressapp.Server {
+		eg, err := egressapp.Start(ctx, egressapp.Config{
+			Listen: "127.0.0.1:0", EgressToken: egressToken, OrchestratorURL: "http://" + s.addr, NetworkToken: networkToken,
+			Covers: covers, AllowNetworks: allow, Log: quiet,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { eg.Stop(context.Background()) })
+		return eg
 	}
-	t.Cleanup(func() { eg.Stop(context.Background()) })
+	private := startService([]string{"127.0.0.0/8"}, netip.MustParsePrefix("127.0.0.0/8"))
+	public := startService([]string{"*"})
+	_ = public
 
 	wctx, cancel := context.WithCancel(ctx)
 	done := make(chan error, 1)
 	go func() {
 		done <- workerapp.Run(wctx, workerapp.Config{
 			Listen: "127.0.0.1:0", OrchestratorURL: "http://" + s.addr,
-			WorkerToken: workerToken, ExecutionToken: executionToken,
-			EgressURL: "http://" + eg.Addr(), EgressToken: egressToken,
+			WorkerToken: workerToken, ExecutionToken: executionToken, EgressToken: egressToken,
 			MaxConcurrency: 4, DrainTimeout: 10 * time.Second, Log: quiet,
 		})
 	}()
@@ -101,6 +109,17 @@ func TestAFunctionsNetworkIsClosedUntilItsOperatorOpensIt(t *testing.T) {
 	other := s.mustCall(req{host: "net.test", path: "/fetch", method: "POST", body: "GET http://127.0.0.1:9/\n\n"})
 	if !strings.Contains(string(other.body), "code=-1") {
 		t.Errorf("a destination that is not listed: %q", other.body)
+	}
+
+	// The destination is carried by the private service, the more specific of
+	// the two. Without it the catch-all would be given the entry, and it refuses
+	// loopback: the guest is told the destination is not allowed.
+	private.Stop(ctx)
+	eventually(t, "the entry to be handed to the service that refuses it", 30*time.Second, func() bool {
+		return strings.Contains(fetch(), "code=-1")
+	})
+	if hits.Load() != 1 {
+		t.Errorf("the origin was reached %d times, want still 1: the public service must not connect to loopback", hits.Load())
 	}
 
 	// Closed again.

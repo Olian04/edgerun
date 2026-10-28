@@ -40,6 +40,10 @@ func (f *fakeSource) ReadyWorkers(context.Context, time.Duration) ([]store.Worke
 	return append([]store.Worker(nil), f.workers...), nil
 }
 
+func (f *fakeSource) ReadyNetworkServices(context.Context, time.Duration) ([]store.NetworkService, error) {
+	return nil, nil
+}
+
 func (f *fakeSource) set(fn func()) { f.mu.Lock(); fn(); f.mu.Unlock() }
 
 var quiet = slog.New(slog.NewTextHandler(io.Discard, nil))

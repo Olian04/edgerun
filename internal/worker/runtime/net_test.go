@@ -82,12 +82,12 @@ func (f *fakeNet) Fetch(_ context.Context, r NetRequest) (*NetResponse, error) {
 
 // netRun runs the network guest on an engine that has net, returning what the
 // guest printed after the headers.
-func netRun(t *testing.T, e *Engine, wasm []byte, abi, path, body string, allow []string, limits *commonv1.Limits) (string, error) {
+func netRun(t *testing.T, e *Engine, wasm []byte, abi, path, body string, grants []Grant, limits *commonv1.Limits) (string, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	res, err := e.Run(ctx, Invocation{
-		Digest: "sha256:netguest", Wasm: wasm, ABI: abi, EgressAllow: allow, Limits: limits, InvocationID: "inv-1",
+		Digest: "sha256:netguest", Wasm: wasm, ABI: abi, Egress: grants, Limits: limits, InvocationID: "inv-1",
 		Request: &commonv1.HttpRequest{Method: "POST", Path: path, Body: []byte(body)},
 	})
 	if err != nil {
@@ -95,6 +95,8 @@ func netRun(t *testing.T, e *Engine, wasm []byte, abi, path, body string, allow 
 	}
 	return string(res.Body), nil
 }
+
+var a1 = []Grant{{Allow: "a.test", Service: "http://svc-a"}}
 
 // The limits live in two places, here and in the network client, because a
 // Network is not trusted to keep to the bound it was given.
@@ -109,18 +111,18 @@ func TestTheRuntimeBoundsWhatANetworkReturns(t *testing.T) {
 	defer e.Close(context.Background())
 	wasm := guest.BuildNet(t)
 
-	out, err := netRun(t, e, wasm, ABI2, "/fetch", "GET http://a.test/\n\n", []string{"a.test"}, &commonv1.Limits{MaxResponseBytes: 1000})
+	out, err := netRun(t, e, wasm, ABI2, "/fetch", "GET http://a.test/\n\n", a1, &commonv1.Limits{MaxResponseBytes: 1000})
 	if err != nil || !strings.HasPrefix(out, "code=-3") {
 		t.Errorf("a response over the function's limit: %q, %v, want code=-3", out, err)
 	}
-	if len(net.calls) != 1 || net.calls[0].MaxResponseBytes != 1000 || strings.Join(net.calls[0].Allow, ",") != "a.test" || net.calls[0].InvocationID != "inv-1" {
+	if len(net.calls) != 1 || net.calls[0].MaxResponseBytes != 1000 || strings.Join(net.calls[0].Allow, ",") != "a.test" || net.calls[0].Service != "http://svc-a" || net.calls[0].InvocationID != "inv-1" {
 		t.Errorf("what the Network was given: %+v", net.calls)
 	}
 
 	net.reply = func(NetRequest) (*NetResponse, error) {
 		return &NetResponse{Status: 200, Body: bytes.Repeat([]byte("x"), 5<<20)}, nil
 	}
-	out, err = netRun(t, e, wasm, ABI2, "/fetch", "GET http://a.test/\n\n", []string{"a.test"}, &commonv1.Limits{MaxResponseBytes: 32 << 20})
+	out, err = netRun(t, e, wasm, ABI2, "/fetch", "GET http://a.test/\n\n", a1, &commonv1.Limits{MaxResponseBytes: 32 << 20})
 	if err != nil || !strings.HasPrefix(out, "code=-3") {
 		t.Errorf("a response over 4 MiB: %q, %v, want code=-3", out, err)
 	}
@@ -138,7 +140,7 @@ func TestAFailedFetchLeavesNothingToRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer e.Close(context.Background())
-	out, err := netRun(t, e, guest.BuildNet(t), ABI2, "/fetch-fail-discards", "GET http://a.test/\n\n", []string{"a.test"}, nil)
+	out, err := netRun(t, e, guest.BuildNet(t), ABI2, "/fetch-fail-discards", "GET http://a.test/\n\n", a1, nil)
 	want := "first=" + strconv.Itoa(len("Status: 200\n\n")+300) + " second=-1 read=0"
 	if err != nil || !strings.Contains(out, want) {
 		t.Errorf("%q, %v, want it to contain %q", out, err, want)
@@ -166,5 +168,60 @@ func TestWagi2NeedsANetwork(t *testing.T) {
 	defer e2.Close(context.Background())
 	if got := fmt.Sprint(e2.ABIs()); got != "["+ABI+" "+ABI2+"]" {
 		t.Errorf("an engine with a network offers %s", got)
+	}
+}
+
+// A request goes through the service that carries the first grant matching its
+// URL, is told only that service's entries, and none is made if nothing matches.
+func TestARequestGoesThroughTheServiceThatCarriesItsGrant(t *testing.T) {
+	net := &fakeNet{reply: func(NetRequest) (*NetResponse, error) { return &NetResponse{Status: 200, Body: []byte("ok")}, nil }}
+	e, err := New(Config{Network: net})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Close(context.Background())
+	wasm := guest.BuildNet(t)
+	grants := []Grant{
+		{Allow: "*.corp.internal", Service: "http://private"},
+		{Allow: "10.1.2.3:8080", Service: "http://private"},
+		{Allow: "api.example.com", Service: "http://public"},
+		{Allow: "db.corp.internal", Service: "http://elsewhere"}, // allowed by an earlier grant too: that one wins
+		{Allow: "not a valid entry", Service: "http://public"},   // unreadable: lets nothing through
+		{Allow: "bad.example.com", Service: ""},                  // no service: nowhere to send it
+	}
+	for _, c := range []struct {
+		url     string
+		want    int
+		service string
+		allow   string
+	}{
+		{"https://api.example.com/x", 0, "http://public", "api.example.com"},
+		{"http://db.corp.internal/", 0, "http://private", "*.corp.internal,10.1.2.3:8080"},
+		{"http://10.1.2.3:8080/", 0, "http://private", "*.corp.internal,10.1.2.3:8080"},
+		{"http://10.1.2.3/", -1, "", ""}, // a port other than the one granted
+		{"http://api.example.com:8443/", -1, "", ""},
+		{"http://elsewhere.test/", -1, "", ""},
+		{"http://bad.example.com/", -1, "", ""},
+		{"ftp://api.example.com/", -4, "", ""},
+	} {
+		net.calls = nil
+		out, err := netRun(t, e, wasm, ABI2, "/fetch", "GET "+c.url+"\n\n", grants, nil)
+		if err != nil {
+			t.Fatalf("%s: %v", c.url, err)
+		}
+		first, _, _ := strings.Cut(out, "\n")
+		code, _ := strconv.Atoi(strings.TrimPrefix(first, "code="))
+		if (c.want == 0) != (code >= 0) || (c.want < 0 && code != c.want) {
+			t.Errorf("%s: code %d, want %d", c.url, code, c.want)
+		}
+		if c.service == "" {
+			if len(net.calls) != 0 {
+				t.Errorf("%s: a request nothing allows reached a service: %+v", c.url, net.calls)
+			}
+			continue
+		}
+		if len(net.calls) != 1 || net.calls[0].Service != c.service || strings.Join(net.calls[0].Allow, ",") != c.allow {
+			t.Errorf("%s: calls %+v, want one through %s with allow %s", c.url, net.calls, c.service, c.allow)
+		}
 	}
 }

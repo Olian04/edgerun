@@ -93,9 +93,9 @@ type Invocation struct {
 	Limits  *commonv1.Limits
 	// ABI the module was built for; empty means wagi-1.
 	ABI string
-	// EgressAllow is the network destinations the function may reach. Empty
-	// means none.
-	EgressAllow  []string
+	// Egress is the network destinations the function may reach, each with the
+	// service that carries it. Empty means none.
+	Egress       []Grant
 	InvocationID string
 }
 
@@ -247,7 +247,7 @@ func (e *Engine) Run(ctx context.Context, inv Invocation) (*Result, error) {
 	defer cancel()
 	if abi == ABI2 {
 		runCtx = context.WithValue(runCtx, netKey{}, &netState{
-			net: e.cfg.Network, allow: inv.EgressAllow, id: inv.InvocationID, maxResp: maxOut,
+			net: e.cfg.Network, grants: parseGrants(inv.Egress), id: inv.InvocationID, maxResp: maxOut,
 		})
 	}
 	stdout := &cappedBuffer{max: maxOut, onOverflow: cancel}

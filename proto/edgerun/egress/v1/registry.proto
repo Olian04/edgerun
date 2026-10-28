@@ -1,0 +1,70 @@
+// Egress seam, registration: a network service announces itself, and what it
+// carries, to the orchestrator. Server: orchestrator. Client: network service.
+//
+// Services dial the orchestrator, as workers do, so a service can sit behind a
+// firewall and the orchestrator needs no inventory of them. Each says which
+// destinations it carries, and that is how one deployment can have a service
+// inside a private network, another on the public internet and a third behind
+// a proxy, all served to the same set of orchestrators: the orchestrator gives
+// each destination a function may reach to the service that carries it.
+syntax = "proto3";
+
+package edgerun.egress.v1;
+
+import "google/protobuf/duration.proto";
+import "edgerun/common/v1/common.proto";
+
+service RegistryService {
+  // Register announces a service. Registering an endpoint that is already
+  // known replaces the earlier registration (the service restarted).
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  // Heartbeat reports liveness and state. For a service the orchestrator does
+  // not know it answers reregister, and the service must register again.
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  // Deregister removes a service. An unknown id is not an error.
+  rpc Deregister(DeregisterRequest) returns (DeregisterResponse);
+}
+
+// ServiceInfo is what a network service tells the orchestrator about itself.
+message ServiceInfo {
+  edgerun.common.v1.Implementation implementation = 1;
+  // What the service carries, as the protocol docs describe: "*" (everything),
+  // "example.com", "*.example.com", an address, or an address range such as
+  // "10.0.0.0/8". At least one. The service refuses any destination outside it.
+  repeated string covers = 2;
+}
+
+message RegisterRequest {
+  // Base URL at which workers reach this service.
+  string endpoint = 1;
+  ServiceInfo info = 2;
+}
+
+message RegisterResponse {
+  string service_id = 1;
+  // How often the service must heartbeat; three missed heartbeats and it is
+  // no longer given work.
+  google.protobuf.Duration heartbeat_interval = 2;
+}
+
+enum ServiceState {
+  SERVICE_STATE_UNSPECIFIED = 0;
+  SERVICE_STATE_READY = 1;
+  // Finishing what it has; it is given nothing new.
+  SERVICE_STATE_DRAINING = 2;
+}
+
+message HeartbeatRequest {
+  string service_id = 1;
+  ServiceState state = 2;
+}
+
+message HeartbeatResponse {
+  bool reregister = 1;
+}
+
+message DeregisterRequest {
+  string service_id = 1;
+}
+
+message DeregisterResponse {}

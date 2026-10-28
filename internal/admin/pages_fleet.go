@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	controlv1 "github.com/Olian04/edgerun/gen/edgerun/control/v1"
+	egressv1 "github.com/Olian04/edgerun/gen/edgerun/egress/v1"
 	workerv1 "github.com/Olian04/edgerun/gen/edgerun/worker/v1"
 	"github.com/Olian04/webui/pkg/webui"
 )
@@ -76,6 +77,69 @@ func (u *ui) workersPage() webui.Page[webui.NoArgs] {
 		Path: WorkersPath,
 		Nav:  webui.Nav{Label: "Workers", Icon: "server"},
 		Body: u.workersTable("Workers"),
+	}
+}
+
+// --- network services ----------------------------------------------------------------
+
+type netRow struct {
+	Endpoint, Implementation, Covers, State string
+	Heartbeat                               int
+}
+
+var (
+	netEndpoint = webui.String[netRow]{Label: "Endpoint", Load: func(r netRow) string { return r.Endpoint }}
+	netImpl     = webui.String[netRow]{Label: "Implementation", Load: func(r netRow) string { return r.Implementation }}
+	netCovers   = webui.String[netRow]{Label: "Carries", NoSort: true, Load: func(r netRow) string { return r.Covers }}
+	netState    = webui.Select[netRow]{Label: "State", Options: []webui.Option{
+		{Value: "ready", Label: "Ready", Tone: webui.ToneOK},
+		{Value: "draining", Label: "Draining", Tone: webui.ToneWarning},
+		{Value: "unresponsive", Label: "Unresponsive", Tone: webui.ToneCritical},
+	}, Load: func(r netRow) []string { return []string{r.State} }}
+	netHeartbeat = webui.Timestamp[netRow]{Label: "Last heartbeat", Load: func(r netRow) int { return r.Heartbeat }, Format: when}
+)
+
+func netServiceState(n *controlv1.NetworkServiceStatus) string {
+	switch {
+	case !n.Alive:
+		return "unresponsive"
+	case n.State == egressv1.ServiceState_SERVICE_STATE_DRAINING:
+		return "draining"
+	}
+	return "ready"
+}
+
+func (u *ui) networkTable(title string) webui.Table[netRow] {
+	return webui.Table[netRow]{
+		Title: title,
+		Desc: "Network services register themselves and say which destinations they carry: one may sit inside a private network, " +
+			"another on the public internet. A function's allowed destination goes to the most specific service that carries it. " +
+			"One that stops heartbeating is unresponsive and is given nothing.",
+		Rows: func(ctx context.Context) ([]netRow, error) {
+			ns, err := u.c.NetworkServices(ctx)
+			if err != nil {
+				return nil, err
+			}
+			rows := make([]netRow, len(ns))
+			for i, n := range ns {
+				impl := n.GetInfo().GetImplementation().GetName()
+				if v := n.GetInfo().GetImplementation().GetVersion(); v != "" {
+					impl += " " + v
+				}
+				rows[i] = netRow{Endpoint: n.Endpoint, Implementation: impl, State: netServiceState(n),
+					Covers: strings.Join(n.GetInfo().GetCovers(), ", "), Heartbeat: int(n.LastHeartbeatTime.AsTime().Unix())}
+			}
+			return rows, nil
+		},
+		Columns: []webui.Accessor[netRow]{netEndpoint, netImpl, netCovers, netState, netHeartbeat},
+	}
+}
+
+func (u *ui) networkPage() webui.Page[webui.NoArgs] {
+	return webui.Page[webui.NoArgs]{
+		Path: NetworkPath,
+		Nav:  webui.Nav{Label: "Network", Icon: "globe"},
+		Body: u.networkTable("Network services"),
 	}
 }
 
@@ -162,6 +226,7 @@ type overview struct {
 	Functions    int
 	Routes       int
 	Workers      string
+	Network      string
 }
 
 var (
@@ -169,6 +234,7 @@ var (
 	ovFunctions    = webui.Int[overview]{Label: "Functions", Load: func(o overview) int { return o.Functions }}
 	ovRoutes       = webui.Int[overview]{Label: "Routes", Load: func(o overview) int { return o.Routes }}
 	ovWorkers      = webui.String[overview]{Label: "Workers", Load: func(o overview) string { return o.Workers }}
+	ovNetwork      = webui.String[overview]{Label: "Network services", Load: func(o overview) string { return o.Network }}
 )
 
 func (u *ui) overviewPage() webui.Page[webui.NoArgs] {
@@ -195,6 +261,16 @@ func (u *ui) overviewPage() webui.Page[webui.NoArgs] {
 					if err != nil {
 						return overview{}, err
 					}
+					nets, err := u.c.NetworkServices(ctx)
+					if err != nil {
+						return overview{}, err
+					}
+					netAlive := 0
+					for _, n := range nets {
+						if n.Alive {
+							netAlive++
+						}
+					}
 					alive := 0
 					for _, w := range ws {
 						if w.Alive {
@@ -205,11 +281,12 @@ func (u *ui) overviewPage() webui.Page[webui.NoArgs] {
 					return overview{
 						Orchestrator: strings.TrimSpace(impl.GetName() + " " + impl.GetVersion()),
 						Functions:    len(fns), Routes: len(rts), Workers: fmt.Sprintf("%d alive of %d registered", alive, len(ws)),
+						Network: fmt.Sprintf("%d alive of %d registered", netAlive, len(nets)),
 					}, nil
 				},
 				Fields: []webui.Accessor[overview]{
 					webui.Group[overview]{ovOrchestrator, ovWorkers},
-					webui.Group[overview]{ovFunctions, ovRoutes},
+					webui.Group[overview]{ovFunctions, ovRoutes, ovNetwork},
 				},
 			},
 			u.workersTable("Workers"),

@@ -6,8 +6,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/http"
-	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -15,6 +15,7 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/durationpb"
 
+	"github.com/Olian04/edgerun/conformance/internal/check"
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
 	workerv1 "github.com/Olian04/edgerun/gen/edgerun/worker/v1"
 	"github.com/Olian04/edgerun/gen/edgerun/worker/v1/workerv1connect"
@@ -26,7 +27,7 @@ import (
 type fakeOrchestrator struct {
 	token    string
 	interval time.Duration
-	server   *httptest.Server
+	server   *check.Server
 
 	mu            sync.Mutex
 	registrations []registration
@@ -50,17 +51,29 @@ type heartbeat struct {
 	InFlight uint32
 }
 
-func newFakeOrchestrator(t testing.TB, token string, interval time.Duration) *fakeOrchestrator {
+func newFakeOrchestrator(t testing.TB, n check.Net, token string, interval time.Duration) *fakeOrchestrator {
 	o := &fakeOrchestrator{token: token, interval: interval, blobs: map[string][]byte{}, changed: make(chan struct{})}
 	mux := http.NewServeMux()
 	mux.Handle(workerv1connect.NewFleetServiceHandler(fleetHandler{o}))
 	mux.Handle(workerv1connect.NewArtifactServiceHandler(artifactHandler{o}))
-	o.server = httptest.NewServer(mux)
-	t.Cleanup(o.server.Close)
+	o.server = n.Serve(t, mux, true)
 	return o
 }
 
 func (o *fakeOrchestrator) url() string { return o.server.URL }
+
+// registered returns the registration of the worker at endpoint (host:port or
+// a URL), or the first if endpoint is empty, or nil. Call with the lock held.
+func (o *fakeOrchestrator) registered(endpoint string) *registration {
+	want := strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(endpoint, "http://"), "https://"), "/")
+	for i := range o.registrations {
+		got := strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(o.registrations[i].Endpoint, "http://"), "https://"), "/")
+		if want == "" || got == want {
+			return &o.registrations[i]
+		}
+	}
+	return nil
+}
 
 // update runs f under the lock and wakes everyone waiting for a change.
 func (o *fakeOrchestrator) update(f func()) {

@@ -37,6 +37,7 @@ const (
 	workerToken    = "worker-token"
 	adminToken     = "admin-token"
 	executionToken = "execution-token"
+	networkToken   = "network-token"
 )
 
 var quiet = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -58,7 +59,7 @@ type stack struct {
 func orchConfig(dsn, listen string) orchapp.Config {
 	return orchapp.Config{
 		Listen: listen, DatabaseURL: dsn,
-		IngressToken: ingressToken, WorkerToken: workerToken, AdminToken: adminToken, ExecutionToken: executionToken,
+		IngressToken: ingressToken, WorkerToken: workerToken, AdminToken: adminToken, ExecutionToken: executionToken, NetworkToken: networkToken,
 		SecretKey:         orchtest.Key,
 		HeartbeatInterval: 200 * time.Millisecond, RefreshEvery: 100 * time.Millisecond,
 		MaxRequestBodyBytes: 4 << 20, ShutdownTimeout: 20 * time.Second, Log: quiet,

@@ -232,6 +232,14 @@ func (i inspection) ListWorkers(ctx context.Context, _ *connect.Request[controlv
 	return connect.NewResponse(&controlv1.ListWorkersResponse{Workers: ws}), nil
 }
 
+func (i inspection) ListNetworkServices(ctx context.Context, _ *connect.Request[controlv1.ListNetworkServicesRequest]) (*connect.Response[controlv1.ListNetworkServicesResponse], error) {
+	ns, err := i.s.cfg.Store.ListNetworkServices(ctx, i.s.cfg.AliveWithin)
+	if err != nil {
+		return nil, i.s.fail(err)
+	}
+	return connect.NewResponse(&controlv1.ListNetworkServicesResponse{Services: ns}), nil
+}
+
 func (i inspection) ListInvocations(ctx context.Context, r *connect.Request[controlv1.ListInvocationsRequest]) (*connect.Response[controlv1.ListInvocationsResponse], error) {
 	vs, next, err := i.s.cfg.Store.ListInvocations(ctx, r.Msg.GetFunctionId(), r.Msg.GetPageSize(), r.Msg.GetPageToken())
 	if err != nil {

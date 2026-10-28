@@ -21,7 +21,7 @@ func TestConformance(t *testing.T) {
 		Launch: func(t testing.TB, env orchestratorconf.Env) string {
 			srv, err := app.Start(context.Background(), app.Config{
 				Listen: "127.0.0.1:0", DatabaseURL: testpg.DSN(t),
-				IngressToken: env.IngressToken, WorkerToken: env.WorkerToken, AdminToken: env.AdminToken,
+				IngressToken: env.IngressToken, WorkerToken: env.WorkerToken, AdminToken: env.AdminToken, NetworkToken: env.NetworkToken,
 				ExecutionToken: env.ExecutionToken, SecretKey: orchtest.Key, HeartbeatInterval: env.HeartbeatInterval,
 				Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 			})

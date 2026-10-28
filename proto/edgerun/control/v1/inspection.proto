@@ -12,6 +12,8 @@ service InspectionService {
   rpc ListWorkers(ListWorkersRequest) returns (ListWorkersResponse);
   // ListInvocations pages through invocation records, newest first.
   rpc ListInvocations(ListInvocationsRequest) returns (ListInvocationsResponse);
+  // ListNetworkServices returns the network services that have registered.
+  rpc ListNetworkServices(ListNetworkServicesRequest) returns (ListNetworkServicesResponse);
 }
 
 message DescribeRequest {}
@@ -26,6 +28,12 @@ message ListWorkersRequest {}
 
 message ListWorkersResponse {
   repeated WorkerStatus workers = 1;
+}
+
+message ListNetworkServicesRequest {}
+
+message ListNetworkServicesResponse {
+  repeated NetworkServiceStatus services = 1;
 }
 
 message ListInvocationsRequest {

@@ -9,6 +9,8 @@ import (
 	"github.com/Olian04/edgerun/conformance/internal/check"
 	controlv1 "github.com/Olian04/edgerun/gen/edgerun/control/v1"
 	"github.com/Olian04/edgerun/gen/edgerun/control/v1/controlv1connect"
+	egressv1 "github.com/Olian04/edgerun/gen/edgerun/egress/v1"
+	"github.com/Olian04/edgerun/gen/edgerun/egress/v1/egressv1connect"
 	ingressv1 "github.com/Olian04/edgerun/gen/edgerun/ingress/v1"
 	"github.com/Olian04/edgerun/gen/edgerun/ingress/v1/ingressv1connect"
 	workerv1 "github.com/Olian04/edgerun/gen/edgerun/worker/v1"
@@ -115,11 +117,20 @@ func (h *harness) authentication(t *testing.T) {
 		return st.Err()
 	}
 
-	seams := []seam{{"IngressService", h.env.IngressToken, ingress}, {"FleetService", h.env.WorkerToken, fleet}, {"ArtifactService", h.env.WorkerToken, artifacts}}
+	registry := func(token string) error {
+		ctx, cancel := ctxT(settle)
+		defer cancel()
+		_, err := egressv1connect.NewRegistryServiceClient(hc, h.url, check.Bearer(token)).Heartbeat(ctx,
+			connect.NewRequest(&egressv1.HeartbeatRequest{ServiceId: "unknown", State: egressv1.ServiceState_SERVICE_STATE_READY}))
+		return err
+	}
+
+	seams := []seam{{"IngressService", h.env.IngressToken, ingress}, {"FleetService", h.env.WorkerToken, fleet}, {"ArtifactService", h.env.WorkerToken, artifacts},
+		{"RegistryService", h.env.NetworkToken, registry}}
 	for name, c := range controlCalls {
 		seams = append(seams, seam{"control." + name, h.env.AdminToken, c})
 	}
-	all := map[string]string{"ingress": h.env.IngressToken, "worker": h.env.WorkerToken, "admin": h.env.AdminToken}
+	all := map[string]string{"ingress": h.env.IngressToken, "worker": h.env.WorkerToken, "admin": h.env.AdminToken, "network": h.env.NetworkToken}
 
 	for _, s := range seams {
 		t.Run(s.name, func(t *testing.T) {

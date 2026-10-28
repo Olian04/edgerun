@@ -5,6 +5,7 @@ package edgerun.control.v1;
 
 import "google/protobuf/timestamp.proto";
 import "edgerun/common/v1/common.proto";
+import "edgerun/egress/v1/registry.proto";
 import "edgerun/worker/v1/worker.proto";
 
 message Function {
@@ -96,4 +97,16 @@ message Invocation {
   // function that message ends with the guest's stderr tail).
   bytes stderr = 12;
   google.protobuf.Timestamp start_time = 13;
+}
+
+// NetworkServiceStatus is a registered network service as the orchestrator
+// sees it.
+message NetworkServiceStatus {
+  string id = 1;
+  string endpoint = 2;
+  edgerun.egress.v1.ServiceInfo info = 3;
+  edgerun.egress.v1.ServiceState state = 4;
+  google.protobuf.Timestamp last_heartbeat_time = 5;
+  // Whether it has heartbeated recently enough to be given work.
+  bool alive = 6;
 }

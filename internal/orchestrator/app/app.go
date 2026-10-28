@@ -20,6 +20,7 @@ import (
 	"github.com/Olian04/edgerun/internal/orchestrator/invoke"
 	"github.com/Olian04/edgerun/internal/orchestrator/janitor"
 	"github.com/Olian04/edgerun/internal/orchestrator/migrate"
+	"github.com/Olian04/edgerun/internal/orchestrator/netreg"
 	"github.com/Olian04/edgerun/internal/orchestrator/record"
 	"github.com/Olian04/edgerun/internal/orchestrator/secrets"
 	"github.com/Olian04/edgerun/internal/orchestrator/snapshot"
@@ -40,6 +41,10 @@ type Config struct {
 	AdminToken   string // presented by the admin UI and CLIs
 	// ExecutionToken is what the orchestrator presents to workers.
 	ExecutionToken string
+	// NetworkToken is presented by network services that register. Without
+	// one the orchestrator accepts no registrations, and functions have no
+	// network.
+	NetworkToken string
 
 	// SecretKey seals secret environment values at rest (32 bytes).
 	SecretKey []byte
@@ -88,6 +93,9 @@ func (c *Config) validate() error {
 		return errors.New("database URL is required")
 	}
 	tokens := map[string]string{"ingress": c.IngressToken, "worker": c.WorkerToken, "admin": c.AdminToken}
+	if c.NetworkToken != "" {
+		tokens["network"] = c.NetworkToken
+	}
 	seen := map[string]string{}
 	for role, tok := range tokens {
 		if tok == "" {
@@ -167,6 +175,9 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 		cfg.WorkerToken:  fleet.WorkerScope,
 		cfg.AdminToken:   control.AdminScope,
 	}
+	if cfg.NetworkToken != "" {
+		verifier[cfg.NetworkToken] = netreg.Scope
+	}
 	mux := http.NewServeMux()
 	ingress := invoke.New(invoke.Config{
 		Cache: cache, Recorder: rec, ExecutionToken: cfg.ExecutionToken,
@@ -174,6 +185,9 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 	})
 	mux.Handle(ingress.Handler(verifier))
 	fleet.New(fleet.Config{Store: st, HeartbeatInterval: cfg.HeartbeatInterval, OnChange: cache.Poke, Log: log}).Mount(mux, verifier)
+	if cfg.NetworkToken != "" {
+		netreg.New(netreg.Config{Store: st, HeartbeatInterval: cfg.HeartbeatInterval, OnChange: cache.Poke, Log: log}).Mount(mux, verifier)
+	}
 	control.New(control.Config{
 		Store: st, MaxModuleBytes: cfg.MaxModuleBytes, AliveWithin: 3 * cfg.HeartbeatInterval, Version: cfg.Version, Log: log,
 		Refresh: func(ctx context.Context) {

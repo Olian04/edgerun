@@ -35,6 +35,7 @@ func main() {
 	flag.StringVar(&cfg.WorkerToken, "worker-token", env("EDGERUN_WORKER_TOKEN", ""), "token workers present")
 	flag.StringVar(&cfg.AdminToken, "admin-token", env("EDGERUN_ADMIN_TOKEN", ""), "token the admin UI and CLIs present")
 	flag.StringVar(&cfg.ExecutionToken, "execution-token", env("EDGERUN_EXECUTION_TOKEN", ""), "token presented to workers")
+	flag.StringVar(&cfg.NetworkToken, "network-token", env("EDGERUN_NETWORK_TOKEN", ""), "token network services present when they register (empty: none may)")
 	flag.StringVar(&key, "secret-key", env("EDGERUN_SECRET_KEY", ""), "base64 of 32 random bytes; seals secret environment values")
 	flag.DurationVar(&cfg.HeartbeatInterval, "heartbeat-interval", 5*time.Second, "heartbeat interval dictated to workers")
 	flag.DurationVar(&cfg.InvocationRetention, "invocation-retention", 14*24*time.Hour, "how long invocation records are kept")

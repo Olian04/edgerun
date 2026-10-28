@@ -10,7 +10,9 @@
 //
 // Closed by default: a call carries the destinations the calling function may
 // reach (allow), and an empty list allows nothing. The service adds its own
-// restrictions on top, which a caller cannot lift (see the protocol docs).
+// restrictions on top, which a caller cannot lift: it carries only what it
+// declared (it registers with the orchestrator, see registry.proto) and it
+// refuses the address classes the protocol docs name.
 syntax = "proto3";
 
 package edgerun.egress.v1;
@@ -44,6 +46,8 @@ message DescribeResponse {
   uint64 max_request_body_bytes = 2;
   // Largest response body it will return, whatever the caller asks for.
   uint64 max_response_body_bytes = 3;
+  // What it carries, as it registered with the orchestrator.
+  repeated string covers = 4;
 }
 
 message FetchRequest {
@@ -55,7 +59,8 @@ message FetchRequest {
   bytes body = 4;
   // The destinations the caller permits for this request: host patterns as
   // described in the protocol docs ("example.com", "example.com:8443",
-  // "*.example.com"). The request is refused unless its URL matches one.
+  // "*.example.com"). The request is refused unless its URL matches one, and
+  // unless the service carries its host (see DescribeResponse.covers).
   repeated string allow = 5;
   // Bound on the response body; 0 means the service's own maximum. The
   // service's maximum applies in any case.

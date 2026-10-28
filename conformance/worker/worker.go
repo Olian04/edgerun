@@ -26,18 +26,13 @@ import (
 	"connectrpc.com/connect"
 
 	"github.com/Olian04/edgerun/conformance/guest"
+	"github.com/Olian04/edgerun/conformance/internal/check"
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
 	workerv1 "github.com/Olian04/edgerun/gen/edgerun/worker/v1"
 	"github.com/Olian04/edgerun/gen/edgerun/worker/v1/workerv1connect"
 )
 
 const (
-	workerToken    = "conformance-worker-token"
-	executionToken = "conformance-execution-token"
-	egressToken    = "conformance-egress-token"
-	maxConcurrency = 2
-	heartbeatEvery = 100 * time.Millisecond
-
 	abi = "wagi-1"
 	// roomy covers the first invocation, which compiles the guest (seconds
 	// under the race detector). Once one invocation has succeeded the worker
@@ -47,7 +42,8 @@ const (
 	steady = 30 * time.Second
 )
 
-// Env tells the worker under test how to reach the suite.
+// Env tells the worker under test how to reach the suite. The suite's defaults
+// fill any field left empty in Target.Env.
 type Env struct {
 	// OrchestratorURL is the base URL of the suite's fake orchestrator.
 	OrchestratorURL string
@@ -56,16 +52,36 @@ type Env struct {
 	WorkerToken string
 	// ExecutionToken must be required on ExecutionService calls.
 	ExecutionToken string
+	// EgressToken is what the worker must present to network services, which
+	// the orchestrator routes a function's outbound requests to. A worker that
+	// offers wagi-2 uses it; one that does not has no network to offer.
+	EgressToken string
 	// MaxConcurrency is the number of invocations the worker must run at once.
 	MaxConcurrency uint32
-	// EgressURL and EgressToken are the network service the worker may use for
-	// guests' outbound requests (a fake the suite hosts), and the credential it
-	// must present. A worker that offers wagi-2 uses them; one that does not
-	// has no network to offer, and ignores them.
-	EgressURL, EgressToken string
+	// HeartbeatInterval is what the fake orchestrator dictates to the worker.
+	HeartbeatInterval time.Duration
 }
 
-// Target starts the implementation under test.
+func (e Env) withDefaults() Env {
+	if e.WorkerToken == "" {
+		e.WorkerToken = "conformance-worker-token"
+	}
+	if e.ExecutionToken == "" {
+		e.ExecutionToken = "conformance-execution-token"
+	}
+	if e.EgressToken == "" {
+		e.EgressToken = "conformance-egress-token"
+	}
+	if e.MaxConcurrency == 0 {
+		e.MaxConcurrency = 2
+	}
+	if e.HeartbeatInterval == 0 {
+		e.HeartbeatInterval = 100 * time.Millisecond
+	}
+	return e
+}
+
+// Target is the implementation under test, and how to reach the suite.
 type Target struct {
 	// Launch starts a worker configured per env and returns promptly; the
 	// worker is expected to register on its own. The returned stop requests a
@@ -74,29 +90,46 @@ type Target struct {
 	// exited, or reports a test failure if it has not within a bounded time:
 	// it must never block forever, or a broken worker hangs the suite instead
 	// of failing it. Launch must arrange for stop to run at the end of the
-	// test if the suite has not already called it.
+	// test if the suite has not already called it. For a worker that is already
+	// running, Launch only returns a stop for it, or nil if the suite has no
+	// way to stop it, in which case the group that shuts it down is skipped.
 	Launch func(t testing.TB, env Env) (stop func())
+	// Env overrides the suite's defaults for the tokens and limits it
+	// configures the worker with.
+	Env Env
+	// Net says where the suite's fake orchestrator and network services
+	// listen, and how the worker reaches them. The fake orchestrator is the
+	// primary server: its port, if Net.Listen names one, is fixed, so that a
+	// worker started beforehand can be configured with it.
+	Net check.Net
+	// Endpoint, host:port or a URL, is the worker to test: the one that
+	// registers at that address. Empty means the first to register.
+	Endpoint string
+	// Wait is how long to wait for the worker to register. Default 60s.
+	Wait time.Duration
 }
 
 // Run runs the suite against target.
 func Run(t *testing.T, target Target) {
+	env := target.Env.withDefaults()
 	wasm := guest.Build(t)
-	orch := newFakeOrchestrator(t, workerToken, heartbeatEvery)
+	orch := newFakeOrchestrator(t, target.Net, env.WorkerToken, env.HeartbeatInterval)
+	env.OrchestratorURL = orch.url()
 	good := orch.addBlob(wasm)
 	netGood := orch.addBlob(guest.BuildNet(t))
-	egress := newFakeEgress(t)
+	egress := newFakeEgress(t, target.Net, env.EgressToken)
 
-	stop := target.Launch(t, Env{
-		OrchestratorURL: orch.url(), WorkerToken: workerToken,
-		ExecutionToken: executionToken, MaxConcurrency: maxConcurrency,
-		EgressURL: egress.srv.URL, EgressToken: egressToken,
-	})
-	orch.waitFor(t, "the worker to register", 60*time.Second, func() bool { return len(orch.registrations) > 0 })
-
+	stop := target.Launch(t, env)
+	wait := target.Wait
+	if wait == 0 {
+		wait = 60 * time.Second
+	}
+	orch.waitFor(t, "the worker to register with the suite's orchestrator at "+orch.url(), wait, func() bool { return orch.registered(target.Endpoint) != nil })
 	orch.mu.Lock()
-	reg := orch.registrations[0]
+	reg := *orch.registered(target.Endpoint)
 	orch.mu.Unlock()
 	h := &harness{
+		env: env, net: target.Net,
 		orch: orch, reg: reg, good: good, netGood: netGood, egress: egress, stop: stop,
 		client: workerv1connect.NewExecutionServiceClient(&http.Client{Transport: budgetTransport{}}, reg.Endpoint),
 	}
@@ -132,6 +165,8 @@ func Run(t *testing.T, target Target) {
 }
 
 type harness struct {
+	env    Env
+	net    check.Net
 	budget atomic.Int64 // default per-call budget in ns; roomy until the first success
 	orch   *fakeOrchestrator
 	reg    registration
@@ -221,8 +256,8 @@ type invocation struct {
 	limits              *commonv1.Limits
 	env                 []*commonv1.EnvVar
 	timeout             time.Duration
-	token               *string  // nil: the correct token; pointer to "": none
-	egress              []string // the function's network allow list
+	token               *string                 // nil: the correct token; pointer to "": none
+	egress              []*workerv1.EgressGrant // the function's network grants
 }
 
 func (h *harness) call(t *testing.T, inv invocation) outcome {
@@ -249,7 +284,7 @@ func (h *harness) call(t *testing.T, inv invocation) outcome {
 
 	req := connect.NewRequest(&workerv1.ExecuteRequest{
 		InvocationId: "conformance-" + t.Name(), ArtifactDigest: inv.digest, Abi: inv.abi,
-		Limits: inv.limits, Env: inv.env, EgressAllow: inv.egress,
+		Limits: inv.limits, Env: inv.env, Egress: inv.egress,
 		Request: &commonv1.HttpRequest{
 			Method: inv.method, Host: "conformance.test", Path: inv.path, RawQuery: inv.query,
 			Body: []byte(inv.body), RemoteAddr: "192.0.2.1:1234",
@@ -259,7 +294,7 @@ func (h *harness) call(t *testing.T, inv invocation) outcome {
 	req.Header().Set(budgetHeader, strconv.FormatInt(inv.timeout.Milliseconds(), 10))
 	switch {
 	case inv.token == nil:
-		req.Header().Set("Authorization", "Bearer "+executionToken)
+		req.Header().Set("Authorization", "Bearer "+h.env.ExecutionToken)
 	case *inv.token != "":
 		req.Header().Set("Authorization", "Bearer "+*inv.token)
 	}
@@ -352,13 +387,13 @@ func (h *harness) registration(t *testing.T) {
 	if !contains(info.GetAbis(), abi) {
 		t.Errorf("worker must advertise %q, got %v", abi, info.GetAbis())
 	}
-	if info.GetMaxConcurrency() != maxConcurrency {
-		t.Errorf("max_concurrency = %d, want the configured %d", info.GetMaxConcurrency(), maxConcurrency)
+	if info.GetMaxConcurrency() != h.env.MaxConcurrency {
+		t.Errorf("max_concurrency = %d, want the configured %d", info.GetMaxConcurrency(), h.env.MaxConcurrency)
 	}
 
 	// Describe on the worker itself must agree with what it registered.
 	req := connect.NewRequest(&workerv1.DescribeRequest{})
-	req.Header().Set("Authorization", "Bearer "+executionToken)
+	req.Header().Set("Authorization", "Bearer "+h.env.ExecutionToken)
 	resp, err := h.client.Describe(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Describe: %v", err)
@@ -389,7 +424,7 @@ func (h *harness) heartbeats(t *testing.T) {
 // --- Authentication --------------------------------------------------------
 
 func (h *harness) authentication(t *testing.T) {
-	for name, tok := range map[string]*string{"no token": str(""), "wrong token": str("not-the-token"), "the worker token": str(workerToken)} {
+	for name, tok := range map[string]*string{"no token": str(""), "wrong token": str("not-the-token"), "the worker token": str(h.env.WorkerToken)} {
 		out := h.call(t, invocation{path: "/echo", token: tok, timeout: 10 * time.Second})
 		if connect.CodeOf(out.err) != connect.CodeUnauthenticated {
 			t.Errorf("%s: code = %v (%v), want unauthenticated", name, connect.CodeOf(out.err), out.err)
@@ -639,13 +674,13 @@ func (h *harness) timeAndEntropy(t *testing.T) {
 
 func (h *harness) capacity(t *testing.T) {
 	h.ok(t, invocation{path: "/echo"}) // warm
-	done := make(chan outcome, maxConcurrency)
-	for range maxConcurrency {
+	done := make(chan outcome, h.env.MaxConcurrency)
+	for range h.env.MaxConcurrency {
 		go func() { done <- h.call(t, invocation{path: "/sleep", query: "ms=1500"}) }()
 	}
 	h.orch.waitFor(t, "all slots to be reported busy", 10*time.Second, func() bool {
 		for i := len(h.orch.heartbeats) - 1; i >= 0 && i >= len(h.orch.heartbeats)-3; i-- {
-			if h.orch.heartbeats[i].InFlight == maxConcurrency {
+			if h.orch.heartbeats[i].InFlight == h.env.MaxConcurrency {
 				return true
 			}
 		}
@@ -659,7 +694,7 @@ func (h *harness) capacity(t *testing.T) {
 		t.Errorf("NO_CAPACITY took %v: workers must not queue", out.elapsed)
 	}
 
-	for range maxConcurrency {
+	for range h.env.MaxConcurrency {
 		if o := <-done; o.err != nil {
 			t.Errorf("an admitted invocation failed: %v", o.err)
 		}
@@ -697,6 +732,9 @@ func (h *harness) reregister(t *testing.T) {
 }
 
 func (h *harness) gracefulShutdown(t *testing.T) {
+	if h.stop == nil {
+		t.Skip("the suite cannot stop this worker (see --stop-cmd), so it cannot see it drain and leave")
+	}
 	h.ok(t, invocation{path: "/echo"}) // warm
 	inflight := make(chan outcome, 1)
 	go func() { inflight <- h.call(t, invocation{path: "/sleep", query: "ms=1200"}) }()

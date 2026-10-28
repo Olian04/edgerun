@@ -194,6 +194,86 @@ func (x *ListWorkersResponse) GetWorkers() []*WorkerStatus {
 	return nil
 }
 
+type ListNetworkServicesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListNetworkServicesRequest) Reset() {
+	*x = ListNetworkServicesRequest{}
+	mi := &file_edgerun_control_v1_inspection_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListNetworkServicesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListNetworkServicesRequest) ProtoMessage() {}
+
+func (x *ListNetworkServicesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_edgerun_control_v1_inspection_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListNetworkServicesRequest.ProtoReflect.Descriptor instead.
+func (*ListNetworkServicesRequest) Descriptor() ([]byte, []int) {
+	return file_edgerun_control_v1_inspection_proto_rawDescGZIP(), []int{4}
+}
+
+type ListNetworkServicesResponse struct {
+	state         protoimpl.MessageState  `protogen:"open.v1"`
+	Services      []*NetworkServiceStatus `protobuf:"bytes,1,rep,name=services,proto3" json:"services,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListNetworkServicesResponse) Reset() {
+	*x = ListNetworkServicesResponse{}
+	mi := &file_edgerun_control_v1_inspection_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListNetworkServicesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListNetworkServicesResponse) ProtoMessage() {}
+
+func (x *ListNetworkServicesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_edgerun_control_v1_inspection_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListNetworkServicesResponse.ProtoReflect.Descriptor instead.
+func (*ListNetworkServicesResponse) Descriptor() ([]byte, []int) {
+	return file_edgerun_control_v1_inspection_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *ListNetworkServicesResponse) GetServices() []*NetworkServiceStatus {
+	if x != nil {
+		return x.Services
+	}
+	return nil
+}
+
 type ListInvocationsRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Restrict to one function; empty for all.
@@ -206,7 +286,7 @@ type ListInvocationsRequest struct {
 
 func (x *ListInvocationsRequest) Reset() {
 	*x = ListInvocationsRequest{}
-	mi := &file_edgerun_control_v1_inspection_proto_msgTypes[4]
+	mi := &file_edgerun_control_v1_inspection_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -218,7 +298,7 @@ func (x *ListInvocationsRequest) String() string {
 func (*ListInvocationsRequest) ProtoMessage() {}
 
 func (x *ListInvocationsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_edgerun_control_v1_inspection_proto_msgTypes[4]
+	mi := &file_edgerun_control_v1_inspection_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -231,7 +311,7 @@ func (x *ListInvocationsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListInvocationsRequest.ProtoReflect.Descriptor instead.
 func (*ListInvocationsRequest) Descriptor() ([]byte, []int) {
-	return file_edgerun_control_v1_inspection_proto_rawDescGZIP(), []int{4}
+	return file_edgerun_control_v1_inspection_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *ListInvocationsRequest) GetFunctionId() string {
@@ -265,7 +345,7 @@ type ListInvocationsResponse struct {
 
 func (x *ListInvocationsResponse) Reset() {
 	*x = ListInvocationsResponse{}
-	mi := &file_edgerun_control_v1_inspection_proto_msgTypes[5]
+	mi := &file_edgerun_control_v1_inspection_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -277,7 +357,7 @@ func (x *ListInvocationsResponse) String() string {
 func (*ListInvocationsResponse) ProtoMessage() {}
 
 func (x *ListInvocationsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_edgerun_control_v1_inspection_proto_msgTypes[5]
+	mi := &file_edgerun_control_v1_inspection_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -290,7 +370,7 @@ func (x *ListInvocationsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListInvocationsResponse.ProtoReflect.Descriptor instead.
 func (*ListInvocationsResponse) Descriptor() ([]byte, []int) {
-	return file_edgerun_control_v1_inspection_proto_rawDescGZIP(), []int{5}
+	return file_edgerun_control_v1_inspection_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ListInvocationsResponse) GetInvocations() []*Invocation {
@@ -318,7 +398,10 @@ const file_edgerun_control_v1_inspection_proto_rawDesc = "" +
 	"\x10max_module_bytes\x18\x02 \x01(\x04R\x0emaxModuleBytes\"\x14\n" +
 	"\x12ListWorkersRequest\"Q\n" +
 	"\x13ListWorkersResponse\x12:\n" +
-	"\aworkers\x18\x01 \x03(\v2 .edgerun.control.v1.WorkerStatusR\aworkers\"u\n" +
+	"\aworkers\x18\x01 \x03(\v2 .edgerun.control.v1.WorkerStatusR\aworkers\"\x1c\n" +
+	"\x1aListNetworkServicesRequest\"c\n" +
+	"\x1bListNetworkServicesResponse\x12D\n" +
+	"\bservices\x18\x01 \x03(\v2(.edgerun.control.v1.NetworkServiceStatusR\bservices\"u\n" +
 	"\x16ListInvocationsRequest\x12\x1f\n" +
 	"\vfunction_id\x18\x01 \x01(\tR\n" +
 	"functionId\x12\x1b\n" +
@@ -327,11 +410,12 @@ const file_edgerun_control_v1_inspection_proto_rawDesc = "" +
 	"page_token\x18\x03 \x01(\tR\tpageToken\"\x83\x01\n" +
 	"\x17ListInvocationsResponse\x12@\n" +
 	"\vinvocations\x18\x01 \x03(\v2\x1e.edgerun.control.v1.InvocationR\vinvocations\x12&\n" +
-	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken2\xb6\x02\n" +
+	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken2\xae\x03\n" +
 	"\x11InspectionService\x12U\n" +
 	"\bDescribe\x12#.edgerun.control.v1.DescribeRequest\x1a$.edgerun.control.v1.DescribeResponse\x12^\n" +
 	"\vListWorkers\x12&.edgerun.control.v1.ListWorkersRequest\x1a'.edgerun.control.v1.ListWorkersResponse\x12j\n" +
-	"\x0fListInvocations\x12*.edgerun.control.v1.ListInvocationsRequest\x1a+.edgerun.control.v1.ListInvocationsResponseB\xd0\x01\n" +
+	"\x0fListInvocations\x12*.edgerun.control.v1.ListInvocationsRequest\x1a+.edgerun.control.v1.ListInvocationsResponse\x12v\n" +
+	"\x13ListNetworkServices\x12..edgerun.control.v1.ListNetworkServicesRequest\x1a/.edgerun.control.v1.ListNetworkServicesResponseB\xd0\x01\n" +
 	"\x16com.edgerun.control.v1B\x0fInspectionProtoP\x01Z;github.com/Olian04/edgerun/gen/edgerun/control/v1;controlv1\xa2\x02\x03ECX\xaa\x02\x12Edgerun.Control.V1\xca\x02\x12Edgerun\\Control\\V1\xe2\x02\x1eEdgerun\\Control\\V1\\GPBMetadata\xea\x02\x14Edgerun::Control::V1b\x06proto3"
 
 var (
@@ -346,33 +430,39 @@ func file_edgerun_control_v1_inspection_proto_rawDescGZIP() []byte {
 	return file_edgerun_control_v1_inspection_proto_rawDescData
 }
 
-var file_edgerun_control_v1_inspection_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_edgerun_control_v1_inspection_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_edgerun_control_v1_inspection_proto_goTypes = []any{
-	(*DescribeRequest)(nil),         // 0: edgerun.control.v1.DescribeRequest
-	(*DescribeResponse)(nil),        // 1: edgerun.control.v1.DescribeResponse
-	(*ListWorkersRequest)(nil),      // 2: edgerun.control.v1.ListWorkersRequest
-	(*ListWorkersResponse)(nil),     // 3: edgerun.control.v1.ListWorkersResponse
-	(*ListInvocationsRequest)(nil),  // 4: edgerun.control.v1.ListInvocationsRequest
-	(*ListInvocationsResponse)(nil), // 5: edgerun.control.v1.ListInvocationsResponse
-	(*v1.Implementation)(nil),       // 6: edgerun.common.v1.Implementation
-	(*WorkerStatus)(nil),            // 7: edgerun.control.v1.WorkerStatus
-	(*Invocation)(nil),              // 8: edgerun.control.v1.Invocation
+	(*DescribeRequest)(nil),             // 0: edgerun.control.v1.DescribeRequest
+	(*DescribeResponse)(nil),            // 1: edgerun.control.v1.DescribeResponse
+	(*ListWorkersRequest)(nil),          // 2: edgerun.control.v1.ListWorkersRequest
+	(*ListWorkersResponse)(nil),         // 3: edgerun.control.v1.ListWorkersResponse
+	(*ListNetworkServicesRequest)(nil),  // 4: edgerun.control.v1.ListNetworkServicesRequest
+	(*ListNetworkServicesResponse)(nil), // 5: edgerun.control.v1.ListNetworkServicesResponse
+	(*ListInvocationsRequest)(nil),      // 6: edgerun.control.v1.ListInvocationsRequest
+	(*ListInvocationsResponse)(nil),     // 7: edgerun.control.v1.ListInvocationsResponse
+	(*v1.Implementation)(nil),           // 8: edgerun.common.v1.Implementation
+	(*WorkerStatus)(nil),                // 9: edgerun.control.v1.WorkerStatus
+	(*NetworkServiceStatus)(nil),        // 10: edgerun.control.v1.NetworkServiceStatus
+	(*Invocation)(nil),                  // 11: edgerun.control.v1.Invocation
 }
 var file_edgerun_control_v1_inspection_proto_depIdxs = []int32{
-	6, // 0: edgerun.control.v1.DescribeResponse.implementation:type_name -> edgerun.common.v1.Implementation
-	7, // 1: edgerun.control.v1.ListWorkersResponse.workers:type_name -> edgerun.control.v1.WorkerStatus
-	8, // 2: edgerun.control.v1.ListInvocationsResponse.invocations:type_name -> edgerun.control.v1.Invocation
-	0, // 3: edgerun.control.v1.InspectionService.Describe:input_type -> edgerun.control.v1.DescribeRequest
-	2, // 4: edgerun.control.v1.InspectionService.ListWorkers:input_type -> edgerun.control.v1.ListWorkersRequest
-	4, // 5: edgerun.control.v1.InspectionService.ListInvocations:input_type -> edgerun.control.v1.ListInvocationsRequest
-	1, // 6: edgerun.control.v1.InspectionService.Describe:output_type -> edgerun.control.v1.DescribeResponse
-	3, // 7: edgerun.control.v1.InspectionService.ListWorkers:output_type -> edgerun.control.v1.ListWorkersResponse
-	5, // 8: edgerun.control.v1.InspectionService.ListInvocations:output_type -> edgerun.control.v1.ListInvocationsResponse
-	6, // [6:9] is the sub-list for method output_type
-	3, // [3:6] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	8,  // 0: edgerun.control.v1.DescribeResponse.implementation:type_name -> edgerun.common.v1.Implementation
+	9,  // 1: edgerun.control.v1.ListWorkersResponse.workers:type_name -> edgerun.control.v1.WorkerStatus
+	10, // 2: edgerun.control.v1.ListNetworkServicesResponse.services:type_name -> edgerun.control.v1.NetworkServiceStatus
+	11, // 3: edgerun.control.v1.ListInvocationsResponse.invocations:type_name -> edgerun.control.v1.Invocation
+	0,  // 4: edgerun.control.v1.InspectionService.Describe:input_type -> edgerun.control.v1.DescribeRequest
+	2,  // 5: edgerun.control.v1.InspectionService.ListWorkers:input_type -> edgerun.control.v1.ListWorkersRequest
+	6,  // 6: edgerun.control.v1.InspectionService.ListInvocations:input_type -> edgerun.control.v1.ListInvocationsRequest
+	4,  // 7: edgerun.control.v1.InspectionService.ListNetworkServices:input_type -> edgerun.control.v1.ListNetworkServicesRequest
+	1,  // 8: edgerun.control.v1.InspectionService.Describe:output_type -> edgerun.control.v1.DescribeResponse
+	3,  // 9: edgerun.control.v1.InspectionService.ListWorkers:output_type -> edgerun.control.v1.ListWorkersResponse
+	7,  // 10: edgerun.control.v1.InspectionService.ListInvocations:output_type -> edgerun.control.v1.ListInvocationsResponse
+	5,  // 11: edgerun.control.v1.InspectionService.ListNetworkServices:output_type -> edgerun.control.v1.ListNetworkServicesResponse
+	8,  // [8:12] is the sub-list for method output_type
+	4,  // [4:8] is the sub-list for method input_type
+	4,  // [4:4] is the sub-list for extension type_name
+	4,  // [4:4] is the sub-list for extension extendee
+	0,  // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_edgerun_control_v1_inspection_proto_init() }
@@ -387,7 +477,7 @@ func file_edgerun_control_v1_inspection_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_edgerun_control_v1_inspection_proto_rawDesc), len(file_edgerun_control_v1_inspection_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   6,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -117,11 +117,13 @@ type ExecuteRequest struct {
 	Limits  *v1.Limits      `protobuf:"bytes,4,opt,name=limits,proto3" json:"limits,omitempty"`
 	Env     []*v1.EnvVar    `protobuf:"bytes,5,rep,name=env,proto3" json:"env,omitempty"`
 	Request *v1.HttpRequest `protobuf:"bytes,6,opt,name=request,proto3" json:"request,omitempty"`
-	// The destinations the function may reach over the network, as host
-	// patterns (see the protocol docs). Empty means none: guests are closed off
-	// by default. A worker passes this list on with every outbound request the
-	// guest makes, and makes none if it is empty.
-	EgressAllow   []string `protobuf:"bytes,7,rep,name=egress_allow,json=egressAllow,proto3" json:"egress_allow,omitempty"`
+	// The destinations the function may reach over the network, each with the
+	// network service that carries it, which the orchestrator chose among those
+	// registered. Empty means none: guests are closed off by default. A worker
+	// makes an outbound request through the service of the first grant whose
+	// allow entry matches its URL, passes it the entries that service carries
+	// for this function, and refuses it, without calling anyone, if none match.
+	Egress        []*EgressGrant `protobuf:"bytes,7,rep,name=egress,proto3" json:"egress,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -198,11 +200,67 @@ func (x *ExecuteRequest) GetRequest() *v1.HttpRequest {
 	return nil
 }
 
-func (x *ExecuteRequest) GetEgressAllow() []string {
+func (x *ExecuteRequest) GetEgress() []*EgressGrant {
 	if x != nil {
-		return x.EgressAllow
+		return x.Egress
 	}
 	return nil
+}
+
+// EgressGrant lets a function reach the destinations an allow-list entry names
+// (see the protocol docs for the grammar), through one network service.
+type EgressGrant struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The entry the operator listed, in canonical form.
+	Allow string `protobuf:"bytes,1,opt,name=allow,proto3" json:"allow,omitempty"`
+	// Base URL of the network service that carries it.
+	Service       string `protobuf:"bytes,2,opt,name=service,proto3" json:"service,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EgressGrant) Reset() {
+	*x = EgressGrant{}
+	mi := &file_edgerun_worker_v1_execution_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EgressGrant) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EgressGrant) ProtoMessage() {}
+
+func (x *EgressGrant) ProtoReflect() protoreflect.Message {
+	mi := &file_edgerun_worker_v1_execution_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EgressGrant.ProtoReflect.Descriptor instead.
+func (*EgressGrant) Descriptor() ([]byte, []int) {
+	return file_edgerun_worker_v1_execution_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *EgressGrant) GetAllow() string {
+	if x != nil {
+		return x.Allow
+	}
+	return ""
+}
+
+func (x *EgressGrant) GetService() string {
+	if x != nil {
+		return x.Service
+	}
+	return ""
 }
 
 type ExecuteResponse struct {
@@ -219,7 +277,7 @@ type ExecuteResponse struct {
 
 func (x *ExecuteResponse) Reset() {
 	*x = ExecuteResponse{}
-	mi := &file_edgerun_worker_v1_execution_proto_msgTypes[3]
+	mi := &file_edgerun_worker_v1_execution_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -231,7 +289,7 @@ func (x *ExecuteResponse) String() string {
 func (*ExecuteResponse) ProtoMessage() {}
 
 func (x *ExecuteResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_edgerun_worker_v1_execution_proto_msgTypes[3]
+	mi := &file_edgerun_worker_v1_execution_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -244,7 +302,7 @@ func (x *ExecuteResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecuteResponse.ProtoReflect.Descriptor instead.
 func (*ExecuteResponse) Descriptor() ([]byte, []int) {
-	return file_edgerun_worker_v1_execution_proto_rawDescGZIP(), []int{3}
+	return file_edgerun_worker_v1_execution_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *ExecuteResponse) GetPart() isExecuteResponse_Part {
@@ -318,7 +376,7 @@ type ExecutionSummary struct {
 
 func (x *ExecutionSummary) Reset() {
 	*x = ExecutionSummary{}
-	mi := &file_edgerun_worker_v1_execution_proto_msgTypes[4]
+	mi := &file_edgerun_worker_v1_execution_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -330,7 +388,7 @@ func (x *ExecutionSummary) String() string {
 func (*ExecutionSummary) ProtoMessage() {}
 
 func (x *ExecutionSummary) ProtoReflect() protoreflect.Message {
-	mi := &file_edgerun_worker_v1_execution_proto_msgTypes[4]
+	mi := &file_edgerun_worker_v1_execution_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -343,7 +401,7 @@ func (x *ExecutionSummary) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecutionSummary.ProtoReflect.Descriptor instead.
 func (*ExecutionSummary) Descriptor() ([]byte, []int) {
-	return file_edgerun_worker_v1_execution_proto_rawDescGZIP(), []int{4}
+	return file_edgerun_worker_v1_execution_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *ExecutionSummary) GetDurationMicros() uint64 {
@@ -381,15 +439,18 @@ const file_edgerun_worker_v1_execution_proto_rawDesc = "" +
 	"!edgerun/worker/v1/execution.proto\x12\x11edgerun.worker.v1\x1a\x1eedgerun/common/v1/common.proto\x1a\x1eedgerun/worker/v1/worker.proto\"\x11\n" +
 	"\x0fDescribeRequest\"E\n" +
 	"\x10DescribeResponse\x121\n" +
-	"\x04info\x18\x01 \x01(\v2\x1d.edgerun.worker.v1.WorkerInfoR\x04info\"\xad\x02\n" +
+	"\x04info\x18\x01 \x01(\v2\x1d.edgerun.worker.v1.WorkerInfoR\x04info\"\xc2\x02\n" +
 	"\x0eExecuteRequest\x12#\n" +
 	"\rinvocation_id\x18\x01 \x01(\tR\finvocationId\x12'\n" +
 	"\x0fartifact_digest\x18\x02 \x01(\tR\x0eartifactDigest\x12\x10\n" +
 	"\x03abi\x18\x03 \x01(\tR\x03abi\x121\n" +
 	"\x06limits\x18\x04 \x01(\v2\x19.edgerun.common.v1.LimitsR\x06limits\x12+\n" +
 	"\x03env\x18\x05 \x03(\v2\x19.edgerun.common.v1.EnvVarR\x03env\x128\n" +
-	"\arequest\x18\x06 \x01(\v2\x1e.edgerun.common.v1.HttpRequestR\arequest\x12!\n" +
-	"\fegress_allow\x18\a \x03(\tR\vegressAllow\"\xad\x01\n" +
+	"\arequest\x18\x06 \x01(\v2\x1e.edgerun.common.v1.HttpRequestR\arequest\x126\n" +
+	"\x06egress\x18\a \x03(\v2\x1e.edgerun.worker.v1.EgressGrantR\x06egress\"=\n" +
+	"\vEgressGrant\x12\x14\n" +
+	"\x05allow\x18\x01 \x01(\tR\x05allow\x12\x18\n" +
+	"\aservice\x18\x02 \x01(\tR\aservice\"\xad\x01\n" +
 	"\x0fExecuteResponse\x129\n" +
 	"\x04head\x18\x01 \x01(\v2#.edgerun.common.v1.HttpResponseHeadH\x00R\x04head\x12\x16\n" +
 	"\x05chunk\x18\x02 \x01(\fH\x00R\x05chunk\x12?\n" +
@@ -417,35 +478,37 @@ func file_edgerun_worker_v1_execution_proto_rawDescGZIP() []byte {
 	return file_edgerun_worker_v1_execution_proto_rawDescData
 }
 
-var file_edgerun_worker_v1_execution_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_edgerun_worker_v1_execution_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_edgerun_worker_v1_execution_proto_goTypes = []any{
 	(*DescribeRequest)(nil),     // 0: edgerun.worker.v1.DescribeRequest
 	(*DescribeResponse)(nil),    // 1: edgerun.worker.v1.DescribeResponse
 	(*ExecuteRequest)(nil),      // 2: edgerun.worker.v1.ExecuteRequest
-	(*ExecuteResponse)(nil),     // 3: edgerun.worker.v1.ExecuteResponse
-	(*ExecutionSummary)(nil),    // 4: edgerun.worker.v1.ExecutionSummary
-	(*WorkerInfo)(nil),          // 5: edgerun.worker.v1.WorkerInfo
-	(*v1.Limits)(nil),           // 6: edgerun.common.v1.Limits
-	(*v1.EnvVar)(nil),           // 7: edgerun.common.v1.EnvVar
-	(*v1.HttpRequest)(nil),      // 8: edgerun.common.v1.HttpRequest
-	(*v1.HttpResponseHead)(nil), // 9: edgerun.common.v1.HttpResponseHead
+	(*EgressGrant)(nil),         // 3: edgerun.worker.v1.EgressGrant
+	(*ExecuteResponse)(nil),     // 4: edgerun.worker.v1.ExecuteResponse
+	(*ExecutionSummary)(nil),    // 5: edgerun.worker.v1.ExecutionSummary
+	(*WorkerInfo)(nil),          // 6: edgerun.worker.v1.WorkerInfo
+	(*v1.Limits)(nil),           // 7: edgerun.common.v1.Limits
+	(*v1.EnvVar)(nil),           // 8: edgerun.common.v1.EnvVar
+	(*v1.HttpRequest)(nil),      // 9: edgerun.common.v1.HttpRequest
+	(*v1.HttpResponseHead)(nil), // 10: edgerun.common.v1.HttpResponseHead
 }
 var file_edgerun_worker_v1_execution_proto_depIdxs = []int32{
-	5, // 0: edgerun.worker.v1.DescribeResponse.info:type_name -> edgerun.worker.v1.WorkerInfo
-	6, // 1: edgerun.worker.v1.ExecuteRequest.limits:type_name -> edgerun.common.v1.Limits
-	7, // 2: edgerun.worker.v1.ExecuteRequest.env:type_name -> edgerun.common.v1.EnvVar
-	8, // 3: edgerun.worker.v1.ExecuteRequest.request:type_name -> edgerun.common.v1.HttpRequest
-	9, // 4: edgerun.worker.v1.ExecuteResponse.head:type_name -> edgerun.common.v1.HttpResponseHead
-	4, // 5: edgerun.worker.v1.ExecuteResponse.summary:type_name -> edgerun.worker.v1.ExecutionSummary
-	0, // 6: edgerun.worker.v1.ExecutionService.Describe:input_type -> edgerun.worker.v1.DescribeRequest
-	2, // 7: edgerun.worker.v1.ExecutionService.Execute:input_type -> edgerun.worker.v1.ExecuteRequest
-	1, // 8: edgerun.worker.v1.ExecutionService.Describe:output_type -> edgerun.worker.v1.DescribeResponse
-	3, // 9: edgerun.worker.v1.ExecutionService.Execute:output_type -> edgerun.worker.v1.ExecuteResponse
-	8, // [8:10] is the sub-list for method output_type
-	6, // [6:8] is the sub-list for method input_type
-	6, // [6:6] is the sub-list for extension type_name
-	6, // [6:6] is the sub-list for extension extendee
-	0, // [0:6] is the sub-list for field type_name
+	6,  // 0: edgerun.worker.v1.DescribeResponse.info:type_name -> edgerun.worker.v1.WorkerInfo
+	7,  // 1: edgerun.worker.v1.ExecuteRequest.limits:type_name -> edgerun.common.v1.Limits
+	8,  // 2: edgerun.worker.v1.ExecuteRequest.env:type_name -> edgerun.common.v1.EnvVar
+	9,  // 3: edgerun.worker.v1.ExecuteRequest.request:type_name -> edgerun.common.v1.HttpRequest
+	3,  // 4: edgerun.worker.v1.ExecuteRequest.egress:type_name -> edgerun.worker.v1.EgressGrant
+	10, // 5: edgerun.worker.v1.ExecuteResponse.head:type_name -> edgerun.common.v1.HttpResponseHead
+	5,  // 6: edgerun.worker.v1.ExecuteResponse.summary:type_name -> edgerun.worker.v1.ExecutionSummary
+	0,  // 7: edgerun.worker.v1.ExecutionService.Describe:input_type -> edgerun.worker.v1.DescribeRequest
+	2,  // 8: edgerun.worker.v1.ExecutionService.Execute:input_type -> edgerun.worker.v1.ExecuteRequest
+	1,  // 9: edgerun.worker.v1.ExecutionService.Describe:output_type -> edgerun.worker.v1.DescribeResponse
+	4,  // 10: edgerun.worker.v1.ExecutionService.Execute:output_type -> edgerun.worker.v1.ExecuteResponse
+	9,  // [9:11] is the sub-list for method output_type
+	7,  // [7:9] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_edgerun_worker_v1_execution_proto_init() }
@@ -454,7 +517,7 @@ func file_edgerun_worker_v1_execution_proto_init() {
 		return
 	}
 	file_edgerun_worker_v1_worker_proto_init()
-	file_edgerun_worker_v1_execution_proto_msgTypes[3].OneofWrappers = []any{
+	file_edgerun_worker_v1_execution_proto_msgTypes[4].OneofWrappers = []any{
 		(*ExecuteResponse_Head)(nil),
 		(*ExecuteResponse_Chunk)(nil),
 		(*ExecuteResponse_Summary)(nil),
@@ -465,7 +528,7 @@ func file_edgerun_worker_v1_execution_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_edgerun_worker_v1_execution_proto_rawDesc), len(file_edgerun_worker_v1_execution_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   5,
+			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -10,9 +10,17 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
+	"sync/atomic"
 	"time"
 
+	"connectrpc.com/connect"
+
+	egressv1 "github.com/Olian04/edgerun/gen/edgerun/egress/v1"
+	"github.com/Olian04/edgerun/gen/edgerun/egress/v1/egressv1connect"
 	"github.com/Olian04/edgerun/internal/authn"
+	"github.com/Olian04/edgerun/internal/egress/policy"
+	"github.com/Olian04/edgerun/internal/egress/registry"
 	"github.com/Olian04/edgerun/internal/egress/server"
 )
 
@@ -20,8 +28,23 @@ import (
 type Config struct {
 	// Listen is the address to serve on, e.g. ":8090".
 	Listen string
-	// Token is the bearer token workers present (scope "egress").
-	Token string
+	// AdvertiseURL is the base URL at which workers reach this service. It may
+	// be left out when Listen names a specific address.
+	AdvertiseURL string
+	// EgressToken is the bearer token workers present (scope "egress").
+	EgressToken string
+
+	// OrchestratorURL is where this service registers, presenting
+	// NetworkToken. Registration is what makes the service exist as far as
+	// functions are concerned.
+	OrchestratorURL string
+	NetworkToken    string
+	// Covers is what this service carries: "*" for everything, or host names,
+	// "*.domain" patterns, addresses and address ranges. At least one. A
+	// service in a private network carries that network; one on the public
+	// internet carries the rest.
+	Covers []string
+
 	// AllowNetworks are ranges the service may connect to although it refuses
 	// them by default (private networks, loopback...).
 	AllowNetworks []netip.Prefix
@@ -34,42 +57,68 @@ type Config struct {
 
 // Server is a running network service.
 type Server struct {
-	cfg  Config
-	http *http.Server
-	ln   net.Listener
+	cfg      Config
+	http     *http.Server
+	ln       net.Listener
+	reg      *registry.Client
+	stopReg  context.CancelFunc
+	regDone  chan struct{}
+	draining atomic.Bool
 }
 
-// Start begins serving and returns.
+// Start begins serving and registers with the orchestrator, then returns.
 func Start(_ context.Context, cfg Config) (*Server, error) {
 	if cfg.Listen == "" {
 		return nil, errors.New("listen address is required")
 	}
-	if cfg.Token == "" {
+	if cfg.EgressToken == "" {
 		return nil, errors.New("the egress token is required")
 	}
+	if cfg.NetworkToken == "" {
+		return nil, errors.New("the network token is required")
+	}
+	if u, err := url.ParseRequestURI(cfg.OrchestratorURL); err != nil || u.Host == "" {
+		return nil, fmt.Errorf("orchestrator URL %q: want an http(s) URL", cfg.OrchestratorURL)
+	}
+	covers, err := policy.CanonicalCovers(cfg.Covers)
+	if err != nil {
+		return nil, err
+	}
+	cfg.Covers = covers
 	if cfg.ShutdownTimeout == 0 {
 		cfg.ShutdownTimeout = 30 * time.Second
 	}
 	if cfg.Log == nil {
 		cfg.Log = slog.Default()
 	}
-	svc := server.New(server.Config{
-		AllowNetworks: cfg.AllowNetworks, MaxRequestBody: cfg.MaxRequestBody, MaxResponseBody: cfg.MaxResponseBody,
-		Version: cfg.Version, Log: cfg.Log,
-	})
-	mux := http.NewServeMux()
-	mux.Handle(svc.Handler(authn.Verifier{cfg.Token: server.Scope}))
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok\n")) })
 
 	ln, err := net.Listen("tcp", cfg.Listen)
 	if err != nil {
 		return nil, fmt.Errorf("listen: %w", err)
 	}
+	advertise := cfg.AdvertiseURL
+	if advertise == "" {
+		addr := ln.Addr().(*net.TCPAddr)
+		if addr.IP.IsUnspecified() {
+			ln.Close()
+			return nil, errors.New("advertise URL is required when listening on all interfaces")
+		}
+		advertise = "http://" + addr.String()
+	}
+
+	svc := server.New(server.Config{
+		Covers: cfg.Covers, AllowNetworks: cfg.AllowNetworks,
+		MaxRequestBody: cfg.MaxRequestBody, MaxResponseBody: cfg.MaxResponseBody,
+		Version: cfg.Version, Log: cfg.Log,
+	})
+	mux := http.NewServeMux()
+	mux.Handle(svc.Handler(authn.Verifier{cfg.EgressToken: server.Scope}))
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok\n")) })
 	var protocols http.Protocols
 	protocols.SetHTTP1(true)
 	protocols.SetUnencryptedHTTP2(true)
 	// No write timeout: responses stream, and the call's deadline bounds them.
-	s := &Server{cfg: cfg, ln: ln, http: &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second,
+	s := &Server{cfg: cfg, ln: ln, regDone: make(chan struct{}), http: &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout: 2 * time.Minute, Protocols: &protocols}}
 	go func() {
 		if err := s.http.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -79,21 +128,54 @@ func Start(_ context.Context, cfg Config) (*Server, error) {
 	for _, p := range cfg.AllowNetworks {
 		cfg.Log.Warn("connecting to this network is allowed, although it is refused by default", "network", p.String())
 	}
-	cfg.Log.Info("egress listening", "addr", ln.Addr().String())
+
+	s.reg = registry.New(registry.Config{
+		Endpoint: advertise,
+		Info:     serviceInfo(cfg),
+		Registry: egressv1connect.NewRegistryServiceClient(&http.Client{}, cfg.OrchestratorURL, connect.WithInterceptors(authn.Client(cfg.NetworkToken))),
+		State: func() egressv1.ServiceState {
+			if s.draining.Load() {
+				return egressv1.ServiceState_SERVICE_STATE_DRAINING
+			}
+			return egressv1.ServiceState_SERVICE_STATE_READY
+		},
+		Log: cfg.Log,
+	})
+	regCtx, cancel := context.WithCancel(context.Background())
+	s.stopReg = cancel
+	go func() { defer close(s.regDone); s.reg.Run(regCtx) }()
+
+	cfg.Log.Info("egress listening", "addr", ln.Addr().String(), "advertise", advertise, "covers", cfg.Covers, "orchestrator", cfg.OrchestratorURL)
 	return s, nil
+}
+
+func serviceInfo(cfg Config) *egressv1.ServiceInfo {
+	return &egressv1.ServiceInfo{
+		Implementation: server.Implementation(cfg.Version),
+		Covers:         cfg.Covers,
+	}
 }
 
 // Addr is the address the service listens on.
 func (s *Server) Addr() string { return s.ln.Addr().String() }
 
-// Stop shuts down gracefully, letting requests in flight finish up to the
-// shutdown timeout.
+// Stop shuts down gracefully: it tells the orchestrator to send nothing new,
+// lets requests in flight finish up to the shutdown timeout, then leaves.
 func (s *Server) Stop(ctx context.Context) error {
+	s.draining.Store(true)
+	s.reg.Poke()
 	sctx, cancel := context.WithTimeout(ctx, s.cfg.ShutdownTimeout)
 	defer cancel()
-	if err := s.http.Shutdown(sctx); err != nil {
+	err := s.http.Shutdown(sctx)
+	if err != nil {
 		s.http.Close()
-		return err
 	}
-	return nil
+	s.stopReg()
+	<-s.regDone
+	dctx, dcancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer dcancel()
+	if derr := s.reg.Deregister(dctx); derr != nil {
+		s.cfg.Log.Warn("deregister failed", "error", derr)
+	}
+	return err
 }

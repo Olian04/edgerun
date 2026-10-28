@@ -3,7 +3,6 @@ package orchestratorconf
 import (
 	"context"
 	"net/http"
-	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -31,7 +30,7 @@ type received struct {
 type fakeWorker struct {
 	t   testing.TB
 	h   *harness
-	srv *httptest.Server
+	srv *check.Server
 
 	mu      sync.Mutex
 	id      string
@@ -51,7 +50,7 @@ func (h *harness) worker(t testing.TB, abis []string, b behaviour) *fakeWorker {
 	w := &fakeWorker{t: t, h: h, behave: b, abis: abis, state: workerv1.WorkerState_WORKER_STATE_READY, stopped: make(chan struct{})}
 	mux := http.NewServeMux()
 	mux.Handle(workerv1connect.NewExecutionServiceHandler(execution{w}))
-	w.srv = httptest.NewServer(mux)
+	w.srv = h.net.Serve(t, mux, false)
 	interval := w.register()
 	w.done.Add(1)
 	go w.heartbeat(interval)

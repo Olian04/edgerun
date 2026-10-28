@@ -20,13 +20,15 @@ FRONTEND_PORT="${FRONTEND_PORT:-18000}"
 HEALTH_PORT="${HEALTH_PORT:-18081}"
 WORKER_PORT="${WORKER_PORT:-19000}"
 ADMIN_PORT="${ADMIN_PORT:-19090}"
-EGRESS_PORT="${EGRESS_PORT:-18090}"
+EGRESS_PORT="${EGRESS_PORT:-18090}"        # the public network service
+PRIVATE_EGRESS_PORT="${PRIVATE_EGRESS_PORT:-18091}"  # the "private network" one
 
 INGRESS_TOKEN=dev-ingress-token
 WORKER_TOKEN=dev-worker-token
 ADMIN_TOKEN=dev-admin-token
 EXEC_TOKEN=dev-execution-token
 EGRESS_TOKEN=dev-egress-token
+NETWORK_TOKEN=dev-network-token
 # 32 bytes, base64: dev only.
 SECRET_KEY=ZGV2LW9ubHktc2VjcmV0LWtleS0zMi1ieXRlcyEhISE=
 
@@ -38,7 +40,7 @@ pg_bin() {
 as_pg() { if [ "$(id -u)" = 0 ]; then runuser -u postgres -- "$@"; else "$@"; fi; }
 
 stop() {
-  for p in admin frontend worker egress orchestrator; do
+  for p in admin frontend worker egress-private egress orchestrator; do
     if [ -f "$RUN/$p.pid" ]; then
       kill "$(cat "$RUN/$p.pid")" 2>/dev/null || true
       rm -f "$RUN/$p.pid"
@@ -73,19 +75,30 @@ start() {
   echo "==> starting"
   EDGERUN_DATABASE_URL="$DSN" EDGERUN_ORCHESTRATOR_LISTEN="127.0.0.1:$ORCH_PORT" \
   EDGERUN_INGRESS_TOKEN=$INGRESS_TOKEN EDGERUN_WORKER_TOKEN=$WORKER_TOKEN EDGERUN_ADMIN_TOKEN=$ADMIN_TOKEN \
-  EDGERUN_EXECUTION_TOKEN=$EXEC_TOKEN EDGERUN_SECRET_KEY=$SECRET_KEY \
+  EDGERUN_EXECUTION_TOKEN=$EXEC_TOKEN EDGERUN_NETWORK_TOKEN=$NETWORK_TOKEN EDGERUN_SECRET_KEY=$SECRET_KEY \
     nohup "$BIN/orchestrator" >"$LOG/orchestrator.log" 2>&1 & echo $! >"$RUN/orchestrator.pid"
   wait_http "http://127.0.0.1:$ORCH_PORT/healthz" orchestrator
 
-  # The network service guests' requests go through. It refuses private and
-  # loopback addresses unless told otherwise; the demo function fetches from
-  # this machine, so loopback is allowed here. Do not do that anywhere real.
-  EDGERUN_EGRESS_LISTEN="127.0.0.1:$EGRESS_PORT" EDGERUN_EGRESS_TOKEN=$EGRESS_TOKEN EDGERUN_EGRESS_ALLOW_NETWORKS=127.0.0.0/8 \
+  # Two network services, as a real deployment with a private network and the
+  # public internet would have. Both register with the orchestrator and say what
+  # they carry; each destination a function may reach goes to the most specific
+  # service that carries it. The "private" one carries this machine (standing in
+  # for a private network) and is allowed to connect to it; the public one
+  # carries everything else and, as by default, refuses private and loopback
+  # addresses. Allowing loopback is for the demo only.
+  EDGERUN_EGRESS_LISTEN="127.0.0.1:$PRIVATE_EGRESS_PORT" EDGERUN_EGRESS_TOKEN=$EGRESS_TOKEN \
+  EDGERUN_ORCHESTRATOR_URL="http://127.0.0.1:$ORCH_PORT" EDGERUN_NETWORK_TOKEN=$NETWORK_TOKEN \
+  EDGERUN_EGRESS_COVERS="127.0.0.0/8,localhost" EDGERUN_EGRESS_ALLOW_NETWORKS=127.0.0.0/8 \
+    nohup "$BIN/egress" >"$LOG/egress-private.log" 2>&1 & echo $! >"$RUN/egress-private.pid"
+  EDGERUN_EGRESS_LISTEN="127.0.0.1:$EGRESS_PORT" EDGERUN_EGRESS_TOKEN=$EGRESS_TOKEN \
+  EDGERUN_ORCHESTRATOR_URL="http://127.0.0.1:$ORCH_PORT" EDGERUN_NETWORK_TOKEN=$NETWORK_TOKEN \
+  EDGERUN_EGRESS_COVERS="*" \
     nohup "$BIN/egress" >"$LOG/egress.log" 2>&1 & echo $! >"$RUN/egress.pid"
   wait_http "http://127.0.0.1:$EGRESS_PORT/healthz" egress
+  wait_http "http://127.0.0.1:$PRIVATE_EGRESS_PORT/healthz" egress-private
 
   EDGERUN_ORCHESTRATOR_URL="http://127.0.0.1:$ORCH_PORT" EDGERUN_WORKER_TOKEN=$WORKER_TOKEN EDGERUN_EXECUTION_TOKEN=$EXEC_TOKEN \
-  EDGERUN_EGRESS_URL="http://127.0.0.1:$EGRESS_PORT" EDGERUN_EGRESS_TOKEN=$EGRESS_TOKEN \
+  EDGERUN_EGRESS_TOKEN=$EGRESS_TOKEN \
   EDGERUN_WORKER_LISTEN="127.0.0.1:$WORKER_PORT" EDGERUN_WORKER_ADVERTISE_URL="http://127.0.0.1:$WORKER_PORT" \
     nohup "$BIN/worker" >"$LOG/worker.log" 2>&1 & echo $! >"$RUN/worker.pid"
 
@@ -121,6 +134,7 @@ edgerun is running.
   Try it        curl -H 'Host: hello.localhost' 'http://127.0.0.1:$FRONTEND_PORT/?name=you'
   The network   curl -H 'Host: fetch.localhost' 'http://127.0.0.1:$FRONTEND_PORT/?url=http://127.0.0.1:$HEALTH_PORT/healthz'   (allowed)
                 curl -H 'Host: fetch.localhost' 'http://127.0.0.1:$FRONTEND_PORT/?url=http://127.0.0.1:$ADMIN_PORT/healthz'    (not listed: 403)
+  Services      EDGERUN_URL=http://127.0.0.1:$ORCH_PORT EDGERUN_ADMIN_TOKEN=$ADMIN_TOKEN $BIN/edgerunctl networks   (the private one carries 127.0.0.0/8, the public one *)
   CLI           EDGERUN_URL=http://127.0.0.1:$ORCH_PORT EDGERUN_ADMIN_TOKEN=$ADMIN_TOKEN $BIN/edgerunctl functions
   Logs          $LOG  (PostgreSQL: $DIR/postgres.log)
   Stop          scripts/devstack.sh stop

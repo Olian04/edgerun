@@ -24,6 +24,7 @@ import (
 type Source interface {
 	LoadRouting(ctx context.Context) ([]store.RouteEntry, error)
 	ReadyWorkers(ctx context.Context, aliveWithin time.Duration) ([]store.Worker, error)
+	ReadyNetworkServices(ctx context.Context, aliveWithin time.Duration) ([]store.NetworkService, error)
 }
 
 // Cache is safe for concurrent use.
@@ -39,6 +40,7 @@ type Cache struct {
 	refreshing sync.Mutex
 	routes     atomic.Pointer[router.Table]
 	workers    atomic.Pointer[[]store.Worker]
+	services   atomic.Pointer[[]store.NetworkService]
 	poke       chan struct{}
 }
 
@@ -48,6 +50,8 @@ func New(src Source, aliveWithin time.Duration, log *slog.Logger) *Cache {
 	c.routes.Store(router.New(nil))
 	empty := []store.Worker{}
 	c.workers.Store(&empty)
+	noServices := []store.NetworkService{}
+	c.services.Store(&noServices)
 	return c
 }
 
@@ -69,6 +73,13 @@ func (c *Cache) Refresh(ctx context.Context) error {
 		}
 	} else {
 		c.workers.Store(&ws)
+	}
+	if ns, err := c.src.ReadyNetworkServices(ctx, c.aliveWithin); err != nil {
+		if first == nil {
+			first = err
+		}
+	} else {
+		c.services.Store(&ns)
 	}
 	return first
 }
@@ -107,6 +118,10 @@ func (c *Cache) Run(ctx context.Context, every time.Duration) {
 func (c *Cache) Route(host, path string) *store.RouteEntry {
 	return c.routes.Load().Match(host, path)
 }
+
+// NetworkServices returns the network services that are alive and ready.
+// Callers must not modify the slice.
+func (c *Cache) NetworkServices() []store.NetworkService { return *c.services.Load() }
 
 // Workers returns the ready workers. Callers must not modify the slice.
 func (c *Cache) Workers() []store.Worker { return *c.workers.Load() }

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net/netip"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -249,21 +251,27 @@ func (h *harness) allowList(t *testing.T) {
 	})
 
 	t.Run("ports", func(t *testing.T) {
-		p := h.origin.port()
-		if r := do(h.origin.url("/echo"), fmt.Sprintf("127.0.0.1:%d", p)); r.err != nil {
+		p, host := h.origin.port(), h.origin.hostEntry()
+		if r := do(h.origin.url("/echo"), fmt.Sprintf("%s:%d", host, p)); r.err != nil {
 			t.Errorf("an entry naming the port: %v", r.err)
 		}
-		denied(t, do(h.origin.url("/echo"), "127.0.0.1"), "an entry without a port, for a port that is not the scheme's default")
-		denied(t, do(h.origin.url("/echo"), fmt.Sprintf("127.0.0.1:%d", p+1)), "an entry naming another port")
-		denied(t, do(h.origin.url("/echo"), "127.0.0.1:80"), "an entry naming the default port, for another port")
-		if r := do(h.origin.url("/echo"), "other.test", "nothing.test:1", fmt.Sprintf("127.0.0.1:%d", p)); r.err != nil {
+		denied(t, do(h.origin.url("/echo"), host), "an entry without a port, for a port that is not the scheme's default")
+		denied(t, do(h.origin.url("/echo"), fmt.Sprintf("%s:%d", host, p+1)), "an entry naming another port")
+		denied(t, do(h.origin.url("/echo"), host+":80"), "an entry naming the default port, for another port")
+		if r := do(h.origin.url("/echo"), "other.covered.test", "nothing.covered.test:1", fmt.Sprintf("%s:%d", host, p)); r.err != nil {
 			t.Errorf("any matching entry is enough: %v", r.err)
 		}
 		// The port is what is compared, whatever the scheme.
-		notDenied(t, do(fmt.Sprintf("https://127.0.0.1:%d/echo", p), fmt.Sprintf("127.0.0.1:%d", p)), "https to a named port")
+		notDenied(t, do(fmt.Sprintf("https://%s:%d/echo", host, p), fmt.Sprintf("%s:%d", host, p)), "https to a named port")
 	})
 
 	t.Run("a name that resolves to an address the service may reach", func(t *testing.T) {
+		if !h.origin.loopback() {
+			t.Skip("the suite's web servers are not on the service's own machine, so localhost does not lead to them")
+		}
+		if !check.Covered(h.registration.Info.GetCovers(), "localhost") {
+			t.Skip("the service does not carry localhost")
+		}
 		p := h.origin.port()
 		r := do(fmt.Sprintf("http://localhost:%d/echo", p), fmt.Sprintf("localhost:%d", p))
 		if r.err != nil || r.head.GetStatus() != 200 {
@@ -273,34 +281,36 @@ func (h *harness) allowList(t *testing.T) {
 
 	t.Run("hosts", func(t *testing.T) {
 		p := h.origin.port()
-		denied(t, do(fmt.Sprintf("http://127.0.0.2:%d/echo", p), fmt.Sprintf("127.0.0.1:%d", p)), "another address")
-		denied(t, do("http://sub.api.test/", "api.test"), "an exact entry does not cover subdomains")
-		denied(t, do("http://api.test.evil.test/", "api.test"), "an exact entry does not cover a longer name")
-		notDenied(t, do("http://api.test/", "api.test"), "an exact name")
-		notDenied(t, do("http://API.Test/", "api.test"), "an exact name, in another case")
-		notDenied(t, do("http://api.test./", "api.test"), "an exact name with a trailing dot")
-		notDenied(t, do("http://api.test/", "API.TEST"), "an entry in upper case")
+		if other := h.origin.neighbour(); other != "" {
+			denied(t, do(fmt.Sprintf("http://%s:%d/echo", other, p), h.origin.entry()), "another address")
+		}
+		denied(t, do("http://sub.api.covered.test/", "api.covered.test"), "an exact entry does not cover subdomains")
+		denied(t, do("http://api.covered.test.evil.test/", "api.covered.test"), "an exact entry does not cover a longer name")
+		notDenied(t, do("http://api.covered.test/", "api.covered.test"), "an exact name")
+		notDenied(t, do("http://API.Covered.Test/", "api.covered.test"), "an exact name, in another case")
+		notDenied(t, do("http://api.covered.test./", "api.covered.test"), "an exact name with a trailing dot")
+		notDenied(t, do("http://api.covered.test/", "API.COVERED.TEST"), "an entry in upper case")
 	})
 
 	t.Run("wildcards", func(t *testing.T) {
-		w := "*.wild.test"
-		notDenied(t, do("http://a.wild.test/", w), "a name under the suffix")
-		notDenied(t, do("http://a.b.wild.test/", w), "a name two labels under the suffix")
-		notDenied(t, do("http://A.WILD.Test/", w), "a name in another case")
-		notDenied(t, do("http://a.wild.test./", w), "a name with a trailing dot")
-		notDenied(t, do("https://a.wild.test/", w), "https, the other default port")
-		denied(t, do("http://wild.test/", w), "a wildcard does not match its apex")
-		denied(t, do("http://xwild.test/", w), "a wildcard matches on a label boundary")
-		denied(t, do("http://a.wild.test.evil.test/", w), "a wildcard matches a suffix, not a prefix")
-		denied(t, do("http://a.wild.test:8080/", w), "an entry without a port does not match another port")
-		denied(t, do("http://a.wild.test:443/", w), "http on the https default port")
-		notDenied(t, do("http://a.wild.test:8080/", "*.wild.test:8080"), "a wildcard with a port")
-		denied(t, do("http://a.wild.test/", "*.wild.test:8080"), "a wildcard with a port, on another")
+		w := "*.wild.covered.test"
+		notDenied(t, do("http://a.wild.covered.test/", w), "a name under the suffix")
+		notDenied(t, do("http://a.b.wild.covered.test/", w), "a name two labels under the suffix")
+		notDenied(t, do("http://A.WILD.Covered.Test/", w), "a name in another case")
+		notDenied(t, do("http://a.wild.covered.test./", w), "a name with a trailing dot")
+		notDenied(t, do("https://a.wild.covered.test/", w), "https, the other default port")
+		denied(t, do("http://wild.covered.test/", w), "a wildcard does not match its apex")
+		denied(t, do("http://xwild.covered.test/", w), "a wildcard matches on a label boundary")
+		denied(t, do("http://a.wild.covered.test.evil.test/", w), "a wildcard matches a suffix, not a prefix")
+		denied(t, do("http://a.wild.covered.test:8080/", w), "an entry without a port does not match another port")
+		denied(t, do("http://a.wild.covered.test:443/", w), "http on the https default port")
+		notDenied(t, do("http://a.wild.covered.test:8080/", "*.wild.covered.test:8080"), "a wildcard with a port")
+		denied(t, do("http://a.wild.covered.test/", "*.wild.covered.test:8080"), "a wildcard with a port, on another")
 	})
 
 	t.Run("a refusal reveals nothing about the network", func(t *testing.T) {
 		start := time.Now()
-		r := do("http://never-resolved-"+strconv.FormatInt(time.Now().UnixNano(), 36)+".test/", "api.test")
+		r := do("http://never-resolved-"+strconv.FormatInt(time.Now().UnixNano(), 36)+".covered.test/", "api.covered.test")
 		denied(t, r, "a name that is not allowed")
 		if took := time.Since(start); took > 2*time.Second {
 			t.Errorf("took %v: a request the allow list refuses must be refused before anything is looked up", took)
@@ -354,16 +364,16 @@ func (h *harness) limits(t *testing.T) {
 
 func (h *harness) failures(t *testing.T) {
 	t.Run("connection refused", func(t *testing.T) {
-		addr := closedPort(t)
+		addr := h.origin.net.ClosedAddr(t)
 		r := h.fetch(t, &egressv1.FetchRequest{Method: "GET", Url: "http://" + addr + "/", Allow: []string{addr}}, 0)
 		check.WantReason(t, r.err, commonv1.ErrorReason_ERROR_REASON_EGRESS_FAILED)
 	})
 	t.Run("a name that does not resolve", func(t *testing.T) {
-		r := h.fetch(t, &egressv1.FetchRequest{Method: "GET", Url: "http://nothing-here.conformance.test/", Allow: []string{"*.conformance.test"}}, 0)
+		r := h.fetch(t, &egressv1.FetchRequest{Method: "GET", Url: "http://nothing-here.covered.test/", Allow: []string{"*.covered.test"}}, 0)
 		check.WantReason(t, r.err, commonv1.ErrorReason_ERROR_REASON_EGRESS_FAILED)
 	})
 	t.Run("a certificate that does not verify", func(t *testing.T) {
-		addr := h.origin.tls.Listener.Addr().String()
+		addr := h.origin.tls.Addr
 		r := h.fetch(t, &egressv1.FetchRequest{Method: "GET", Url: "https://" + addr + "/echo", Allow: []string{addr}}, 0)
 		check.WantReason(t, r.err, commonv1.ErrorReason_ERROR_REASON_EGRESS_FAILED)
 		if r.head != nil {
@@ -421,8 +431,7 @@ func (h *harness) cancellation(t *testing.T) {
 // what stops it.
 func (h *harness) forbidden(t *testing.T) {
 	port := strconv.Itoa(h.origin.port())
-	for name, c := range map[string]struct{ url, entry string }{
-		"loopback (the live origin)":  {h.origin.url("/echo"), h.origin.entry()},
+	cases := map[string]struct{ url, entry string }{
 		"loopback by name":            {"http://localhost:" + port + "/echo", "localhost:" + port},
 		"loopback, another address":   {"http://127.1.2.3:" + port + "/", "127.1.2.3:" + port},
 		"IPv6 loopback":               {"http://[::1]:" + port + "/", "[::1]:" + port},
@@ -443,8 +452,19 @@ func (h *harness) forbidden(t *testing.T) {
 		"IPv6 documentation":          {"http://[2001:db8::1]/", "[2001:db8::1]"},
 		"6to4 embedding loopback":     {"http://[2002:7f00:1::]/", "[2002:7f00:1::]"},
 		"NAT64 embedding loopback":    {"http://[64:ff9b::7f00:1]/", "[64:ff9b::7f00:1]"},
-	} {
+	}
+	// The suite's own web server is a forbidden destination only if it is on
+	// a forbidden address (loopback, a private network...).
+	if a, err := netip.ParseAddr(h.origin.host()); err == nil && (a.IsLoopback() || a.IsPrivate() || a.IsLinkLocalUnicast()) {
+		cases["the suite's own web server"] = struct{ url, entry string }{h.origin.url("/echo"), h.origin.entry()}
+	}
+	covers := h.registration.Info.GetCovers()
+	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
+			u, _ := url.Parse(c.url)
+			if !check.Covered(covers, u.Hostname()) {
+				t.Skipf("the service declared it carries %v, not this destination: it would be refused for that, which is not what is tested", covers)
+			}
 			before := h.origin.count("/echo")
 			start := time.Now()
 			r := h.fetch(t, &egressv1.FetchRequest{Method: "GET", Url: c.url, Allow: []string{c.entry}}, 8*time.Second)

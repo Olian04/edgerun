@@ -25,6 +25,7 @@ const (
 	RoutesPath      webui.PageID[webui.NoArgs] = "/route"
 	NewRoutePath    webui.PageID[RouteNewArgs] = "/route/new"
 	WorkersPath     webui.PageID[webui.NoArgs] = "/worker"
+	NetworkPath     webui.PageID[webui.NoArgs] = "/network"
 	InvocationsPath webui.PageID[webui.NoArgs] = "/invocation"
 )
 
@@ -69,7 +70,7 @@ func App(cfg Config) webui.App {
 			u.overviewPage(),
 			u.functionsPage(), u.newFunctionPage(), u.functionPage(), u.deployPage(), u.envNewPage(false), u.envNewPage(true), u.egressNewPage(),
 			u.routesPage(), u.newRoutePage(),
-			u.workersPage(), u.invocationsPage(),
+			u.workersPage(), u.networkPage(), u.invocationsPage(),
 		},
 		ExternalLinks: []webui.ExternalLink{{Nav: webui.Nav{Label: "Sign out", Icon: "right-from-bracket"}, URL: "/logout"}},
 		Logger:        cfg.Log,

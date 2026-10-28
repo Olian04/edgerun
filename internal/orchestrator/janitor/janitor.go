@@ -12,6 +12,7 @@ import (
 type Store interface {
 	DeleteInvocationsBefore(ctx context.Context, t time.Time, limit int) (int, error)
 	PruneWorkers(ctx context.Context, olderThan time.Duration) (int, error)
+	PruneNetworkServices(ctx context.Context, olderThan time.Duration) (int, error)
 }
 
 // Config configures a Janitor.
@@ -28,7 +29,7 @@ type Config struct {
 	Log   *slog.Logger
 }
 
-// Once runs one cleanup pass and returns how many records and workers it removed.
+// Once runs one cleanup pass and returns how many records, and how many workers and network services, it removed.
 func Once(ctx context.Context, c Config) (invocations, workers int, err error) {
 	if c.Batch == 0 {
 		c.Batch = 5000
@@ -48,7 +49,12 @@ func Once(ctx context.Context, c Config) (invocations, workers int, err error) {
 		}
 	}
 	workers, err = c.Store.PruneWorkers(ctx, c.WorkerGrace)
-	return invocations, workers, err
+	if err != nil {
+		return invocations, workers, err
+	}
+	// Network services are kept as long as workers, and counted with them.
+	services, err := c.Store.PruneNetworkServices(ctx, c.WorkerGrace)
+	return invocations, workers + services, err
 }
 
 // Run calls Once every interval until ctx is done. A failed pass is logged and

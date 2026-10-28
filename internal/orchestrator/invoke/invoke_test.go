@@ -95,6 +95,10 @@ type source struct {
 }
 
 func (s *source) LoadRouting(context.Context) ([]store.RouteEntry, error) { return s.routes, nil }
+func (s *source) ReadyNetworkServices(context.Context, time.Duration) ([]store.NetworkService, error) {
+	return nil, nil
+}
+
 func (s *source) ReadyWorkers(context.Context, time.Duration) ([]store.Worker, error) {
 	return s.workers, nil
 }

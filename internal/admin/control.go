@@ -182,6 +182,17 @@ func (c *Control) Workers(ctx context.Context) ([]*controlv1.WorkerStatus, error
 	return ws, nil
 }
 
+// NetworkServices lists the network services that have registered.
+func (c *Control) NetworkServices(ctx context.Context) ([]*controlv1.NetworkServiceStatus, error) {
+	r, err := c.insp.ListNetworkServices(ctx, connect.NewRequest(&controlv1.ListNetworkServicesRequest{}))
+	if err != nil {
+		return nil, err
+	}
+	ns := r.Msg.Services
+	sort.SliceStable(ns, func(i, j int) bool { return ns[i].Endpoint < ns[j].Endpoint })
+	return ns, nil
+}
+
 // Invocations returns one page of invocation records, newest first. after is
 // the token from the previous page, "" for the first.
 func (c *Control) Invocations(ctx context.Context, functionID, after string, limit int) ([]*controlv1.Invocation, string, error) {

@@ -46,6 +46,10 @@ type Config struct {
 	// AllowNetworks are address ranges the service may connect to although
 	// they are in the ranges it refuses by default. Empty by default.
 	AllowNetworks []netip.Prefix
+	// Covers is what this service carries, canonical and non-empty (see
+	// policy.CanonicalCovers). It refuses a request to any host outside it,
+	// whatever the caller allows.
+	Covers []string
 	// MaxRequestBody and MaxResponseBody bound one exchange.
 	MaxRequestBody, MaxResponseBody uint64
 	// DialTimeout bounds connecting to one address. Default 10s.
@@ -62,11 +66,17 @@ type Config struct {
 type Service struct {
 	egressv1connect.UnimplementedEgressServiceHandler
 	cfg    Config
+	covers policy.Covers
 	client *http.Client
 }
 
-// New returns a service.
+// New returns a service. cfg.Covers must be valid and non-empty: a service
+// that does not say what it carries is a programming error, not a default.
 func New(cfg Config) *Service {
+	covers, err := policy.ParseCovers(cfg.Covers)
+	if err != nil || len(covers) == 0 {
+		panic("server.New: Config.Covers must be non-empty and valid")
+	}
 	if cfg.MaxRequestBody == 0 {
 		cfg.MaxRequestBody = DefaultMaxRequestBody
 	}
@@ -102,7 +112,7 @@ func New(cfg Config) *Service {
 		// declared, and chooses what to accept.
 		DisableCompression: true,
 	}
-	return &Service{cfg: cfg, client: &http.Client{
+	return &Service{cfg: cfg, covers: covers, client: &http.Client{
 		Transport: tr,
 		// Redirects are the caller's to follow: each hop is a destination of
 		// its own, and must pass the allow list on its own.
@@ -117,14 +127,21 @@ func (s *Service) Handler(v authn.Verifier) (string, http.Handler) {
 		connect.WithReadMaxBytes(int(s.cfg.MaxRequestBody)+(256<<10)))
 }
 
+// Implementation identifies this service to peers.
+func Implementation(version string) *commonv1.Implementation {
+	if version == "" {
+		version = "dev"
+	}
+	return &commonv1.Implementation{Name: "edgerun-egress", Version: version, Protocols: []string{"edgerun.egress.v1"}}
+}
+
 // Describe implements EgressService.
 func (s *Service) Describe(context.Context, *connect.Request[egressv1.DescribeRequest]) (*connect.Response[egressv1.DescribeResponse], error) {
 	return connect.NewResponse(&egressv1.DescribeResponse{
-		Implementation: &commonv1.Implementation{
-			Name: "edgerun-egress", Version: s.cfg.Version, Protocols: []string{"edgerun.egress.v1"},
-		},
+		Implementation:       Implementation(s.cfg.Version),
 		MaxRequestBodyBytes:  s.cfg.MaxRequestBody,
 		MaxResponseBodyBytes: s.cfg.MaxResponseBody,
+		Covers:               s.cfg.Covers,
 	}), nil
 }
 
@@ -152,6 +169,12 @@ func (s *Service) Fetch(ctx context.Context, req *connect.Request[egressv1.Fetch
 	if !rules.Allows(target.Scheme, target.Hostname(), port) {
 		s.cfg.Log.Info("egress denied", "invocation_id", r.GetInvocationId(), "host", target.Host, "reason", "not on the allow list")
 		return errs.New(commonv1.ErrorReason_ERROR_REASON_EGRESS_DENIED, "%s is not on the function's allow list", target.Host)
+	}
+
+	// What this service carries is the second limit, after the function's own.
+	if !s.covers.MatchesHost(target.Hostname()) {
+		s.cfg.Log.Info("egress denied", "invocation_id", r.GetInvocationId(), "host", target.Host, "reason", "not carried by this service")
+		return errs.New(commonv1.ErrorReason_ERROR_REASON_EGRESS_DENIED, "%s is not carried by this network service", target.Host)
 	}
 
 	out, err := http.NewRequestWithContext(ctx, r.GetMethod(), target.String(), bytes.NewReader(r.GetBody()))

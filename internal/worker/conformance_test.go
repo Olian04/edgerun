@@ -25,7 +25,6 @@ func TestConformance(t *testing.T) {
 					OrchestratorURL: env.OrchestratorURL,
 					WorkerToken:     env.WorkerToken,
 					ExecutionToken:  env.ExecutionToken,
-					EgressURL:       env.EgressURL,
 					EgressToken:     env.EgressToken,
 					MaxConcurrency:  env.MaxConcurrency,
 					Log:             slog.New(slog.NewTextHandler(io.Discard, nil)),

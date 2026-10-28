@@ -35,6 +35,8 @@ func (f *fake) PruneWorkers(_ context.Context, g time.Duration) (int, error) {
 	return f.workers, nil
 }
 
+func (f *fake) PruneNetworkServices(context.Context, time.Duration) (int, error) { return 0, nil }
+
 func cfg(f *fake) Config {
 	return Config{Store: f, InvocationRetention: 24 * time.Hour, Batch: 100, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 }

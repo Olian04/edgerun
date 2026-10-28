@@ -156,7 +156,7 @@ func (h *harness) requestMapping(t *testing.T) {
 
 	t.Run("the call", func(t *testing.T) {
 		call := h.only(t, "map")
-		if call.header.Get("Authorization") != "Bearer "+ingressToken {
+		if call.header.Get("Authorization") != "Bearer "+h.env.IngressToken {
 			t.Errorf("Authorization = %q, want the ingress token", call.header.Get("Authorization"))
 		}
 	})

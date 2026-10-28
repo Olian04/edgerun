@@ -24,6 +24,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -40,46 +41,70 @@ import (
 )
 
 const (
-	ingressToken   = "conformance-ingress-token"
-	workerToken    = "conformance-worker-token"
-	adminToken     = "conformance-admin-token"
-	executionToken = "conformance-execution-token"
-	heartbeatEvery = 200 * time.Millisecond
-
 	// settle bounds how long a change that is allowed to propagate lazily (a
 	// worker joining or going quiet, a record being written) may take to be
 	// seen. Changes made through the control seam must be seen at once.
 	settle = 15 * time.Second
 )
 
-// Env tells the orchestrator under test how to be configured.
+// Env tells the orchestrator under test how to be configured. The suite's
+// defaults fill any field left empty in Target.Env.
 type Env struct {
-	// IngressToken, WorkerToken and AdminToken are the bearer tokens it must
-	// accept, one per scope; they are distinct.
-	IngressToken, WorkerToken, AdminToken string
+	// IngressToken, WorkerToken, AdminToken and NetworkToken are the bearer
+	// tokens it must accept, one per scope (frontends, workers, operators,
+	// network services); they are distinct.
+	IngressToken, WorkerToken, AdminToken, NetworkToken string
 	// ExecutionToken is what it must present to workers.
 	ExecutionToken string
-	// HeartbeatInterval is what it must dictate to workers, and so a worker
-	// that stays quiet for three of them is no longer alive.
+	// HeartbeatInterval is what it must dictate to workers and to network
+	// services, and so one that stays quiet for three of them is no longer alive.
 	HeartbeatInterval time.Duration
 }
 
-// Target starts the implementation under test.
+func (e Env) withDefaults() Env {
+	if e.IngressToken == "" {
+		e.IngressToken = "conformance-ingress-token"
+	}
+	if e.WorkerToken == "" {
+		e.WorkerToken = "conformance-worker-token"
+	}
+	if e.AdminToken == "" {
+		e.AdminToken = "conformance-admin-token"
+	}
+	if e.NetworkToken == "" {
+		e.NetworkToken = "conformance-network-token"
+	}
+	if e.ExecutionToken == "" {
+		e.ExecutionToken = "conformance-execution-token"
+	}
+	if e.HeartbeatInterval == 0 {
+		e.HeartbeatInterval = 200 * time.Millisecond
+	}
+	return e
+}
+
+// Target is the implementation under test, and how to reach the suite.
 type Target struct {
 	// Launch starts an orchestrator, with empty state, configured per env,
 	// and returns its base URL once it is ready to serve. Arranging for it to
-	// stop at the end of the test is Launch's job.
+	// stop at the end of the test is Launch's job. For an orchestrator that is
+	// already running (empty, and used by nothing else), Launch only returns
+	// where it is.
 	Launch func(t testing.TB, env Env) (url string)
+	// Env overrides the suite's defaults for the tokens it configures the
+	// orchestrator with.
+	Env Env
+	// Net says where the suite's fake workers and network services listen, and
+	// how the orchestrator reaches them: it calls workers, so they must be
+	// reachable from where it runs.
+	Net check.Net
 }
 
 // Run runs the suite against target.
 func Run(t *testing.T, target Target) {
-	env := Env{
-		IngressToken: ingressToken, WorkerToken: workerToken, AdminToken: adminToken,
-		ExecutionToken: executionToken, HeartbeatInterval: heartbeatEvery,
-	}
+	env := target.Env.withDefaults()
 	url := target.Launch(t, env)
-	h := newHarness(url, env)
+	h := newHarness(url, env, target.Net)
 
 	t.Run("Describe", h.describe)
 	t.Run("Authentication", h.authentication)
@@ -92,6 +117,8 @@ func Run(t *testing.T, target Target) {
 	t.Run("Artifacts", h.artifacts)
 	t.Run("FleetRegistration", h.fleetRegistration)
 	t.Run("FleetLiveness", h.fleetLiveness)
+	t.Run("NetworkRegistration", h.networkRegistration)
+	t.Run("NetworkLiveness", h.networkLiveness)
 	t.Run("NoWorkers", h.noWorkers)
 	t.Run("InvokeForwarding", h.invokeForwarding)
 	t.Run("InvokeStreaming", h.invokeStreaming)
@@ -101,6 +128,7 @@ func Run(t *testing.T, target Target) {
 	t.Run("Retries", h.retries)
 	t.Run("ErrorPassthrough", h.errorPassthrough)
 	t.Run("ReadYourWrites", h.readYourWrites)
+	t.Run("NetworkRouting", h.networkRouting)
 	t.Run("EgressReachesTheWorker", h.egressReachesTheWorker)
 	t.Run("InvocationRecords", h.invocationRecords)
 	t.Run("FunctionDeletion", h.functionDeletion)
@@ -110,6 +138,7 @@ func Run(t *testing.T, target Target) {
 type harness struct {
 	url string
 	env Env
+	net check.Net
 	run string // distinguishes this run's names from anything already present
 
 	fn   controlv1connect.FunctionServiceClient
@@ -120,17 +149,17 @@ type harness struct {
 	seq atomic.Int64
 }
 
-func newHarness(url string, env Env) *harness {
+func newHarness(url string, env Env, n check.Net) *harness {
 	hc := http.DefaultClient
 	admin := check.Bearer(env.AdminToken)
 	var run [3]byte
 	rand.Read(run[:])
 	return &harness{
-		url: url, env: env, run: hex.EncodeToString(run[:]),
+		url: url, env: env, net: n, run: hex.EncodeToString(run[:]),
 		fn:   controlv1connect.NewFunctionServiceClient(hc, url, admin),
 		rt:   controlv1connect.NewRouteServiceClient(hc, url, admin),
 		insp: controlv1connect.NewInspectionServiceClient(hc, url, admin),
-		ing:  ingressv1connect.NewIngressServiceClient(hc, url, check.Bearer(env.IngressToken)),
+		ing:  ingressv1connect.NewIngressServiceClient(&http.Client{Transport: budgetTransport{}}, url, check.Bearer(env.IngressToken)),
 	}
 }
 
@@ -155,6 +184,21 @@ func (h *harness) abi() string { return fmt.Sprintf("c%s-%d", h.run, h.seq.Add(1
 
 // host returns a route host unique to this run and call.
 func (h *harness) host() string { return fmt.Sprintf("h%d-%s.conformance.test", h.seq.Add(1), h.run) }
+
+// budgetHeader carries an invocation's wall-clock budget to budgetTransport,
+// which puts it on the wire as Connect-Timeout-Ms.
+const budgetHeader = "X-Conformance-Budget-Ms"
+
+type budgetTransport struct{}
+
+func (budgetTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if b := r.Header.Get(budgetHeader); b != "" {
+		r = r.Clone(r.Context())
+		r.Header.Del(budgetHeader)
+		r.Header.Set("Connect-Timeout-Ms", b)
+	}
+	return http.DefaultTransport.RoundTrip(r)
+}
 
 func ctxT(d time.Duration) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), d)
@@ -269,15 +313,22 @@ func (h *harness) invoke(t testing.TB, c call) result {
 	if c.budget == 0 {
 		c.budget = 30 * time.Second
 	}
-	ctx, cancel := ctxT(c.budget)
+	// The budget is what the orchestrator is told (Connect-Timeout-Ms, see
+	// budgetTransport); the local guard is longer, so that the orchestrator's own
+	// typed error arrives before our timer could replace it with a bare context
+	// error. Connect clients derive the wire deadline from the context, which
+	// would make the two the same value.
+	ctx, cancel := ctxT(c.budget + 15*time.Second)
 	defer cancel()
-	st, err := h.ing.Invoke(ctx, connect.NewRequest(&ingressv1.InvokeRequest{
+	ireq := connect.NewRequest(&ingressv1.InvokeRequest{
 		RequestId: c.requestID,
 		Request: &commonv1.HttpRequest{
 			Method: c.method, Host: c.host, Path: c.path, RawQuery: c.rawQuery, Headers: c.headers,
 			Body: c.body, RemoteAddr: "192.0.2.7:4321",
 		},
-	}))
+	})
+	ireq.Header().Set(budgetHeader, strconv.FormatInt(c.budget.Milliseconds(), 10))
+	st, err := h.ing.Invoke(ctx, ireq)
 	if err != nil {
 		return result{err: err}
 	}

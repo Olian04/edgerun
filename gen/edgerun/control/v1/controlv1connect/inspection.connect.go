@@ -45,6 +45,9 @@ const (
 	// InspectionServiceListInvocationsProcedure is the fully-qualified name of the InspectionService's
 	// ListInvocations RPC.
 	InspectionServiceListInvocationsProcedure = "/edgerun.control.v1.InspectionService/ListInvocations"
+	// InspectionServiceListNetworkServicesProcedure is the fully-qualified name of the
+	// InspectionService's ListNetworkServices RPC.
+	InspectionServiceListNetworkServicesProcedure = "/edgerun.control.v1.InspectionService/ListNetworkServices"
 )
 
 // InspectionServiceClient is a client for the edgerun.control.v1.InspectionService service.
@@ -53,6 +56,8 @@ type InspectionServiceClient interface {
 	ListWorkers(context.Context, *connect.Request[v1.ListWorkersRequest]) (*connect.Response[v1.ListWorkersResponse], error)
 	// ListInvocations pages through invocation records, newest first.
 	ListInvocations(context.Context, *connect.Request[v1.ListInvocationsRequest]) (*connect.Response[v1.ListInvocationsResponse], error)
+	// ListNetworkServices returns the network services that have registered.
+	ListNetworkServices(context.Context, *connect.Request[v1.ListNetworkServicesRequest]) (*connect.Response[v1.ListNetworkServicesResponse], error)
 }
 
 // NewInspectionServiceClient constructs a client for the edgerun.control.v1.InspectionService
@@ -84,14 +89,21 @@ func NewInspectionServiceClient(httpClient connect.HTTPClient, baseURL string, o
 			connect.WithSchema(inspectionServiceMethods.ByName("ListInvocations")),
 			connect.WithClientOptions(opts...),
 		),
+		listNetworkServices: connect.NewClient[v1.ListNetworkServicesRequest, v1.ListNetworkServicesResponse](
+			httpClient,
+			baseURL+InspectionServiceListNetworkServicesProcedure,
+			connect.WithSchema(inspectionServiceMethods.ByName("ListNetworkServices")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // inspectionServiceClient implements InspectionServiceClient.
 type inspectionServiceClient struct {
-	describe        *connect.Client[v1.DescribeRequest, v1.DescribeResponse]
-	listWorkers     *connect.Client[v1.ListWorkersRequest, v1.ListWorkersResponse]
-	listInvocations *connect.Client[v1.ListInvocationsRequest, v1.ListInvocationsResponse]
+	describe            *connect.Client[v1.DescribeRequest, v1.DescribeResponse]
+	listWorkers         *connect.Client[v1.ListWorkersRequest, v1.ListWorkersResponse]
+	listInvocations     *connect.Client[v1.ListInvocationsRequest, v1.ListInvocationsResponse]
+	listNetworkServices *connect.Client[v1.ListNetworkServicesRequest, v1.ListNetworkServicesResponse]
 }
 
 // Describe calls edgerun.control.v1.InspectionService.Describe.
@@ -109,6 +121,11 @@ func (c *inspectionServiceClient) ListInvocations(ctx context.Context, req *conn
 	return c.listInvocations.CallUnary(ctx, req)
 }
 
+// ListNetworkServices calls edgerun.control.v1.InspectionService.ListNetworkServices.
+func (c *inspectionServiceClient) ListNetworkServices(ctx context.Context, req *connect.Request[v1.ListNetworkServicesRequest]) (*connect.Response[v1.ListNetworkServicesResponse], error) {
+	return c.listNetworkServices.CallUnary(ctx, req)
+}
+
 // InspectionServiceHandler is an implementation of the edgerun.control.v1.InspectionService
 // service.
 type InspectionServiceHandler interface {
@@ -116,6 +133,8 @@ type InspectionServiceHandler interface {
 	ListWorkers(context.Context, *connect.Request[v1.ListWorkersRequest]) (*connect.Response[v1.ListWorkersResponse], error)
 	// ListInvocations pages through invocation records, newest first.
 	ListInvocations(context.Context, *connect.Request[v1.ListInvocationsRequest]) (*connect.Response[v1.ListInvocationsResponse], error)
+	// ListNetworkServices returns the network services that have registered.
+	ListNetworkServices(context.Context, *connect.Request[v1.ListNetworkServicesRequest]) (*connect.Response[v1.ListNetworkServicesResponse], error)
 }
 
 // NewInspectionServiceHandler builds an HTTP handler from the service implementation. It returns
@@ -143,6 +162,12 @@ func NewInspectionServiceHandler(svc InspectionServiceHandler, opts ...connect.H
 		connect.WithSchema(inspectionServiceMethods.ByName("ListInvocations")),
 		connect.WithHandlerOptions(opts...),
 	)
+	inspectionServiceListNetworkServicesHandler := connect.NewUnaryHandler(
+		InspectionServiceListNetworkServicesProcedure,
+		svc.ListNetworkServices,
+		connect.WithSchema(inspectionServiceMethods.ByName("ListNetworkServices")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/edgerun.control.v1.InspectionService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case InspectionServiceDescribeProcedure:
@@ -151,6 +176,8 @@ func NewInspectionServiceHandler(svc InspectionServiceHandler, opts ...connect.H
 			inspectionServiceListWorkersHandler.ServeHTTP(w, r)
 		case InspectionServiceListInvocationsProcedure:
 			inspectionServiceListInvocationsHandler.ServeHTTP(w, r)
+		case InspectionServiceListNetworkServicesProcedure:
+			inspectionServiceListNetworkServicesHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -170,4 +197,8 @@ func (UnimplementedInspectionServiceHandler) ListWorkers(context.Context, *conne
 
 func (UnimplementedInspectionServiceHandler) ListInvocations(context.Context, *connect.Request[v1.ListInvocationsRequest]) (*connect.Response[v1.ListInvocationsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("edgerun.control.v1.InspectionService.ListInvocations is not implemented"))
+}
+
+func (UnimplementedInspectionServiceHandler) ListNetworkServices(context.Context, *connect.Request[v1.ListNetworkServicesRequest]) (*connect.Response[v1.ListNetworkServicesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("edgerun.control.v1.InspectionService.ListNetworkServices is not implemented"))
 }

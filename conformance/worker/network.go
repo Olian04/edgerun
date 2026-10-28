@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"net/http"
-	"net/http/httptest"
 	"strconv"
 	"strings"
 	"sync"
@@ -13,15 +12,18 @@ import (
 
 	"connectrpc.com/connect"
 
+	"github.com/Olian04/edgerun/conformance/internal/check"
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
 	egressv1 "github.com/Olian04/edgerun/gen/edgerun/egress/v1"
 	"github.com/Olian04/edgerun/gen/edgerun/egress/v1/egressv1connect"
+	workerv1 "github.com/Olian04/edgerun/gen/edgerun/worker/v1"
 )
 
 // fakeEgress is the network service side of the egress seam. It records every
 // call the worker makes and answers as the test scripts it.
 type fakeEgress struct {
-	srv *httptest.Server
+	srv   *check.Server
+	token string
 
 	mu     sync.Mutex
 	calls  []egressCall
@@ -34,13 +36,26 @@ type egressCall struct {
 	header http.Header
 }
 
-func newFakeEgress(t testing.TB) *fakeEgress {
-	e := &fakeEgress{gone: make(chan struct{}, 16)}
+func newFakeEgress(t testing.TB, n check.Net, token string) *fakeEgress {
+	e := &fakeEgress{token: token, gone: make(chan struct{}, 16)}
 	mux := http.NewServeMux()
 	mux.Handle(egressv1connect.NewEgressServiceHandler(egressHandler{e}))
-	e.srv = httptest.NewServer(mux)
-	t.Cleanup(e.srv.Close)
+	e.srv = n.Serve(t, mux, false)
 	return e
+}
+
+// grant lets the function reach allow through this service.
+func (e *fakeEgress) grant(allow string) *workerv1.EgressGrant {
+	return &workerv1.EgressGrant{Allow: allow, Service: e.srv.URL}
+}
+
+// grants lets the function reach each entry through this service.
+func (e *fakeEgress) grants(allow ...string) []*workerv1.EgressGrant {
+	var out []*workerv1.EgressGrant
+	for _, a := range allow {
+		out = append(out, e.grant(a))
+	}
+	return out
 }
 
 func (e *fakeEgress) script(f func(ctx context.Context, req *egressv1.FetchRequest, st *connect.ServerStream[egressv1.FetchResponse]) error) {
@@ -65,7 +80,7 @@ func (h egressHandler) Describe(context.Context, *connect.Request[egressv1.Descr
 }
 
 func (h egressHandler) Fetch(ctx context.Context, r *connect.Request[egressv1.FetchRequest], st *connect.ServerStream[egressv1.FetchResponse]) error {
-	if r.Header().Get("Authorization") != "Bearer "+egressToken {
+	if r.Header().Get("Authorization") != "Bearer "+h.e.token {
 		return connect.NewError(connect.CodeUnauthenticated, nil)
 	}
 	h.e.mu.Lock()
@@ -107,9 +122,9 @@ func hdr(name, value string) *commonv1.Header { return &commonv1.Header{Name: na
 // netCall runs the network guest's /fetch path with the given request text and
 // allow list, and returns the guest's answer split into the code it got and
 // the response it read.
-func (h *harness) netCall(t *testing.T, path, request string, allow []string, mod func(*invocation)) (code int, response string, out outcome) {
+func (h *harness) netCall(t *testing.T, path, request string, grants []*workerv1.EgressGrant, mod func(*invocation)) (code int, response string, out outcome) {
 	t.Helper()
-	inv := invocation{path: path, method: "POST", body: request, digest: h.netGood, abi: "wagi-2", egress: allow}
+	inv := invocation{path: path, method: "POST", body: request, digest: h.netGood, abi: "wagi-2", egress: grants}
 	if mod != nil {
 		mod(&inv)
 	}
@@ -160,11 +175,58 @@ func (h *harness) network(t *testing.T) {
 		}
 	})
 
+	t.Run("a destination no grant allows", func(t *testing.T) {
+		h.egress.script(ok)
+		code, _, _ := h.netCall(t, "/fetch", "GET http://elsewhere.test/\n\n", h.egress.grants("api.test"), nil)
+		if code != -1 {
+			t.Errorf("code = %d, want -1 (denied): nothing grants elsewhere.test", code)
+		}
+		code, _, _ = h.netCall(t, "/fetch", "GET http://api.test:8443/\n\n", h.egress.grants("api.test"), nil)
+		if code != -1 {
+			t.Errorf("code = %d, want -1: a grant without a port allows only the scheme's default", code)
+		}
+		if n := len(h.egress.received()); n != 0 {
+			t.Errorf("the worker called a network service %d times for destinations nothing grants", n)
+		}
+	})
+
+	t.Run("each destination goes through the service its grant names", func(t *testing.T) {
+		other := newFakeEgress(t, h.net, h.env.EgressToken)
+		h.egress.script(reply(200, nil, []byte("from the first")))
+		other.script(reply(200, nil, []byte("from the second")))
+		// db.corp.test is allowed by two grants, naming different services: the first wins.
+		grants := []*workerv1.EgressGrant{
+			h.egress.grant("public.test"), other.grant("10.1.2.3:8080"), other.grant("*.corp.test"), h.egress.grant("db.corp.test"), h.egress.grant("api.test"),
+		}
+		for _, c := range []struct{ url, want, allow string }{
+			{"http://public.test/", "from the first", "public.test,db.corp.test,api.test"},
+			{"http://10.1.2.3:8080/x", "from the second", "10.1.2.3:8080,*.corp.test"},
+			{"http://db.corp.test/", "from the second", "10.1.2.3:8080,*.corp.test"},
+		} {
+			code, resp, _ := h.netCall(t, "/fetch", "GET "+c.url+"\n\n", grants, nil)
+			if code < 0 || !strings.HasSuffix(resp, c.want) {
+				t.Errorf("%s: code %d, response %q, want %q", c.url, code, resp, c.want)
+			}
+		}
+		if n := len(h.egress.received()); n != 1 {
+			t.Errorf("the first service was called %d times, want 1", n)
+		}
+		calls := other.received()
+		if len(calls) != 2 {
+			t.Fatalf("the second service was called %d times, want 2", len(calls))
+		}
+		// A service is told the entries it carries for this function, and no others.
+		if got := strings.Join(calls[0].req.GetAllow(), ","); got != "10.1.2.3:8080,*.corp.test" {
+			t.Errorf("allow = %q, want the grants naming this service", got)
+		}
+	})
+
 	t.Run("a request and its response", func(t *testing.T) {
 		long := strings.Repeat("0123456789", 25) // more than one 100-byte read
 		h.egress.script(reply(201, []*commonv1.Header{hdr("x-a", "1"), hdr("x-a", "2"), hdr("content-type", "text/x-conformance")}, []byte(long[:100]), []byte(long[100:])))
 		allow := []string{"api.test", "*.cdn.test:8443"}
-		code, resp, out := h.netCall(t, "/fetch", "POST http://api.test/v1/items?x=1\nContent-Type: text/plain\nX-Two: 2\nX-Two: 3\n\nthe body", allow, func(inv *invocation) {
+		grants := h.egress.grants(allow...)
+		code, resp, out := h.netCall(t, "/fetch", "POST http://api.test/v1/items?x=1\nContent-Type: text/plain\nX-Two: 2\nX-Two: 3\n\nthe body", grants, func(inv *invocation) {
 			inv.timeout = 20 * time.Second
 		})
 		want := "Status: 201\nx-a: 1\nx-a: 2\ncontent-type: text/x-conformance\n\n" + long
@@ -194,7 +256,7 @@ func (h *harness) network(t *testing.T) {
 		if got.req.GetInvocationId() != "conformance-"+t.Name() && got.req.GetInvocationId() == "" {
 			t.Error("invocation_id is empty")
 		}
-		if got.header.Get("Authorization") != "Bearer "+egressToken {
+		if got.header.Get("Authorization") != "Bearer "+h.env.EgressToken {
 			t.Errorf("Authorization = %q, want the egress token", got.header.Get("Authorization"))
 		}
 		ms, err := strconv.Atoi(got.header.Get("Connect-Timeout-Ms"))
@@ -222,7 +284,7 @@ func (h *harness) network(t *testing.T) {
 			"internal":              {refuse(commonv1.ErrorReason_ERROR_REASON_INTERNAL, connect.CodeInternal), -2},
 		} {
 			h.egress.script(c.script)
-			if code, _, _ := h.netCall(t, "/fetch", "GET http://api.test/\n\n", []string{"api.test"}, nil); code != c.want {
+			if code, _, _ := h.netCall(t, "/fetch", "GET http://api.test/\n\n", h.egress.grants("api.test"), nil); code != c.want {
 				t.Errorf("%s: the guest got %d, want %d", name, code, c.want)
 			}
 		}
@@ -237,7 +299,7 @@ func (h *harness) network(t *testing.T) {
 			"empty":                  "",
 			"too large":              "POST http://api.test/\n\n" + strings.Repeat("x", 1<<20),
 		} {
-			if code, _, _ := h.netCall(t, "/fetch", req, []string{"api.test"}, nil); code != -4 {
+			if code, _, _ := h.netCall(t, "/fetch", req, h.egress.grants("api.test"), nil); code != -4 {
 				t.Errorf("%s: code = %d, want -4 (invalid)", name, code)
 			}
 		}
@@ -251,7 +313,7 @@ func (h *harness) network(t *testing.T) {
 
 	t.Run("at most 16 requests an invocation", func(t *testing.T) {
 		h.egress.script(ok)
-		_, _, out := h.netCall(t, "/fetch-many", "GET http://api.test/\n\n", []string{"api.test"}, func(inv *invocation) { inv.query = "n=18" })
+		_, _, out := h.netCall(t, "/fetch-many", "GET http://api.test/\n\n", h.egress.grants("api.test"), func(inv *invocation) { inv.query = "n=18" })
 		fields := strings.Fields(strings.TrimPrefix(strings.TrimSpace(string(out.body)), ""))
 		if len(fields) != 18 {
 			t.Fatalf("answer %q", out.body)
@@ -296,7 +358,7 @@ func (h *harness) network(t *testing.T) {
 
 	t.Run("response limits", func(t *testing.T) {
 		h.egress.script(reply(200, nil, bytes.Repeat([]byte("x"), 2000)))
-		code, _, _ := h.netCall(t, "/fetch", "GET http://api.test/\n\n", []string{"api.test"}, func(inv *invocation) {
+		code, _, _ := h.netCall(t, "/fetch", "GET http://api.test/\n\n", h.egress.grants("api.test"), func(inv *invocation) {
 			inv.limits = &commonv1.Limits{MaxResponseBytes: 1000}
 		})
 		if code != -3 {
@@ -308,7 +370,7 @@ func (h *harness) network(t *testing.T) {
 
 		// A service that exceeds the bound it was given is not believed.
 		h.egress.script(reply(200, nil, bytes.Repeat([]byte("x"), 1<<20), bytes.Repeat([]byte("x"), 1<<20), bytes.Repeat([]byte("x"), 1<<20), bytes.Repeat([]byte("x"), 1<<20), []byte("x")))
-		if code, _, _ := h.netCall(t, "/fetch", "GET http://api.test/\n\n", []string{"api.test"}, func(inv *invocation) {
+		if code, _, _ := h.netCall(t, "/fetch", "GET http://api.test/\n\n", h.egress.grants("api.test"), func(inv *invocation) {
 			inv.limits = &commonv1.Limits{MaxResponseBytes: 32 << 20}
 		}); code != -3 {
 			t.Errorf("a response over 4 MiB: code = %d, want -3", code)
@@ -329,7 +391,7 @@ func (h *harness) network(t *testing.T) {
 		})
 		start := time.Now()
 		out := h.call(t, invocation{path: "/fetch", method: "POST", body: "GET http://slow.test/\n\n", digest: h.netGood, abi: "wagi-2",
-			egress: []string{"slow.test"}, timeout: 2 * time.Second})
+			egress: h.egress.grants("slow.test"), timeout: 2 * time.Second})
 		wantReason(t, out.err, commonv1.ErrorReason_ERROR_REASON_DEADLINE_EXCEEDED)
 		if took := time.Since(start); took > 15*time.Second {
 			t.Errorf("answered after %v with a budget of 2s", took)
@@ -345,7 +407,7 @@ func (h *harness) network(t *testing.T) {
 // rawText runs a net guest path and returns what it printed after the headers.
 func (h *harness) rawText(t *testing.T, path, body string) string {
 	t.Helper()
-	out := h.ok(t, invocation{path: path, method: "POST", body: body, digest: h.netGood, abi: "wagi-2", egress: []string{"api.test"}})
+	out := h.ok(t, invocation{path: path, method: "POST", body: body, digest: h.netGood, abi: "wagi-2", egress: h.egress.grants("api.test")})
 	return string(out.body)
 }
 

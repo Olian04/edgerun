@@ -107,3 +107,157 @@ func TestAllows(t *testing.T) {
 		t.Error("an empty list allows nothing")
 	}
 }
+
+func TestParseCover(t *testing.T) {
+	for in, want := range map[string]string{
+		"*":                     "*",
+		"Example.COM":           "example.com",
+		"*.Example.com":         "*.example.com",
+		"192.0.2.7":             "192.0.2.7",
+		"::ffff:192.0.2.7":      "192.0.2.7",
+		"2001:DB8::1":           "2001:db8::1",
+		"10.1.2.3/8":            "10.0.0.0/8", // an address range is its network
+		"fd00::/8":              "fd00::/8",
+		"corp.internal":         "corp.internal",
+		"*.corp.internal":       "*.corp.internal",
+		"xn--bcher-kva.example": "xn--bcher-kva.example",
+	} {
+		c, err := ParseCover(in)
+		if err != nil || c.String() != want {
+			t.Errorf("ParseCover(%q) = %v, %v; want %q", in, c, err, want)
+		}
+	}
+	for _, in := range []string{
+		"", "**", "*.", "*.*", "*example.com", "a.*.com", "example.com:443", "example.com/24", "10.0.0.0/33", "10.0.0.0/",
+		"*.192.0.2.1", "a b", "http://example.com", "-a.com", "a..b", "[::1]", "fe80::1%eth0", "bücher.example",
+	} {
+		if c, err := ParseCover(in); err == nil {
+			t.Errorf("ParseCover(%q) = %v, want an error", in, c)
+		}
+	}
+}
+
+func TestCanonicalCovers(t *testing.T) {
+	got, err := CanonicalCovers([]string{"B.example.com", "*", "10.1.1.1/8", "b.example.com"})
+	if err != nil || fmt.Sprint(got) != "[* 10.0.0.0/8 b.example.com]" {
+		t.Errorf("CanonicalCovers = %v, %v", got, err)
+	}
+	if _, err := CanonicalCovers(nil); err == nil {
+		t.Error("a service that says nothing about what it carries is refused")
+	}
+	if _, err := CanonicalCovers([]string{"ok.com", "not ok"}); err == nil {
+		t.Error("one bad entry fails the list")
+	}
+	var many []string
+	for i := 0; i < MaxCovers+1; i++ {
+		many = append(many, fmt.Sprintf("h%d.example.com", i))
+	}
+	if _, err := CanonicalCovers(many); err == nil {
+		t.Error("too many entries")
+	}
+}
+
+func TestCoverMatchesHost(t *testing.T) {
+	for _, c := range []struct {
+		cover, host string
+		want        bool
+	}{
+		{"*", "anything.test", true},
+		{"*", "192.0.2.1", true},
+		{"example.com", "example.com", true},
+		{"example.com", "EXAMPLE.com.", true},
+		{"example.com", "a.example.com", false},
+		{"*.example.com", "a.b.example.com", true},
+		{"*.example.com", "example.com", false},
+		{"*.example.com", "xexample.com", false},
+		{"192.0.2.7", "192.0.2.7", true},
+		{"192.0.2.7", "[::ffff:192.0.2.7]", true},
+		{"10.0.0.0/8", "10.9.9.9", true},
+		{"10.0.0.0/8", "11.0.0.1", false},
+		{"10.0.0.0/8", "internal.corp", false}, // a name is not judged by where it might resolve
+		{"fd00::/8", "fd12::1", true},
+		{"fd00::/8", "[fd12::1]", true},
+		{"example.com", "", false},
+	} {
+		cv, err := ParseCover(c.cover)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := cv.MatchesHost(c.host); got != c.want {
+			t.Errorf("%q matches %q = %v, want %v", c.cover, c.host, got, c.want)
+		}
+	}
+}
+
+func TestCoverIncludesAnAllowEntry(t *testing.T) {
+	for _, c := range []struct {
+		cover, entry string
+		want         bool
+	}{
+		{"*", "api.example.com", true},
+		{"*", "*.example.com:8443", true},
+		{"example.com", "example.com:8443", true}, // a service carries a host on any port
+		{"example.com", "api.example.com", false},
+		{"*.example.com", "api.example.com", true},
+		{"*.example.com", "*.cdn.example.com", true},
+		{"*.example.com", "*.example.com", true},
+		{"*.example.com", "*.com", false},
+		{"*.cdn.example.com", "*.example.com", false}, // would carry only part of it
+		{"api.example.com", "*.example.com", false},
+		{"10.0.0.0/8", "10.1.2.3:8080", true},
+		{"10.0.0.0/8", "11.1.2.3", false},
+		{"10.0.0.0/8", "internal.corp", false},
+		{"10.0.0.0/8", "*.corp", false},
+		{"[::1]", "[::1]:80", false}, // not a coverage entry; see the next case
+	} {
+		cv, err := ParseCover(strings.Trim(c.cover, "[]"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, err := ParseRule(c.entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.cover == "[::1]" {
+			c.want = true
+		}
+		if got := cv.Includes(r); got != c.want {
+			t.Errorf("cover %q includes entry %q = %v, want %v", c.cover, c.entry, got, c.want)
+		}
+	}
+}
+
+func TestTheMostPreciseCoverWins(t *testing.T) {
+	covers, err := ParseCovers([]string{"*", "10.0.0.0/8", "10.1.0.0/16", "*.example.com", "*.cdn.example.com", "api.cdn.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for entry, want := range map[string]string{
+		"api.cdn.example.com": "api.cdn.example.com",
+		"img.cdn.example.com": "*.cdn.example.com",
+		"www.example.com":     "*.example.com",
+		"elsewhere.test":      "*",
+		"10.1.2.3":            "10.1.0.0/16",
+		"10.2.2.3":            "10.0.0.0/8",
+		"*.cdn.example.com":   "*.cdn.example.com",
+		"*.example.com":       "*.example.com",
+		"*.test":              "*",
+	} {
+		r, _ := ParseRule(entry)
+		got, ok := covers.BestFor(r)
+		if !ok || got.String() != want {
+			t.Errorf("best cover for %q = %v (%v), want %q", entry, got, ok, want)
+		}
+	}
+	if _, ok := (Covers{}).BestFor(Rule{Host: "x.test"}); ok {
+		t.Error("no covers carry nothing")
+	}
+	only, _ := ParseCovers([]string{"*.example.com"})
+	r, _ := ParseRule("other.test")
+	if _, ok := only.BestFor(r); ok {
+		t.Error("a destination no cover names is carried by no one")
+	}
+	if CompareRank([2]int{4, 0}, [2]int{3, 99}) <= 0 || CompareRank([2]int{3, 5}, [2]int{3, 9}) >= 0 || CompareRank([2]int{1, 0}, [2]int{1, 0}) != 0 {
+		t.Error("rank order")
+	}
+}

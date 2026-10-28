@@ -40,11 +40,22 @@ message ExecuteRequest {
   edgerun.common.v1.Limits limits = 4;
   repeated edgerun.common.v1.EnvVar env = 5;
   edgerun.common.v1.HttpRequest request = 6;
-  // The destinations the function may reach over the network, as host
-  // patterns (see the protocol docs). Empty means none: guests are closed off
-  // by default. A worker passes this list on with every outbound request the
-  // guest makes, and makes none if it is empty.
-  repeated string egress_allow = 7;
+  // The destinations the function may reach over the network, each with the
+  // network service that carries it, which the orchestrator chose among those
+  // registered. Empty means none: guests are closed off by default. A worker
+  // makes an outbound request through the service of the first grant whose
+  // allow entry matches its URL, passes it the entries that service carries
+  // for this function, and refuses it, without calling anyone, if none match.
+  repeated EgressGrant egress = 7;
+}
+
+// EgressGrant lets a function reach the destinations an allow-list entry names
+// (see the protocol docs for the grammar), through one network service.
+message EgressGrant {
+  // The entry the operator listed, in canonical form.
+  string allow = 1;
+  // Base URL of the network service that carries it.
+  string service = 2;
 }
 
 message ExecuteResponse {

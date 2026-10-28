@@ -5,19 +5,22 @@ import (
 	"compress/gzip"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
-	"net/http/httptest"
+	"net/netip"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
+
+	"github.com/Olian04/edgerun/conformance/internal/check"
 )
 
 // origin is the web server the service is asked to reach. It records what it
 // was sent, so tests can say what did and did not arrive.
 type origin struct {
-	srv *httptest.Server
-	tls *httptest.Server
+	net check.Net
+	srv *check.Server
+	tls *check.Server
 
 	mu   sync.Mutex
 	hits map[string]int
@@ -32,21 +35,52 @@ type seenRequest struct {
 	Body              []byte
 }
 
-func newOrigin(t *testing.T) *origin {
-	o := &origin{hits: map[string]int{}, last: map[string]seenRequest{}, gone: make(chan struct{}, 16)}
-	o.srv = httptest.NewServer(http.HandlerFunc(o.serve))
-	o.tls = httptest.NewTLSServer(http.HandlerFunc(o.serve))
-	t.Cleanup(o.srv.Close)
-	t.Cleanup(o.tls.Close)
+func newOrigin(t *testing.T, n check.Net) *origin {
+	o := &origin{net: n, hits: map[string]int{}, last: map[string]seenRequest{}, gone: make(chan struct{}, 16)}
+	o.srv = n.Serve(t, http.HandlerFunc(o.serve), false)
+	o.tls = n.ServeTLS(t, http.HandlerFunc(o.serve))
 	return o
 }
 
-func (o *origin) addr() string  { return o.srv.Listener.Addr().String() }
+// host is the host the service reaches the origin at.
+func (o *origin) host() string { return o.net.Host() }
+
+func (o *origin) addr() string  { return o.srv.Addr }
 func (o *origin) entry() string { return o.addr() }
-func (o *origin) port() int     { return o.srv.Listener.Addr().(*net.TCPAddr).Port }
+func (o *origin) port() int     { return o.srv.Port }
+
+// hostEntry is an allow-list entry for the origin's host, with no port.
+func (o *origin) hostEntry() string { return bracket(o.host()) }
 
 // url returns an http URL for path on the origin.
 func (o *origin) url(path string) string { return "http://" + o.addr() + path }
+
+// bracket writes an IPv6 literal the way URLs and allow-list entries do.
+func bracket(host string) string {
+	if strings.Contains(host, ":") && !strings.HasPrefix(host, "[") {
+		return "[" + host + "]"
+	}
+	return host
+}
+
+// neighbour returns another IPv4 address next to host, or "" if host is not
+// one: for testing that an entry for one address does not allow another.
+func (o *origin) neighbour() string {
+	a, err := netip.ParseAddr(o.host())
+	if err != nil || !a.Is4() {
+		return ""
+	}
+	b := a.As4()
+	b[3] ^= 1
+	return netip.AddrFrom4(b).String()
+}
+
+// loopback reports whether the origin is on the machine of the service, which
+// is when names like "localhost" lead to it.
+func (o *origin) loopback() bool {
+	a, err := netip.ParseAddr(o.host())
+	return (err == nil && a.IsLoopback()) || o.host() == "localhost"
+}
 
 func (o *origin) count(path string) int {
 	o.mu.Lock()
@@ -58,17 +92,6 @@ func (o *origin) lastRequest(path string) seenRequest {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	return o.last[path]
-}
-
-// closedPort returns an address nothing listens on.
-func closedPort(t testing.TB) string {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := l.Addr().String()
-	l.Close()
-	return addr
 }
 
 func (o *origin) serve(w http.ResponseWriter, r *http.Request) {

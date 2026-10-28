@@ -10,6 +10,7 @@ package controlv1
 
 import (
 	v1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
+	v12 "github.com/Olian04/edgerun/gen/edgerun/egress/v1"
 	v11 "github.com/Olian04/edgerun/gen/edgerun/worker/v1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
@@ -602,11 +603,98 @@ func (x *Invocation) GetStartTime() *timestamppb.Timestamp {
 	return nil
 }
 
+// NetworkServiceStatus is a registered network service as the orchestrator
+// sees it.
+type NetworkServiceStatus struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Id                string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Endpoint          string                 `protobuf:"bytes,2,opt,name=endpoint,proto3" json:"endpoint,omitempty"`
+	Info              *v12.ServiceInfo       `protobuf:"bytes,3,opt,name=info,proto3" json:"info,omitempty"`
+	State             v12.ServiceState       `protobuf:"varint,4,opt,name=state,proto3,enum=edgerun.egress.v1.ServiceState" json:"state,omitempty"`
+	LastHeartbeatTime *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=last_heartbeat_time,json=lastHeartbeatTime,proto3" json:"last_heartbeat_time,omitempty"`
+	// Whether it has heartbeated recently enough to be given work.
+	Alive         bool `protobuf:"varint,6,opt,name=alive,proto3" json:"alive,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *NetworkServiceStatus) Reset() {
+	*x = NetworkServiceStatus{}
+	mi := &file_edgerun_control_v1_model_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NetworkServiceStatus) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NetworkServiceStatus) ProtoMessage() {}
+
+func (x *NetworkServiceStatus) ProtoReflect() protoreflect.Message {
+	mi := &file_edgerun_control_v1_model_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NetworkServiceStatus.ProtoReflect.Descriptor instead.
+func (*NetworkServiceStatus) Descriptor() ([]byte, []int) {
+	return file_edgerun_control_v1_model_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *NetworkServiceStatus) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *NetworkServiceStatus) GetEndpoint() string {
+	if x != nil {
+		return x.Endpoint
+	}
+	return ""
+}
+
+func (x *NetworkServiceStatus) GetInfo() *v12.ServiceInfo {
+	if x != nil {
+		return x.Info
+	}
+	return nil
+}
+
+func (x *NetworkServiceStatus) GetState() v12.ServiceState {
+	if x != nil {
+		return x.State
+	}
+	return v12.ServiceState(0)
+}
+
+func (x *NetworkServiceStatus) GetLastHeartbeatTime() *timestamppb.Timestamp {
+	if x != nil {
+		return x.LastHeartbeatTime
+	}
+	return nil
+}
+
+func (x *NetworkServiceStatus) GetAlive() bool {
+	if x != nil {
+		return x.Alive
+	}
+	return false
+}
+
 var File_edgerun_control_v1_model_proto protoreflect.FileDescriptor
 
 const file_edgerun_control_v1_model_proto_rawDesc = "" +
 	"\n" +
-	"\x1eedgerun/control/v1/model.proto\x12\x12edgerun.control.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1eedgerun/common/v1/common.proto\x1a\x1eedgerun/worker/v1/worker.proto\"\xba\x01\n" +
+	"\x1eedgerun/control/v1/model.proto\x12\x12edgerun.control.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1eedgerun/common/v1/common.proto\x1a edgerun/egress/v1/registry.proto\x1a\x1eedgerun/worker/v1/worker.proto\"\xba\x01\n" +
 	"\bFunction\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12*\n" +
@@ -666,7 +754,14 @@ const file_edgerun_control_v1_model_proto_rawDesc = "" +
 	"\x11peak_memory_bytes\x18\v \x01(\x04R\x0fpeakMemoryBytes\x12\x16\n" +
 	"\x06stderr\x18\f \x01(\fR\x06stderr\x129\n" +
 	"\n" +
-	"start_time\x18\r \x01(\v2\x1a.google.protobuf.TimestampR\tstartTimeB\xcb\x01\n" +
+	"start_time\x18\r \x01(\v2\x1a.google.protobuf.TimestampR\tstartTime\"\x8f\x02\n" +
+	"\x14NetworkServiceStatus\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1a\n" +
+	"\bendpoint\x18\x02 \x01(\tR\bendpoint\x122\n" +
+	"\x04info\x18\x03 \x01(\v2\x1e.edgerun.egress.v1.ServiceInfoR\x04info\x125\n" +
+	"\x05state\x18\x04 \x01(\x0e2\x1f.edgerun.egress.v1.ServiceStateR\x05state\x12J\n" +
+	"\x13last_heartbeat_time\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\x11lastHeartbeatTime\x12\x14\n" +
+	"\x05alive\x18\x06 \x01(\bR\x05aliveB\xcb\x01\n" +
 	"\x16com.edgerun.control.v1B\n" +
 	"ModelProtoP\x01Z;github.com/Olian04/edgerun/gen/edgerun/control/v1;controlv1\xa2\x02\x03ECX\xaa\x02\x12Edgerun.Control.V1\xca\x02\x12Edgerun\\Control\\V1\xe2\x02\x1eEdgerun\\Control\\V1\\GPBMetadata\xea\x02\x14Edgerun::Control::V1b\x06proto3"
 
@@ -682,7 +777,7 @@ func file_edgerun_control_v1_model_proto_rawDescGZIP() []byte {
 	return file_edgerun_control_v1_model_proto_rawDescData
 }
 
-var file_edgerun_control_v1_model_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_edgerun_control_v1_model_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_edgerun_control_v1_model_proto_goTypes = []any{
 	(*Function)(nil),              // 0: edgerun.control.v1.Function
 	(*FunctionVersion)(nil),       // 1: edgerun.control.v1.FunctionVersion
@@ -690,27 +785,33 @@ var file_edgerun_control_v1_model_proto_goTypes = []any{
 	(*EnvEntry)(nil),              // 3: edgerun.control.v1.EnvEntry
 	(*WorkerStatus)(nil),          // 4: edgerun.control.v1.WorkerStatus
 	(*Invocation)(nil),            // 5: edgerun.control.v1.Invocation
-	(*timestamppb.Timestamp)(nil), // 6: google.protobuf.Timestamp
-	(*v1.Limits)(nil),             // 7: edgerun.common.v1.Limits
-	(*v11.WorkerInfo)(nil),        // 8: edgerun.worker.v1.WorkerInfo
-	(v11.WorkerState)(0),          // 9: edgerun.worker.v1.WorkerState
-	(v1.ErrorReason)(0),           // 10: edgerun.common.v1.ErrorReason
+	(*NetworkServiceStatus)(nil),  // 6: edgerun.control.v1.NetworkServiceStatus
+	(*timestamppb.Timestamp)(nil), // 7: google.protobuf.Timestamp
+	(*v1.Limits)(nil),             // 8: edgerun.common.v1.Limits
+	(*v11.WorkerInfo)(nil),        // 9: edgerun.worker.v1.WorkerInfo
+	(v11.WorkerState)(0),          // 10: edgerun.worker.v1.WorkerState
+	(v1.ErrorReason)(0),           // 11: edgerun.common.v1.ErrorReason
+	(*v12.ServiceInfo)(nil),       // 12: edgerun.egress.v1.ServiceInfo
+	(v12.ServiceState)(0),         // 13: edgerun.egress.v1.ServiceState
 }
 var file_edgerun_control_v1_model_proto_depIdxs = []int32{
-	6,  // 0: edgerun.control.v1.Function.create_time:type_name -> google.protobuf.Timestamp
-	7,  // 1: edgerun.control.v1.FunctionVersion.limits:type_name -> edgerun.common.v1.Limits
-	6,  // 2: edgerun.control.v1.FunctionVersion.create_time:type_name -> google.protobuf.Timestamp
-	6,  // 3: edgerun.control.v1.Route.create_time:type_name -> google.protobuf.Timestamp
-	8,  // 4: edgerun.control.v1.WorkerStatus.info:type_name -> edgerun.worker.v1.WorkerInfo
-	9,  // 5: edgerun.control.v1.WorkerStatus.state:type_name -> edgerun.worker.v1.WorkerState
-	6,  // 6: edgerun.control.v1.WorkerStatus.last_heartbeat_time:type_name -> google.protobuf.Timestamp
-	10, // 7: edgerun.control.v1.Invocation.error_reason:type_name -> edgerun.common.v1.ErrorReason
-	6,  // 8: edgerun.control.v1.Invocation.start_time:type_name -> google.protobuf.Timestamp
-	9,  // [9:9] is the sub-list for method output_type
-	9,  // [9:9] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	7,  // 0: edgerun.control.v1.Function.create_time:type_name -> google.protobuf.Timestamp
+	8,  // 1: edgerun.control.v1.FunctionVersion.limits:type_name -> edgerun.common.v1.Limits
+	7,  // 2: edgerun.control.v1.FunctionVersion.create_time:type_name -> google.protobuf.Timestamp
+	7,  // 3: edgerun.control.v1.Route.create_time:type_name -> google.protobuf.Timestamp
+	9,  // 4: edgerun.control.v1.WorkerStatus.info:type_name -> edgerun.worker.v1.WorkerInfo
+	10, // 5: edgerun.control.v1.WorkerStatus.state:type_name -> edgerun.worker.v1.WorkerState
+	7,  // 6: edgerun.control.v1.WorkerStatus.last_heartbeat_time:type_name -> google.protobuf.Timestamp
+	11, // 7: edgerun.control.v1.Invocation.error_reason:type_name -> edgerun.common.v1.ErrorReason
+	7,  // 8: edgerun.control.v1.Invocation.start_time:type_name -> google.protobuf.Timestamp
+	12, // 9: edgerun.control.v1.NetworkServiceStatus.info:type_name -> edgerun.egress.v1.ServiceInfo
+	13, // 10: edgerun.control.v1.NetworkServiceStatus.state:type_name -> edgerun.egress.v1.ServiceState
+	7,  // 11: edgerun.control.v1.NetworkServiceStatus.last_heartbeat_time:type_name -> google.protobuf.Timestamp
+	12, // [12:12] is the sub-list for method output_type
+	12, // [12:12] is the sub-list for method input_type
+	12, // [12:12] is the sub-list for extension type_name
+	12, // [12:12] is the sub-list for extension extendee
+	0,  // [0:12] is the sub-list for field type_name
 }
 
 func init() { file_edgerun_control_v1_model_proto_init() }
@@ -724,7 +825,7 @@ func file_edgerun_control_v1_model_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_edgerun_control_v1_model_proto_rawDesc), len(file_edgerun_control_v1_model_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   6,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

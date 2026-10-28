@@ -187,7 +187,7 @@ func (s *Server) run(ctx context.Context, m *workerv1.ExecuteRequest) (*runtime.
 	res, err := s.engine.Run(ctx, runtime.Invocation{
 		Digest: m.GetArtifactDigest(), Wasm: wasm,
 		Request: m.GetRequest(), Env: m.GetEnv(), Limits: m.GetLimits(),
-		ABI: m.GetAbi(), EgressAllow: m.GetEgressAllow(), InvocationID: m.GetInvocationId(),
+		ABI: m.GetAbi(), Egress: grants(m.GetEgress()), InvocationID: m.GetInvocationId(),
 	})
 	if err == nil {
 		return res, nil
@@ -219,4 +219,13 @@ func artifactError(ctx context.Context, err error) error {
 	default:
 		return errs.New(commonv1.ErrorReason_ERROR_REASON_INTERNAL, "fetching artifact: %v", err)
 	}
+}
+
+// grants converts the orchestrator's egress grants for the runtime.
+func grants(gs []*workerv1.EgressGrant) []runtime.Grant {
+	out := make([]runtime.Grant, len(gs))
+	for i, g := range gs {
+		out[i] = runtime.Grant{Allow: g.GetAllow(), Service: g.GetService()}
+	}
+	return out
 }
