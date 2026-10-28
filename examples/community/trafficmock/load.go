@@ -160,20 +160,75 @@ func rateAt(l *LoadSpec, t time.Duration) float64 {
 	return l.Rate
 }
 
+// arrivals generates the arrival offsets of an open model: one request per
+// 1/rate seconds, where the rate may change at the edges of a spike window. A
+// request that is "in progress" when a window starts is carried over (a
+// fraction of it has been waited out at the old rate), so a spike starts when
+// it says it does, not an interval later.
+type arrivals struct {
+	l     *LoadSpec
+	cur   float64 // seconds
+	first bool
+}
+
+func newArrivals(l *LoadSpec) *arrivals { return &arrivals{l: l, first: true} }
+
+func (a *arrivals) boundary(after float64) float64 {
+	b := a.l.Duration.Seconds()
+	for _, s := range a.l.Spikes {
+		for _, x := range []float64{s.At.Seconds(), (s.At + s.Duration).Seconds()} {
+			if x > after && x < b {
+				b = x
+			}
+		}
+	}
+	return b
+}
+
+// next returns the offset of the next arrival, or false when the load is over.
+func (a *arrivals) next() (time.Duration, bool) {
+	end := a.l.Duration.Seconds()
+	if a.first {
+		a.first = false
+		if rateAt(a.l, 0) > 0 {
+			return 0, true
+		}
+	}
+	frac := 1.0 // how much of an interval is still to wait
+	cur := a.cur
+	for cur < end-1e-9 {
+		r := rateAt(a.l, time.Duration(cur*float64(time.Second)))
+		bnd := a.boundary(cur)
+		if r > 0 {
+			if need := frac / r; cur+need <= bnd+1e-12 {
+				a.cur = cur + need
+				if a.cur >= end-1e-9 {
+					return 0, false
+				}
+				return time.Duration(a.cur * float64(time.Second)), true
+			}
+			frac -= (bnd - cur) * r
+		}
+		cur = bnd
+	}
+	return 0, false
+}
+
 func (r *Runner) open(ctx, hard context.Context, start time.Time) {
 	l := r.Sc.Load
 	rng := rand.New(rand.NewPCG(r.Sc.Seed, 1))
 	bursts := slices.Clone(l.Bursts)
 	slices.SortFunc(bursts, func(a, b Burst) int { return int(a.At - b.At) })
-	next := time.Duration(0)
-	for {
+	gen := newArrivals(l)
+	next, more := gen.next()
+	for more || len(bursts) > 0 {
 		// the next event is the next arrival or the next burst, whichever is first
 		at, isBurst := next, false
-		if len(bursts) > 0 && bursts[0].At <= at {
+		if len(bursts) > 0 && (!more || bursts[0].At <= at) {
 			at, isBurst = bursts[0].At, true
 		}
 		if at >= l.Duration {
-			return
+			break
 		}
 		if wait := time.Until(start.Add(at)); wait > 100*time.Microsecond {
 			select {
@@ -193,13 +248,13 @@ func (r *Runner) open(ctx, hard context.Context, start time.Time) {
 			}
 			continue
 		}
-		rate := rateAt(l, at)
-		if rate <= 0 { // between spikes of a model with no base rate
-			next = at + 10*time.Millisecond
-			continue
-		}
 		r.launch(hard, r.newPlan(r.comp.pick(rng), rng, intended), l.MaxInFlight)
-		next = at + time.Duration(float64(time.Second)/rate)
+		next, more = gen.next()
+	}
+	// the load lasts as long as it was asked to, even if the last arrival was earlier
+	select {
+	case <-time.After(time.Until(start.Add(l.Duration))):
+	case <-ctx.Done():
 	}
 }
 

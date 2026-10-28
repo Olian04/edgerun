@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"math/rand/v2"
 	"net/http"
 	"os"
 	"os/signal"
@@ -32,9 +33,11 @@ import (
 //	/sleep/MS     wait, then 200
 //	/bytes/N      200 with N bytes
 //	/echo         200 with the request body
+//	/nohead       the stream ends without a head (a protocol violation)
 //	/trap         FUNCTION_TRAPPED
 //	/spin         never answers: DEADLINE_EXCEEDED when the budget runs out
 //	/midfail/N    the head and N bytes, then the stream fails
+//	/drip/MS      the head, then a 1 KiB chunk every MS milliseconds until the budget ends or the caller goes away
 //	/head/N       a head with status N, which a real function cannot send (N outside 200-599)
 //	anything else 200 "ok"
 //
@@ -46,6 +49,7 @@ type FakeIngress struct {
 	Capacity int64
 	inflight atomic.Int64
 	Seen     atomic.Int64
+	Sent     atomic.Int64                  // body bytes the fake has handed to the transport
 	Reqs     chan *ingressv1.InvokeRequest // if not nil, every request is offered here (non-blocking)
 }
 
@@ -87,6 +91,7 @@ func (f *FakeIngress) Invoke(ctx context.Context, req *connect.Request[ingressv1
 			Head: &ingressv1.InvokeHead{Http: h, InvocationId: "fake-" + req.Msg.GetRequestId()}}})
 	}
 	chunk := func(b []byte) error {
+		f.Sent.Add(int64(len(b)))
 		return st.Send(&ingressv1.InvokeResponse{Part: &ingressv1.InvokeResponse_Chunk{Chunk: b}})
 	}
 	parts := strings.Split(strings.Trim(r.GetPath(), "/"), "/")
@@ -108,6 +113,8 @@ func (f *FakeIngress) Invoke(ctx context.Context, req *connect.Request[ingressv1
 		case <-ctx.Done():
 			return edgerun.NewError(commonv1.ErrorReason_ERROR_REASON_DEADLINE_EXCEEDED, "budget spent")
 		}
+	case "nohead":
+		return nil // a stream that ends cleanly without a head
 	case "trap":
 		return edgerun.NewError(commonv1.ErrorReason_ERROR_REASON_FUNCTION_TRAPPED, "guest exited 3")
 	case "spin":
@@ -118,6 +125,7 @@ func (f *FakeIngress) Invoke(ctx context.Context, req *connect.Request[ingressv1
 			return err
 		}
 		buf := make([]byte, 16<<10)
+		rand.NewChaCha8([32]byte{1}).Read(buf) // incompressible: gzip would hide a slow reader
 		for left := arg; left > 0; {
 			n := min(left, len(buf))
 			if err := chunk(buf[:n]); err != nil {
@@ -129,6 +137,23 @@ func (f *FakeIngress) Invoke(ctx context.Context, req *connect.Request[ingressv1
 			return edgerun.NewError(commonv1.ErrorReason_ERROR_REASON_INTERNAL, "worker died mid-body")
 		}
 		return nil
+	case "drip":
+		if err := head(200, "content-type", "application/octet-stream"); err != nil {
+			return err
+		}
+		tick := time.NewTicker(time.Duration(max(arg, 1)) * time.Millisecond)
+		defer tick.Stop()
+		buf := make([]byte, 1024)
+		for {
+			select {
+			case <-tick.C:
+				if err := chunk(buf); err != nil {
+					return err
+				}
+			case <-ctx.Done():
+				return edgerun.NewError(commonv1.ErrorReason_ERROR_REASON_DEADLINE_EXCEEDED, "budget spent")
+			}
+		}
 	case "echo":
 		if err := head(200, "content-type", "application/octet-stream"); err != nil {
 			return err

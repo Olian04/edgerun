@@ -72,6 +72,7 @@ func newRunID() string {
 type common struct {
 	url, token, httpMode      string
 	conns                     int
+	noGzip                    bool
 	jsonOut, prom, reqLogPath string
 	expects                   listFlag
 	runID                     string
@@ -84,6 +85,7 @@ func (c *common) register(fs *flag.FlagSet) {
 	fs.StringVar(&c.token, "token", "", "ingress token (env EDGERUN_INGRESS_TOKEN)")
 	fs.StringVar(&c.httpMode, "http", "", "1 or 2: HTTP/1.1, or HTTP/2 (h2c with prior knowledge for http://)")
 	fs.IntVar(&c.conns, "conns", 0, "cap on connections to the orchestrator (0: unlimited)")
+	fs.BoolVar(&c.noGzip, "no-compression", false, "do not ask the orchestrator to gzip response messages (the Connect client does by default)")
 	fs.StringVar(&c.jsonOut, "json", "", "write the JSON report here")
 	fs.StringVar(&c.prom, "prom", "", "serve Prometheus metrics on this address while running")
 	fs.StringVar(&c.reqLogPath, "requests-log", "", "write one JSON line per request here")
@@ -108,7 +110,11 @@ func (c *common) client(sc *Scenario) (*edgerun.Ingress, string, error) {
 	if conns == 0 {
 		conns = sc.Target.Conns
 	}
-	return edgerun.NewIngress(url, token, edgerun.WithHTTPClient(newHTTPClient(mode, conns))), url, nil
+	opts := []edgerun.Option{edgerun.WithHTTPClient(newHTTPClient(mode, conns))}
+	if c.noGzip || sc.Target.Compression == "none" {
+		opts = append(opts, edgerun.WithClientOptions(connect.WithAcceptCompression("gzip", nil, nil)))
+	}
+	return edgerun.NewIngress(url, token, opts...), url, nil
 }
 
 func firstNonEmpty(s ...string) string {

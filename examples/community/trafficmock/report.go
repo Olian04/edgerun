@@ -21,10 +21,10 @@ type Report struct {
 	HTTP     string    `json:"http"`
 
 	Orchestrator struct {
-		Implementation   string   `json:"implementation,omitempty"`
-		Protocols        []string `json:"protocols,omitempty"`
-		MaxRequestBody   uint64   `json:"max_request_body_bytes"`
-		LimitFromDescribe bool    `json:"limit_from_describe"`
+		Implementation    string   `json:"implementation,omitempty"`
+		Protocols         []string `json:"protocols,omitempty"`
+		MaxRequestBody    uint64   `json:"max_request_body_bytes"`
+		LimitFromDescribe bool     `json:"limit_from_describe"`
 	} `json:"orchestrator"`
 
 	LoadSeconds    float64 `json:"load_seconds"`
@@ -43,20 +43,21 @@ type Report struct {
 		ErrorPercent   float64 `json:"error_percent"`
 		RPSSent        float64 `json:"rps_sent"`
 		RPSCompleted   float64 `json:"rps_completed"`
+		PeakInFlight   int64   `json:"peak_in_flight"`
 	} `json:"totals"`
 
 	// Status is what a client of a real frontend would have seen (the function's
 	// own status, or the mapped status of a platform error). "aborted" is a
 	// connection a frontend would have cut after the head.
-	Status         map[string]int64 `json:"status"`
-	FunctionStatus map[string]int64 `json:"function_status"`
+	Status         map[string]int64      `json:"status"`
+	FunctionStatus map[string]int64      `json:"function_status"`
 	Reasons        map[string]ReasonStat `json:"platform_errors_by_reason"`
 	DeadlineSource struct {
 		Orchestrator int64 `json:"typed_by_orchestrator"`
 		LocalTimer   int64 `json:"local_timer"`
 	} `json:"deadline_exceeded_source"`
 
-	Latency   map[string]LatencyStat `json:"latency"`
+	Latency   map[string]LatencyStat  `json:"latency"`
 	Templates map[string]TemplateStat `json:"templates"`
 	Timeline  []TimelinePoint         `json:"timeline"`
 	Samples   struct {
@@ -123,7 +124,7 @@ func BuildReport(sc *Scenario, runID, mode, target, httpMode string, started tim
 	t.Sent, t.Attempted = sn.Sent, sn.Attempted()
 	t.OK, t.PlatformErrors, t.StreamFailures = sn.Outcomes[OutOK], sn.Outcomes[OutPlatformError], sn.Outcomes[OutStreamFailure]
 	t.Rejected, t.Canceled, t.Dropped = sn.Outcomes[OutRejected], sn.Outcomes[OutCanceled], sn.Outcomes[OutDropped]
-	t.BytesReceived = sn.Bytes
+	t.BytesReceived, t.PeakInFlight = sn.Bytes, sn.PeakInFlight
 	if t.Attempted > 0 {
 		t.ErrorPercent = 100 * float64(sn.ErrorCount()) / float64(t.Attempted)
 	}
@@ -229,6 +230,9 @@ func (r *Report) Text(w io.Writer) {
 	}
 	if r.Invocations != nil {
 		fmt.Fprintf(w, "\ninvocation records (control.v1): %d of %d found\n", r.Invocations.Found, r.Invocations.Expected)
+		for k, n := range r.Invocations.LocalDeadlineRecordedAs {
+			fmt.Fprintf(w, "  %d request(s) ended by this tool's own deadline are recorded with reason %s\n", n, k)
+		}
 		for _, k := range sortedKeys(r.Invocations.ByWorker) {
 			fmt.Fprintf(w, "  worker %-38s %d\n", k, r.Invocations.ByWorker[k])
 		}

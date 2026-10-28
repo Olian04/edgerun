@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -25,7 +26,7 @@ func (c *Collector) Add(r *Result) {
 	case OutRejected, OutDropped, OutCanceled:
 		return
 	}
-	if r.Reason == "FUNCTION_NOT_FOUND" || (r.Outcome == OutPlatformError && !r.Typed) {
+	if r.Reason == "FUNCTION_NOT_FOUND" || (r.Outcome == OutPlatformError && !r.Typed && !r.LocalTimer) {
 		return
 	}
 	c.mu.Lock()
@@ -40,10 +41,15 @@ type InvocationSummary struct {
 	ByVersion  map[string]int `json:"by_version"`
 	ByWorker   map[string]int `json:"by_worker"`
 	// Disagreements between what the client observed and what the record says.
-	IDMismatch     int      `json:"id_mismatch"`
-	StatusMismatch int      `json:"status_mismatch"`
-	ReasonMismatch int      `json:"reason_mismatch"`
-	Missing        []string `json:"missing_request_ids,omitempty"`
+	IDMismatch     int `json:"id_mismatch"`
+	StatusMismatch int `json:"status_mismatch"`
+	ReasonMismatch int `json:"reason_mismatch"`
+	// A call whose own timer fired first can leave a record that says nothing
+	// about a deadline (the orchestrator saw a cancellation, not a deadline).
+	LocalDeadlineRecordedAs map[string]int `json:"local_deadline_recorded_as,omitempty"`
+	Missing                 []string       `json:"missing_request_ids,omitempty"`
+	// Mismatches describes the first few disagreements.
+	Mismatches []string `json:"mismatches,omitempty"`
 }
 
 // ResolveInvocations scans the orchestrator's invocation records, newest
@@ -95,8 +101,16 @@ func ResolveInvocations(ctx context.Context, ctl *edgerun.Control, col *Collecto
 			if res.Outcome == OutOK && uint32(res.FuncStatus) != rec.Status {
 				sum.StatusMismatch++
 			}
-			if res.Outcome == OutPlatformError && res.Typed && rec.ErrorReason != reasonFromName(res.Reason) {
+			if res.Outcome == OutPlatformError && res.LocalTimer {
+				if sum.LocalDeadlineRecordedAs == nil {
+					sum.LocalDeadlineRecordedAs = map[string]int{}
+				}
+				sum.LocalDeadlineRecordedAs[reasonName(rec.ErrorReason)]++
+			} else if res.Outcome == OutPlatformError && res.Typed && rec.ErrorReason != reasonFromName(res.Reason) {
 				sum.ReasonMismatch++
+				if len(sum.Mismatches) < 10 {
+					sum.Mismatches = append(sum.Mismatches, fmt.Sprintf("%s: the client saw %s, the record says %s, status %d", rec.RequestId, res.Reason, rec.ErrorReason, rec.Status))
+				}
 			}
 		}
 		if sum.Found >= len(want) || time.Now().After(deadline) {

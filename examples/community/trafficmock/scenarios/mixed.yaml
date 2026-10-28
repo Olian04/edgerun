@@ -1,0 +1,36 @@
+# A weighted mix at a constant rate against a deployment that serves
+# mock.test (see testdata/guest, or `edgerun-trafficmock fake`).
+name: mixed
+target:
+  url: http://127.0.0.1:24030        # or -url / EDGERUN_ORCHESTRATOR_URL
+  http: "1"                          # "2": h2c with prior knowledge
+defaults:
+  host: mock.test
+  budget: 2s                         # the per-request deadline (the RPC budget)
+seed: 42
+requests:
+  - name: ok
+    weight: 6
+    paths: [/, /status/200, /status/201]
+    headers: {accept: text/plain, x-tenant: [a, b]}
+  - name: upload
+    weight: 2
+    method: POST
+    path: /echo
+    body: {size_min: 1KiB, size_max: 256KiB, kind: random}
+  - name: broken
+    weight: 1
+    path: /status/503                # the function answering 503 is a response, not an error
+  - name: crash
+    weight: 1
+    path: /trap                      # FUNCTION_TRAPPED -> 502
+  - name: nowhere
+    weight: 1
+    host: missing.test               # FUNCTION_NOT_FOUND -> 404
+load:
+  model: constant
+  rate: 200
+  duration: 5s
+expect:
+  - p99<200ms
+  - ttfb.p50<50ms

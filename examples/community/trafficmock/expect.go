@@ -1,8 +1,8 @@
 package main
 
 import (
-	"github.com/HdrHistogram/hdrhistogram-go"
 	"fmt"
+	"github.com/HdrHistogram/hdrhistogram-go"
 	"regexp"
 	"strconv"
 	"strings"

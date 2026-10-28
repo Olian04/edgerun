@@ -39,6 +39,7 @@ type Result struct {
 	LocalTimer   bool          `json:"local_deadline,omitempty"`
 	InvocationID string        `json:"invocation_id,omitempty"`
 	Bytes        int64         `json:"bytes"`
+	RetryAfter   bool          `json:"retry_after,omitempty"` // the frontend would add Retry-After: 1
 	Error        string        `json:"error,omitempty"`
 }
 
@@ -118,6 +119,7 @@ type Stats struct {
 	shards [nShards]*shard
 	sent   atomic.Int64 // requests the load model released (including dropped)
 	flight atomic.Int64
+	peak   atomic.Int64
 
 	// per-second timeline, by intended send time (sent) and by finish time
 	tlSent, tlDone, tlErr [maxSecond]atomic.Int64
@@ -152,7 +154,15 @@ func (s *Stats) Released(intended time.Time) {
 	s.tlSent[secOf(intended.Sub(s.start))].Add(1)
 }
 
-func (s *Stats) InFlight(delta int64) { s.flight.Add(delta) }
+func (s *Stats) InFlight(delta int64) {
+	n := s.flight.Add(delta)
+	for {
+		p := s.peak.Load()
+		if n <= p || s.peak.CompareAndSwap(p, n) {
+			return
+		}
+	}
+}
 
 // Record adds one finished request.
 func (s *Stats) Record(r *Result) {
@@ -249,21 +259,21 @@ func keepSlowest(top []*Result, r *Result) []*Result {
 
 // Snapshot is the merged state at one moment.
 type Snapshot struct {
-	Sent, InFlight int64
-	Outcomes       map[Outcome]int64
-	Status         map[int]int64
-	FuncStatus     map[int]int64
-	Reasons        map[string]int64
-	ReasonStatus   map[string]int
-	DeadlineTyped  int64
-	DeadlineLocal  int64
-	Bytes          int64
-	TTFB, Total    *hdrhistogram.Histogram
-	ErrLat, Lag    *hdrhistogram.Histogram
-	Templates      map[string]*tmplStats
-	Errors         []*Result
-	Slowest        []*Result
-	Timeline       []TimelinePoint
+	Sent, InFlight, PeakInFlight int64
+	Outcomes                     map[Outcome]int64
+	Status                       map[int]int64
+	FuncStatus                   map[int]int64
+	Reasons                      map[string]int64
+	ReasonStatus                 map[string]int
+	DeadlineTyped                int64
+	DeadlineLocal                int64
+	Bytes                        int64
+	TTFB, Total                  *hdrhistogram.Histogram
+	ErrLat, Lag                  *hdrhistogram.Histogram
+	Templates                    map[string]*tmplStats
+	Errors                       []*Result
+	Slowest                      []*Result
+	Timeline                     []TimelinePoint
 }
 
 type TimelinePoint struct {
@@ -275,7 +285,7 @@ type TimelinePoint struct {
 
 func (s *Stats) Snapshot() *Snapshot {
 	sn := &Snapshot{
-		Sent: s.sent.Load(), InFlight: s.flight.Load(),
+		Sent: s.sent.Load(), InFlight: s.flight.Load(), PeakInFlight: s.peak.Load(),
 		Outcomes: map[Outcome]int64{}, Status: map[int]int64{}, FuncStatus: map[int]int64{},
 		Reasons: map[string]int64{}, ReasonStatus: map[string]int{},
 		TTFB: newHist(), Total: newHist(), ErrLat: newHist(), Lag: newHist(),

@@ -40,6 +40,8 @@ type TargetSpec struct {
 	TokenEnv string `yaml:"token_env"` // the token itself does not belong in a file
 	HTTP     string `yaml:"http"`      // "1" (default) or "2" (h2c / ALPN)
 	Conns    int    `yaml:"conns"`     // idle connections kept per host; 0 = as many as in flight
+	// Compression: "none" asks the orchestrator not to gzip response messages.
+	Compression string `yaml:"compression"`
 }
 
 type Defaults struct {
@@ -280,7 +282,7 @@ type tmpl struct {
 	weight        float64
 	method        string
 	hosts         []string
-	paths         []string
+	paths         []pathQuery
 	rawQuery      string
 	static        []*commonv1.Header // already filtered the way a frontend filters
 	body          []byte             // fixed body, or the pool a variable one is cut from
@@ -289,6 +291,8 @@ type tmpl struct {
 	budget        time.Duration
 	allowOversize bool
 }
+
+type pathQuery struct{ path, query string }
 
 type compiled struct {
 	tmpls []*tmpl
@@ -322,25 +326,23 @@ func (sc *Scenario) compile() (*compiled, error) {
 		if len(t.hosts) == 0 {
 			return nil, fmt.Errorf("request %q has no host (set host, hosts or defaults.host)", t.name)
 		}
-		t.paths = sp.Paths
+		ps := sp.Paths
 		if sp.Path != "" {
-			t.paths = append(t.paths, sp.Path)
+			ps = append(ps, sp.Path)
 		}
-		if len(t.paths) == 0 {
-			t.paths = []string{"/"}
+		if len(ps) == 0 {
+			ps = []string{"/"}
 		}
 		t.rawQuery = strings.TrimPrefix(sp.Query, "?")
-		for j, p := range t.paths {
+		for _, p := range ps {
 			if !strings.HasPrefix(p, "/") {
 				return nil, fmt.Errorf("request %q: path %q must start with /", t.name, p)
 			}
+			pq := pathQuery{path: p, query: t.rawQuery}
 			if k := strings.IndexByte(p, '?'); k >= 0 { // "/x?y=1" is the path /x and the query y=1
-				if t.rawQuery != "" || len(t.paths) > 1 {
-					return nil, fmt.Errorf("request %q: put the query in query:, not in a path (a query in path: is allowed only for a single path and no query:)", t.name)
-				}
-				t.rawQuery = p[k+1:]
-				t.paths[j] = p[:k]
+				pq.path, pq.query = p[:k], p[k+1:]
 			}
+			t.paths = append(t.paths, pq)
 		}
 		h := http.Header{}
 		for k, vs := range sp.Headers {
@@ -453,9 +455,9 @@ func (t *tmpl) build(rng *rand.Rand, seq uint64, runID string, clients int) *Pla
 	if len(t.hosts) > 1 {
 		host = t.hosts[rng.IntN(len(t.hosts))]
 	}
-	path := t.paths[0]
+	pq := t.paths[0]
 	if len(t.paths) > 1 {
-		path = t.paths[rng.IntN(len(t.paths))]
+		pq = t.paths[rng.IntN(len(t.paths))]
 	}
 	body := t.body
 	if t.bodyMax > 0 {
@@ -474,13 +476,15 @@ func (t *tmpl) build(rng *rand.Rand, seq uint64, runID string, clients int) *Pla
 	return &Planned{
 		Seq: seq, RequestID: id, Template: t.name, Budget: t.budget, AllowOversize: t.allowOversize,
 		Req: &ingressv1.InvokeRequest{RequestId: id, Request: &commonv1.HttpRequest{
-			Method: t.method, Host: host, Path: path, RawQuery: t.rawQuery, Headers: hs, Body: body,
+			Method: t.method, Host: host, Path: pq.path, RawQuery: pq.query, Headers: hs, Body: body,
 			RemoteAddr: ip + ":" + strconv.Itoa(30000+c%30000),
 		}},
 	}
 }
 
-func requestID(runID string, seq uint64) string { return "tm-" + runID + "-" + strconv.FormatUint(seq, 10) }
+func requestID(runID string, seq uint64) string {
+	return "tm-" + runID + "-" + strconv.FormatUint(seq, 10)
+}
 
 // Trace entries (replay): one JSON object per line.
 //

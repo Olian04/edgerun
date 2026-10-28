@@ -24,10 +24,10 @@ const defaultMaxBody = 6 << 20
 // Limits holds the orchestrator's request body limit, read from Describe at
 // start and refreshed from time to time, as a frontend must.
 type Limits struct {
-	ing   *edgerun.Ingress
-	max   atomic.Uint64
-	known atomic.Bool
-	Impl  atomic.Pointer[string]
+	ing    *edgerun.Ingress
+	max    atomic.Uint64
+	known  atomic.Bool
+	Impl   atomic.Pointer[string]
 	Protos atomic.Pointer[[]string]
 }
 
@@ -141,7 +141,7 @@ func (iv *Invoker) Do(parent context.Context, p *Planned) *Result {
 			r.Outcome = OutCanceled
 			return iv.finish(r)
 		}
-		r.Outcome, r.Status, r.Reason, r.Typed, r.LocalTimer, r.Error = OutPlatformError, m.Status, m.Reason, m.Typed, m.LocalDeadline, errString(err)
+		r.Outcome, r.Status, r.Reason, r.Typed, r.LocalTimer, r.Error, r.RetryAfter = OutPlatformError, m.Status, m.Reason, m.Typed, m.LocalDeadline, errString(err), m.RetryAfter
 		return iv.finish(r)
 	}
 	r.InvocationID = inv.ID

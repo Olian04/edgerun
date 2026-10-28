@@ -111,11 +111,7 @@ func (l *Listener) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	res := l.Inv.Do(r.Context(), &Planned{Seq: seq, RequestID: reqID, Template: "listen", Req: req, Budget: l.Budget, Sink: sink})
 	switch {
 	case res.Outcome == OutPlatformError && !sink.wrote:
-		m := Mapped{Status: res.Status}
-		if res.Status == 503 && res.Reason != "" && (res.Reason == "NO_CAPACITY" || strings.HasPrefix(res.Reason, "UNTYPED_UNAVAILABLE")) {
-			m.RetryAfter = true
-		}
-		if m.RetryAfter {
+		if res.RetryAfter {
 			w.Header().Set("Retry-After", "1")
 		}
 		// a generic body: error messages are for operators
@@ -244,6 +240,13 @@ func listenCmd(args []string, stdout, stderr io.Writer) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	// Bind first: a conformance suite (or a load balancer) may start sending the moment the
+	// frontend has asked for its limits, so the port must already be accepting.
+	ln, err := net.Listen("tcp", *addr)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 3
+	}
 	lim := NewLimits(ing)
 	// A frontend asks for its limits when it starts and keeps trying: it serves
 	// with the default until the orchestrator has answered.
@@ -295,11 +298,6 @@ func listenCmd(args []string, stdout, stderr io.Writer) int {
 	var p http.Protocols
 	p.SetHTTP1(true)
 	srv := &http.Server{Addr: *addr, Handler: l, ReadHeaderTimeout: 10 * time.Second, Protocols: &p}
-	ln, err := net.Listen("tcp", *addr)
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 3
-	}
 	if *healthAddr != "" {
 		hs := &http.Server{Addr: *healthAddr, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })}
 		hl, err := net.Listen("tcp", *healthAddr)
@@ -311,7 +309,12 @@ func listenCmd(args []string, stdout, stderr io.Writer) int {
 		defer hs.Close()
 	}
 	fmt.Fprintf(stderr, "listening on http://%s, forwarding to %s (run %s)\n", *addr, url, runID)
-	go func() { <-ctx.Done(); sctx, c := context.WithTimeout(context.Background(), 10*time.Second); srv.Shutdown(sctx); c() }()
+	go func() {
+		<-ctx.Done()
+		sctx, c := context.WithTimeout(context.Background(), 10*time.Second)
+		srv.Shutdown(sctx)
+		c()
+	}()
 	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		fmt.Fprintln(stderr, err)
 		return 3
