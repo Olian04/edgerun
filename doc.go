@@ -32,8 +32,8 @@
 //	if edgerun.IsReason(err, commonv1.ErrorReason_ERROR_REASON_FUNCTION_NOT_FOUND) { ... }
 //
 // A token has one scope, so a client needs the token of its role: see the
-// Scope constants. Errors carry a reason (Reason, IsReason); branch on that and
-// never on messages. Responses stream: see Response.
+// Scope constants. Platform errors carry a reason (Reason, IsReason); branch on that
+// and never on messages. Control errors are plain Connect codes (connect.CodeOf). Responses stream: see Response.
 //
 // To implement a role instead of calling one, use the generated handlers in
 // gen/ with Authenticate for the tokens and NewError for the errors, and judge

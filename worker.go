@@ -110,6 +110,14 @@ func NewArtifacts(baseURL, token string, opts ...Option) *Artifacts {
 	return &Artifacts{c: workerv1connect.NewArtifactServiceClient(h, baseURL, co...)}
 }
 
+// Digest returns the content address of b in the form the protocols use
+// ("sha256:<lowercase hex>"): what CreateVersion's artifact is known by, and
+// what Artifacts.GetArtifact verifies against.
+func Digest(b []byte) string {
+	sum := sha256.Sum256(b)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
 // ErrDigestMismatch is returned by Artifacts.GetArtifact for bytes that are not what
 // their digest says. Such bytes must never be run.
 var ErrDigestMismatch = errors.New("edgerun: artifact does not match its digest")
@@ -145,9 +153,8 @@ func (a *Artifacts) GetArtifact(ctx context.Context, digest string) ([]byte, err
 	if err := st.Err(); err != nil {
 		return nil, err
 	}
-	sum := sha256.Sum256(buf.Bytes())
-	if got := hex.EncodeToString(sum[:]); got != want {
-		return nil, fmt.Errorf("%w: wanted %s, got sha256:%s", ErrDigestMismatch, digest, got)
+	if got := Digest(buf.Bytes()); got != "sha256:"+want {
+		return nil, fmt.Errorf("%w: wanted %s, got %s", ErrDigestMismatch, digest, got)
 	}
 	return buf.Bytes(), nil
 }

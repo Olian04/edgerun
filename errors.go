@@ -7,9 +7,14 @@ import (
 	"github.com/Olian04/edgerun/internal/errs"
 )
 
-// Platform failures arrive as Connect errors carrying a common.v1.ErrorInfo.
-// Branch on the reason, never on the code or the message: the reason is the
-// contract (docs/protocol.md lists them), the rest is for humans.
+// Platform failures (invoking, executing, fetching, artifacts) arrive as
+// Connect errors carrying a common.v1.ErrorInfo. Branch on the reason, never on
+// the code or the message: the reason is the contract (docs/protocol.md lists
+// them), the rest is for humans.
+//
+// The control protocol has no reasons. Its errors are plain Connect codes
+// (not_found, already_exists, invalid_argument...), which is what you branch on
+// there, with connect.CodeOf.
 //
 //	res, err := ingress.Invoke(ctx, req)
 //	if edgerun.IsReason(err, commonv1.ErrorReason_ERROR_REASON_NO_CAPACITY) {

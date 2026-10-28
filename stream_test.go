@@ -256,3 +256,10 @@ func TestASecondHeadIsAProtocolViolation(t *testing.T) {
 		t.Errorf("read %q, %v", b, err)
 	}
 }
+
+func TestDigestIsTheProtocolsFormat(t *testing.T) {
+	// The well-known SHA-256 of the empty input.
+	if got, want := edgerun.Digest(nil), "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"; got != want {
+		t.Errorf("%s, want %s", got, want)
+	}
+}

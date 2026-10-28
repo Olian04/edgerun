@@ -44,8 +44,11 @@ Only what every caller would otherwise write, identically, for itself:
   been read to its end.
 - **Verified artifacts.** `Artifacts.GetArtifact` checks the bytes against their digest and returns
   `ErrDigestMismatch` rather than bytes you must not run.
-- **Reasons.** Platform failures carry a `common.v1.ErrorReason`. `Reason(err)` and `IsReason(err, r)` read it;
-  branch on that, never on the code or the message. `NewError` builds one, for the other side.
+- **Reasons.** Platform failures (invoke, execute, fetch, artifacts) carry a `common.v1.ErrorReason`. `Reason(err)`
+  and `IsReason(err, r)` read it; branch on that, never on the code or the message. `NewError` builds one, for the
+  other side. The control protocol has no reasons: its errors are plain Connect codes (`not_found`,
+  `already_exists`, `invalid_argument`), and you branch on those with `connect.CodeOf`.
+- **Digests.** `Digest(b)` is the `sha256:<hex>` the protocols identify an artifact by.
 
 ## What it does not do
 
