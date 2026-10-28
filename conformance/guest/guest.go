@@ -25,6 +25,9 @@ var netguest embed.FS
 // from concurrently executing test binaries.
 func Build(t testing.TB) []byte {
 	t.Helper()
+	if len(prebuiltTest) > 0 {
+		return prebuiltTest
+	}
 	return build(t, testguest, "testguest")
 }
 
@@ -32,6 +35,9 @@ func Build(t testing.TB) []byte {
 // module that imports edgerun_http.
 func BuildNet(t testing.TB) []byte {
 	t.Helper()
+	if len(prebuiltNet) > 0 {
+		return prebuiltNet
+	}
 	return build(t, netguest, "netguest")
 }
 
@@ -73,7 +79,7 @@ func build(t testing.TB, src embed.FS, dir string) []byte {
 	cmd.Dir = work
 	cmd.Env = append(os.Environ(), "GOOS=wasip1", "GOARCH=wasm", "CGO_ENABLED=0", "GOFLAGS=-mod=mod")
 	if msg, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("building test guest: %v\n%s", err, msg)
+		t.Fatalf("building test guest: %v\n%s\n(the worker suite needs a Go toolchain to build its guests, or an edgerun-conformance built with `make conformance`, which carries them)", err, msg)
 	}
 	b, err := os.ReadFile(out)
 	must(t, err)

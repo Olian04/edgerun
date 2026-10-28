@@ -3,7 +3,7 @@
 BUF := go tool -modfile=tools/go.mod buf
 BASE ?= main
 
-.PHONY: all generate lint breaking check-generated proto-check test build
+.PHONY: all generate lint breaking check-generated proto-check test build conformance
 
 all: proto-check test build
 
@@ -37,3 +37,11 @@ test:
 
 build:
 	go build ./...
+
+# The conformance executable, with the test guests compiled into it so that it
+# needs no Go toolchain where it runs: bin/edgerun-conformance --role ROLE --target HOST:PORT
+conformance:
+	mkdir -p conformance/guest/prebuilt bin
+	GOOS=wasip1 GOARCH=wasm CGO_ENABLED=0 go build -trimpath -o conformance/guest/prebuilt/testguest.wasm ./conformance/guest/testguest
+	GOOS=wasip1 GOARCH=wasm CGO_ENABLED=0 go build -trimpath -o conformance/guest/prebuilt/netguest.wasm ./conformance/guest/netguest
+	go build -tags prebuilt -o bin/edgerun-conformance ./cmd/edgerun-conformance

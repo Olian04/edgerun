@@ -10,7 +10,8 @@ language, another sandbox) as long as it keeps its side of the contract.
                          admin UI / CLI ─control.v1┘  └─ worker.v1 (Fleet, Artifact: worker dials in)
                                                   ▼                     │
                                               Postgres  (orchestrator only)     ▼
-                                                                  network service ◀─egress.v1─ worker
+                                                                  network services ◀─egress.v1─ worker
+                                                  (register with the orchestrator: egress.v1 RegistryService)
 ```
 
 The `.proto` files in [`proto/edgerun`](../proto/edgerun) define the message shapes and are the
@@ -26,7 +27,8 @@ seam and nothing else. Only the orchestrator talks to Postgres.
 | Execution | `edgerun.worker.v1` `ExecutionService` | worker | orchestrator |
 | Fleet, Artifact | `edgerun.worker.v1` `FleetService`, `ArtifactService` | orchestrator | worker |
 | Control | `edgerun.control.v1` | orchestrator | admin UI, CLI |
-| Egress | `edgerun.egress.v1` | network service | worker |
+| Egress | `edgerun.egress.v1` `EgressService` | network service | worker |
+| Registration | `edgerun.egress.v1` `RegistryService` | orchestrator | network service |
 
 Shared vocabulary lives in `edgerun.common.v1`.
 
@@ -53,10 +55,12 @@ Every request carries `Authorization: Bearer <token>`. A token has one scope:
 | `worker` | `FleetService`, `ArtifactService` (when called *on* the orchestrator) |
 | `admin` | everything in `edgerun.control.v1` |
 | `egress` | `EgressService` (when called *on* a network service) |
+| `network` | `RegistryService` (when called *on* the orchestrator) |
 
 The orchestrator authenticates workers via the `worker` scope; workers authenticate the
 orchestrator on `ExecutionService` with a separate shared secret configured on the worker; a
-network service authenticates workers via the `egress` scope.
+network service authenticates workers via the `egress` scope, and the orchestrator authenticates network
+services that register via the `network` scope.
 Missing or invalid credentials fail with `UNAUTHENTICATED`; a valid token of the wrong scope
 fails with `PERMISSION_DENIED`. TLS or mTLS is expected between components in production; the
 token scheme does not replace it.
@@ -242,6 +246,11 @@ shorter than requested does not mean it is the last: only an empty `next_page_to
 Following the tokens yields every item exactly once while nothing is written. Functions are ordered
 by name, routes by `(host_pattern, path_prefix)`, invocations newest first.
 
+**Network services.** `ListNetworkServices` returns every registered service ordered by endpoint, with
+the coverage it declared (canonical), its state and whether it is alive, and `SetEgress` stores the
+function's allow list in canonical form without asking whether any service carries it: services may
+come and go, and the list is the operator's intent.
+
 **Read your writes.** When a call that changes routing (a route, an activation, an environment
 variable, a deleted function) returns, an `Invoke` sent to *the same orchestrator endpoint* behaves
 as if the change had been made. Other orchestrator instances may take a few seconds to catch up.
@@ -276,15 +285,22 @@ Workers dial in to the orchestrator (`FleetService`, `ArtifactService`, scope `w
 A guest has no network. The worker gives it none: there is no socket it could open. What a guest
 can do, if the ABI offers it (`wagi-2`, below) and its function has been opened up, is ask the
 worker to make an HTTP request for it, and the worker hands that request to a **network service**
-over `egress.v1`. The service is the one place that decides whether a request may leave, and the one
-that makes it. A deployment can put it where the network is, apart from where code runs, and can
-replace it with any implementation of the protocol.
+over `egress.v1`. A network service is the one place that decides whether a request may leave, and the
+one that makes it. It can be placed where the network is, apart from where code runs, and replaced with
+any implementation of the protocol.
+
+**Many services, one deployment.** Network services dial the orchestrator and **register**, saying
+what each **carries**. A deployment can therefore run one inside a private network, another on the
+public internet and a third behind a proxy, all reachable from the same set of orchestrators and
+workers. The orchestrator decides, for every destination a function may reach, which registered
+service carries it; the worker is only told.
 
 **Closed by default.** A function reaches nothing until an operator lists destinations for it
 (`control.v1` `SetEgress`). The list is part of the function, not of a version: changing it needs no
-deploy and applies to the next invocation. The orchestrator hands the list to the worker in
-`ExecuteRequest.egress_allow`, and the worker passes it on in every `Fetch`. A worker makes no call
-at all when the list is empty.
+deploy and applies to the next invocation. For each invocation the orchestrator turns the list into
+**grants**, each an allow-list entry together with the network service that carries it
+(`ExecuteRequest.egress`), and the worker uses them. An entry no registered, live service carries gets
+no grant, and a guest asking for it is told it is not allowed.
 
 **Allow-list entries** are host patterns, written in lower case (anything else is lower-cased):
 
@@ -296,24 +312,76 @@ at all when the list is empty.
 | `192.0.2.7`, `[2001:db8::1]:8080` | that address (IPv6 in brackets); no wildcards for addresses |
 
 Host names are ASCII (internationalised names in punycode). A trailing dot and case are not part of
-the name. A bare `*` is not an entry: a list names destinations. A list holds at most 64 entries and
-is stored lower-cased, deduplicated and sorted; a malformed entry is `invalid_argument`.
+the name, and an IPv4 address written in its IPv6 form is the IPv4 address. A bare `*` is not an
+entry: a list names destinations. A list holds at most 64 entries and is stored lower-cased,
+deduplicated and sorted; a malformed entry is `invalid_argument`.
 
-**What a network service does with a `Fetch`**, in this order, stopping at the first failure:
+### What a network service carries
+
+Each service declares **coverage**: what it is prepared to carry, in the same family of patterns but
+without ports (a service carries a host on any port) and with two additions, because a service is placed
+where a network is:
+
+| Coverage entry | Carries |
+|---|---|
+| `*` | every destination (a catch-all) |
+| `example.com`, `192.0.2.7` | that host or address |
+| `*.example.com` | any name under it, not `example.com` itself |
+| `10.0.0.0/8`, `fd00::/8` | the addresses within that range (a name is not judged by where it might resolve) |
+
+A service declares at least one entry (a service that does not say what it carries is refused), at
+most 64. The service refuses every request to a host outside its coverage, whatever the function allows.
+
+A service **carries an allow-list entry** if its coverage names *everything the entry can match*: for an
+exact host or address, any entry naming it; for `*.example.com`, a `*`, or a wildcard for
+`example.com` or a domain it lies under. A service that names only part of a wildcard does not carry it.
+
+**Which service carries an entry.** Of the live, ready services that carry it, the one whose
+matching coverage entry is most specific: an exact host or address, then a wildcard (a longer suffix
+is more specific), then an address range (a longer prefix), then a catch-all. So a service for a private
+network is not shadowed by a catch-all elsewhere. Among equally specific services the choice is spread
+by rendezvous hashing on the entry and the service's endpoint, so it is stable while the set of services
+is, and changes only for what a departing service carried. The grants of an invocation are in the order of the
+function's allow list (the canonical, sorted order).
+
+### Registration
+
+Services register with the orchestrator, as workers do (`egress.v1` `RegistryService`, scope `network`):
+
+- `Register` takes the service's base URL (`http` or `https`; the URL workers reach it at) and a
+  `ServiceInfo` with its coverage. A malformed endpoint, or a coverage that is empty, malformed or longer
+  than 64 entries, is `invalid_argument`, and leaves nothing registered. The orchestrator stores the coverage
+  in canonical form (lower-cased, ranges as their networks, deduplicated, sorted) and returns a fresh
+  `service_id` and the heartbeat interval. Registering an endpoint that is already known replaces the
+  earlier registration (the service restarted).
+- `Heartbeat` states are `READY` or `DRAINING` (anything else is `invalid_argument`). For an unknown
+  `service_id` it answers `reregister = true`, and the service registers again.
+- A service that has not heartbeated for three intervals is not alive and is given nothing; neither is
+  one that reports `DRAINING`, which stays listed. `Deregister` is idempotent.
+- A service keeps trying to register until it succeeds, and a refused registration is reported to its
+  operator, not retried silently forever. When it is asked to stop it reports `DRAINING`, finishes what it is
+  doing, and deregisters.
+- `control.v1` `ListNetworkServices` shows the operator what has registered, with its coverage and state.
+
+### What a network service does with a `Fetch`
+
+In this order, stopping at the first failure:
 
 1. Refuses a malformed request with `invalid_argument` (no reason): the method is an HTTP token, the
    URL is absolute with scheme `http` or `https`, has a host, no user information and an ASCII host,
    and every `allow` entry is well formed. A body larger than `max_request_body_bytes` is
    `REQUEST_TOO_LARGE`.
-2. Checks the URL against `allow` (scheme, host, port). No match is `EGRESS_DENIED`. This happens
-   before any name is resolved, so a refused request reveals nothing about the network.
+2. Checks the URL against `allow` (scheme, host, port), and its host against what the service carries. A
+   miss on either is `EGRESS_DENIED`. This happens before any name is resolved, so a refused request
+   reveals nothing about the network.
 3. Resolves the host and refuses, with `EGRESS_DENIED`, any destination the *service itself* never
    reaches, whatever the caller allowed: loopback, unspecified, link-local (cloud metadata services
    live there), private (RFC 1918, unique-local), carrier-grade NAT, multicast, broadcast, reserved,
    documentation and benchmarking ranges, and IPv4 addresses embedded in IPv6 forms. This is checked on the
    address actually connected to, for every address the name resolves to, so a name that resolves
-   somewhere forbidden (or changes its answer between lookups) gets nowhere. A deployment may opt
-   particular networks in; the default opts in none.
+   somewhere forbidden (or changes its answer between lookups) gets nowhere. A service's operator may
+   allow particular networks, which is how a service inside a private network reaches it; the default
+   allows none.
 4. Makes the request. It sets `Host` from the URL (a caller-supplied `Host` is dropped, or an
    allowed name could be used to reach another virtual host), drops connection-level headers
    (`connection`, `keep-alive`, `proxy-*`, `te`, `trailer`, `transfer-encoding`, `upgrade`), neither
@@ -328,10 +396,15 @@ failure, upstream hang-up, including after the head, in which case the stream en
 `DEADLINE_EXCEEDED` (the RPC deadline) and nothing else. Cancelling the call abandons the upstream
 request.
 
-**What a worker does.** It speaks `egress.v1` to the service it is configured with, presenting the
-`egress` token, passing its remaining invocation budget as the deadline. A worker that has no
-network service configured does not advertise `wagi-2`, and the orchestrator then never schedules
-`wagi-2` modules onto it. The worker enforces, before any call, the limits in the ABI below.
+### What a worker does
+
+For a guest's request it takes the first grant whose allow-list entry matches the URL, calls the network
+service named by that grant (presenting the `egress` token), and passes it the entries of every grant
+naming that service as `allow`, with its remaining invocation budget as the deadline. If no grant matches,
+it makes no call: the guest is told the destination is denied. A worker that has no `egress` token
+configured does not advertise `wagi-2`, and the orchestrator then never schedules `wagi-2` modules onto it.
+The worker enforces, before any call, the limits in the ABI below, and does not trust a service to keep to
+the bound it was given.
 
 ## Guest ABI `wagi-1`
 
@@ -437,27 +510,49 @@ only sees `-1`.
 ## Conformance
 
 Every role that implements a protocol surface has a conformance suite in [`conformance/`](../conformance).
-A suite is black-box: it starts the implementation under test, plays every other role itself using the
-generated protocol code and nothing else, and judges only what crosses the wire. An implementation that
-passes its role's suite can replace any other that passes.
+A suite is black-box: it judges an implementation that is already running, plays every other role itself
+using the generated protocol code and nothing else, and looks only at what crosses the wire. An
+implementation that passes its role's suite can replace any other that passes.
 
-| Role | Suite | Implements | The suite plays |
-|---|---|---|---|
-| frontend | `conformance/frontend` | an HTTP edge over `ingress.v1` (as a client) | the orchestrator, and an HTTP client |
-| orchestrator | `conformance/orchestrator` | `ingress.v1`, `control.v1`, `FleetService`, `ArtifactService` (as a server); `ExecutionService` (as a client) | frontend, operator, and a fleet of workers |
-| worker | `conformance/worker` | `ExecutionService` (server); fleet, artifact and egress (as a client) | the orchestrator and the network service |
-| network service | `conformance/egress` | `EgressService` (server) | a worker, and the web servers it reaches |
+| Role | Suite | The suite plays |
+|---|---|---|
+| `frontend` | `conformance/frontend` | the orchestrator it forwards to, and an HTTP client |
+| `orchestrator` | `conformance/orchestrator` | frontends, operators, workers and network services |
+| `worker` | `conformance/worker` | the orchestrator it dials, and the network services it is routed to |
+| `egress` (a network service) | `conformance/egress` | the orchestrator it registers with, a worker, and the web servers it reaches |
 
 The admin UI and the CLI only call `control.v1`; they implement no surface of their own, and so have no
 suite. What they must be able to do is what the orchestrator suite proves the orchestrator offers.
 
-A suite is a Go package: `Run(t, Target)` takes a `Target` whose `Launch` starts the implementation, in
-whatever way suits it (a goroutine, a subprocess, a container), and returns where to reach it. The in-repo
-components are run through the same `app` packages their `cmd/` binaries use; see the `conformance_test.go`
-beside each. Running a suite against an implementation in another language means writing a `Launch` that
-starts it; there is no stand-alone runner yet.
+### The executable
 
-The orchestrator suite needs an orchestrator that is empty and used by nothing else. A few behaviours cannot
-be judged from outside and are covered by the reference implementation's own tests instead: for example, that
-a network service refuses a name when *any* of the addresses it resolves to is forbidden, which needs control
-of DNS.
+`edgerun-conformance` (`make conformance`, which also compiles the test guests into it, so it needs no Go
+toolchain where it runs) is pointed at an address and told which role to test:
+
+```
+edgerun-conformance --role worker --target 10.0.0.5:9000 --listen :7000 --advertise 10.0.0.2
+```
+
+Because the suite plays the roles around the implementation, the implementation must be configured to reach
+the suite (a worker must be told the suite is its orchestrator), and the suite must be reachable from it.
+`--listen` says where the suite listens (a port is required for every role but `orchestrator`, since the
+implementation is configured with it beforehand), `--advertise` the host the implementation reaches it at,
+and `--print-config` prints, for the role and the options given, exactly what to configure: the tokens the
+suite will present and require, intervals, and where the suite is. Start the suite, then the implementation
+(or the other way round for a worker or network service, which keep trying).
+
+| Role | `--target` is | Notes |
+|---|---|---|
+| `frontend` | where it listens | it must ask the suite (its orchestrator) for its limits when it starts |
+| `orchestrator` | where it listens | must be new, empty and used by nothing else; it calls the suite's fake workers, so `--advertise` must be a host it can reach |
+| `worker` | the endpoint it advertises | `--stop-cmd` shuts it down as SIGTERM does, for the group that checks it drains and leaves |
+| `egress` | where it listens | it registers with the suite; `--target-default` is a second instance in its default configuration, for what a service refuses however it is asked; `--stop-cmd`, `--stop-cmd-default` likewise |
+
+`--run REGEX` selects groups and tests (`--run 'Network|Registration'`), `--timeout` bounds the run. The exit
+status is 0 if everything passed, 1 if anything failed, 2 for a usage error. The suites are also Go packages:
+`Run(t, Target)` takes a `Target` whose `Launch` starts the implementation in whatever way suits (the in-repo
+components are run through the same `app` packages their binaries use; see `conformance_test.go` beside each).
+
+A few behaviours cannot be judged from outside and are covered by the reference implementation's own tests
+instead: for example, that a network service refuses a name when *any* of the addresses it resolves to is
+forbidden, which needs control of DNS.

@@ -3,7 +3,7 @@
 An edge function runtime written in Go. Functions are WebAssembly modules run under wazero;
 Postgres is the system of record; the admin UI is built with
 [webui](https://github.com/Olian04/webui). Functions have no network until their operator lists
-the destinations they may reach, and then they reach them only through a network service.
+the destinations they may reach, and then they reach them only through a network service: one per network, each saying what it carries.
 
 The defining property is **swappability**: the frontend, orchestrator and worker are separate
 programs that know each other only through strict, versioned protocols. Replace any one of them
@@ -12,9 +12,10 @@ kept. Every role that implements a protocol has a conformance suite that judges 
 the end-to-end tests swap the real worker for a hand-written fake.
 
 ```
- client ──HTTP──▶ frontend ──ingress.v1──▶ orchestrator ──worker.v1──▶ worker (wazero) ──egress.v1──▶ network service ──▶ the internet
-                                              ▲   ▲  │                                                       
-                         admin UI / CLI ─control.v1┘  └─ worker.v1 (worker dials in)
+ client ──HTTP──▶ frontend ──ingress.v1──▶ orchestrator ──worker.v1──▶ worker (wazero) ──egress.v1──▶ network service ──▶ a network
+                                              ▲   ▲  │ ▲                                                  (one per network; several may exist)
+                         admin UI / CLI ─control.v1┘  │ └─ egress.v1: network services register and say what they carry
+                                                      └─ worker.v1 (worker dials in)
                                                   ▼
                                               Postgres
 ```
@@ -24,7 +25,7 @@ the end-to-end tests swap the real worker for a hand-written fake.
 | frontend | `cmd/frontend` | terminates HTTP, forwards requests | orchestrator |
 | orchestrator | `cmd/orchestrator` | routing, scheduling, all persistent state | Postgres, workers |
 | worker | `cmd/worker` | executes WASM modules under limits | orchestrator |
-| network service | `cmd/egress` | makes guests' outbound requests, for allowed destinations only | the internet |
+| network service | `cmd/egress` | makes guests' outbound requests, for allowed destinations only, within what it carries | orchestrator (registers), a network |
 | admin | `cmd/admin` | operator UI (webui) | orchestrator |
 | CLI | `cmd/edgerunctl` | scripted operator access | orchestrator |
 
@@ -47,7 +48,8 @@ That builds everything, starts a private Postgres and one of each component, and
 curl -H 'Host: hello.localhost' 'http://127.0.0.1:18000/?name=you'     # Howdy, you!
 ```
 
-The stack also runs a network service and a `fetch` function that uses it:
+The stack also runs two network services, one that carries `127.0.0.0/8` (standing in for a private network) and
+one that carries everything else, and a `fetch` function that uses them (`edgerunctl networks` shows them):
 
 ```sh
 curl -H 'Host: fetch.localhost' 'http://127.0.0.1:18000/?url=http://127.0.0.1:18081/healthz'   # allowed: 200
@@ -100,9 +102,13 @@ edgerunctl deny fetch api.example.com
 ```
 
 Without a port an entry matches only the scheme's default (80, 443). The list belongs to the function, not to a
-version, and applies to the next invocation. Whatever the list says, the network service refuses loopback,
-private, link-local (cloud metadata), multicast and other non-public addresses unless its operator allows a
-range with `--allow-network`. The rules are in [`docs/protocol.md`](docs/protocol.md), "Network access".
+version, and applies to the next invocation. Each listed destination is given to the registered network service
+that carries it, the most specific one: an exact host before a `*.domain` before an address range before a
+catch-all. Whatever the list says, a service refuses loopback, private, link-local (cloud metadata), multicast and
+other non-public addresses unless its operator allows a range with `--allow-network`, and carries only what it
+declared with `--covers`. So one service can sit inside a private network (`--covers 10.0.0.0/8,*.corp.internal
+--allow-network 10.0.0.0/8`), another on the public internet (`--covers '*'`), a third behind a proxy, all
+serving the same orchestrators. The rules are in [`docs/protocol.md`](docs/protocol.md), "Network access".
 
 ## Configuration
 
@@ -120,6 +126,7 @@ production: the tokens do not replace it.
 | `--worker-token` | `EDGERUN_WORKER_TOKEN` | | Presented by workers. |
 | `--admin-token` | `EDGERUN_ADMIN_TOKEN` | | Presented by the admin UI and the CLI. |
 | `--execution-token` | `EDGERUN_EXECUTION_TOKEN` | | Presented *to* workers. |
+| `--network-token` | `EDGERUN_NETWORK_TOKEN` | | Presented by network services when they register. Without one none may, and functions have no network. |
 | `--secret-key` | `EDGERUN_SECRET_KEY` | | base64 of 32 random bytes; seals secret variables (AES-GCM). Losing it loses the secrets. |
 | `--heartbeat-interval` | | `5s` | Dictated to workers. A worker is alive for three intervals. |
 | `--invocation-retention` | | `336h` | Older invocation records are deleted. |
@@ -137,18 +144,21 @@ The orchestrator is stateless: run as many as you like against one database.
 | `--execution-token` | `EDGERUN_EXECUTION_TOKEN` | | Required of the orchestrator. |
 | `--max-concurrency` | `EDGERUN_WORKER_MAX_CONCURRENCY` | `8` | Further requests get `NO_CAPACITY` at once; nothing queues. |
 | `--compilation-cache-dir` | `EDGERUN_WORKER_COMPILATION_CACHE_DIR` | | Keeps compiled code across restarts. The first compile of a module costs about a second; later ones ~25 ms. |
-| `--egress-url` | `EDGERUN_EGRESS_URL` | | The network service for guests' outbound requests. Without one, guests have no network and the worker offers `wagi-1` only. |
-| `--egress-token` | `EDGERUN_EGRESS_TOKEN` | | Presented to the network service. |
+| `--egress-token` | `EDGERUN_EGRESS_TOKEN` | | Presented to network services, which the orchestrator routes a function's outbound requests to (the worker needs no list of them). Without one, guests have no network and the worker offers `wagi-1` only. |
 | `--label key=value` | | | Repeatable. |
 | `--drain-timeout` | | `30s` | On SIGTERM a worker stops taking work, finishes what it has, deregisters. |
 
-### egress (the network service)
+### egress (a network service)
 
 | Flag | Environment | Default | |
 |---|---|---|---|
 | `--listen` | `EDGERUN_EGRESS_LISTEN` | `:8090` | |
-| `--token` | `EDGERUN_EGRESS_TOKEN` | | Presented by workers. |
-| `--allow-network` | `EDGERUN_EGRESS_ALLOW_NETWORKS` | | A CIDR range it may connect to although it refuses it by default (repeatable; comma-separated in the variable). Put it where the network is, and open only what functions need. |
+| `--advertise-url` | `EDGERUN_EGRESS_ADVERTISE_URL` | the listen address | The URL workers reach it at. |
+| `--orchestrator-url` | `EDGERUN_ORCHESTRATOR_URL` | | Where it registers. It keeps trying until it does, and deregisters when stopped. |
+| `--network-token` | `EDGERUN_NETWORK_TOKEN` | | Presented to the orchestrator. |
+| `--egress-token` | `EDGERUN_EGRESS_TOKEN` | | Required of workers. |
+| `--covers` | `EDGERUN_EGRESS_COVERS` | | **Required.** What it carries, comma-separated: `*` (everything), hosts, `*.domain`, addresses, ranges such as `10.0.0.0/8`. It refuses anything else. |
+| `--allow-network` | `EDGERUN_EGRESS_ALLOW_NETWORKS` | | A CIDR range it may connect to although it refuses it by default (repeatable; comma-separated in the variable). Put the service where the network is, and open only what functions need. |
 | `--max-request-bytes` | | 1 MiB | Largest request body it forwards. |
 | `--max-response-bytes` | | 4 MiB | Largest response body it returns. |
 
@@ -191,9 +201,18 @@ limits and the guest ABI. To write your own frontend, orchestrator or worker, st
 
 `internal/e2e` shows what a replacement must do: `swap_test.go` runs the unchanged orchestrator
 against a worker written from scratch against `worker.v1`. And every role has a black-box suite,
-`conformance/{frontend,orchestrator,worker,egress}`, that starts the implementation, plays everything around
-it and judges what crosses the wire: pass it and you can replace the in-repo component. See "Conformance"
-in [`docs/protocol.md`](docs/protocol.md).
+`conformance/{frontend,orchestrator,worker,egress}`, that plays everything around the implementation and judges
+what crosses the wire: pass it and you can replace the in-repo component. They run from one executable that is
+pointed at an address and told the role:
+
+```sh
+make conformance      # bin/edgerun-conformance, with the test guests compiled in
+bin/edgerun-conformance --role orchestrator --target 10.0.0.5:8080
+bin/edgerun-conformance --role worker --target 10.0.0.6:9000 --listen :7000 --advertise 10.0.0.2 --print-config
+```
+
+`--print-config` says how to configure the implementation for the role (what the suite will present and require,
+and where the suite is). See "Conformance" in [`docs/protocol.md`](docs/protocol.md).
 
 ## Development
 
@@ -202,6 +221,7 @@ make generate     # regenerate gen/ from proto/
 make proto-check  # lint, breaking-change check, generated code is fresh
 make test         # needs PostgreSQL binaries, or EDGERUN_TEST_DATABASE_URL (a superuser DSN); includes every conformance suite
 make build
+make conformance  # bin/edgerun-conformance
 ```
 
 `buf`, `protoc-gen-go` and `protoc-gen-connect-go` are pinned in `go.mod` and `tools/go.mod`;
@@ -221,10 +241,11 @@ without a Docker daemon available, so it is **untested**; treat it as a starting
   times over. That is the price of reliably stopping a spinning guest.
 - The orchestrator proxies every response, so it is on the data path. It is stateless and scales
   horizontally; a lease-based direct path would be `ingress.v2`.
-- The conformance suites are Go packages you give a `Launch` function; there is no stand-alone runner for an
-  implementation in another language yet. A few rules cannot be judged from outside (a name that resolves to
-  both a public and a forbidden address needs control of DNS) and are covered by the reference
-  implementation's own tests.
+- A few rules cannot be judged by the conformance executable from outside (a name that resolves to both a
+  public and a forbidden address needs control of DNS) and are covered by the reference implementation's own
+  tests. The suites need the implementation to be configured to reach them; `--print-config` says how.
+- Network services share one `egress` token with the workers, and one `network` token with the orchestrator:
+  a service cannot be given its own credential per worker yet.
 - The admin UI's auto-reload is the browser reloading a page every few seconds, and only on pages without
   forms.
 
