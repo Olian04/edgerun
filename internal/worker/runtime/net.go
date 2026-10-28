@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
@@ -215,7 +216,7 @@ func hostFetch(ctx context.Context, mod api.Module, stack []uint64) {
 	if err != nil {
 		// The budget ran out while the request was in flight. The guest must not
 		// be allowed to carry on and finish as if it had merely been refused.
-		switch cerr := ctx.Err(); {
+		switch cerr := spent(ctx); {
 		case errors.Is(cerr, context.DeadlineExceeded):
 			mod.CloseWithExitCode(ctx, sys.ExitCodeDeadlineExceeded)
 		case cerr != nil:
@@ -299,4 +300,20 @@ func FormatFetchResponse(r *NetResponse) []byte {
 	b.WriteByte('\n')
 	b.Write(r.Body)
 	return b.Bytes()
+}
+
+// deadlineSlack is how close to its deadline a failed request must have been for
+// the failure to count as the budget running out. The service's clock and ours
+// disagree by a little (the timeout travels in whole milliseconds), so it can
+// give up an instant before our own deadline has passed.
+const deadlineSlack = 100 * time.Millisecond
+
+// spent reports why the invocation's budget is over, or nil if it is not. A
+// deadline that is about to pass is waited for, so that a request that failed
+// just before it is not mistaken for one that merely failed.
+func spent(ctx context.Context) error {
+	if dl, ok := ctx.Deadline(); ok && ctx.Err() == nil && time.Until(dl) < deadlineSlack {
+		<-ctx.Done()
+	}
+	return ctx.Err()
 }
