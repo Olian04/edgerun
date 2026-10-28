@@ -125,7 +125,7 @@ func New(cfg Config) *Service {
 func (s *Service) Handler(v authn.Verifier) (string, http.Handler) {
 	return egressv1connect.NewEgressServiceHandler(s,
 		connect.WithInterceptors(authn.Server(v, Scope)),
-		connect.WithReadMaxBytes(int(s.cfg.MaxRequestBody)+(256<<10)))
+		connect.WithReadMaxBytes(int(s.cfg.MaxRequestBody)+(256<<10)), connect.WithCompressMinBytes(authn.CompressMinBytes))
 }
 
 // Implementation identifies this service to peers.

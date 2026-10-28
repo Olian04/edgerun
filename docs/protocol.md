@@ -114,7 +114,8 @@ too, never as a 500.
    after the request was sent, because the function may have had side effects. A worker that
    could not be reached is skipped for a few seconds.
 5. **Capacity is never queued.** A worker with no free slot answers `NO_CAPACITY` immediately.
-6. **Response stream:** head, then chunks. A worker stream ends with exactly one
+6. **Response stream:** head, then chunks. (A worker buffers the response before it streams it, so today the head
+   and the body arrive together: a frontend's time to first byte is the function's run time.) A worker stream ends with exactly one
    `ExecutionSummary`; ending without one is a failed invocation.
 7. **Failure after the head** terminates the stream with an error. The frontend must abort the
    client connection instead of finishing the body normally.

@@ -12,7 +12,9 @@ package frontendconf
 
 import (
 	"context"
+	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -85,6 +87,20 @@ func Run(t *testing.T, target Target) {
 	}
 	// A frontend learns the body limit from Describe when it starts.
 	check.Eventually(t, "the frontend to ask the suite's orchestrator at "+orch.srv.URL+" for its limits", wait, func() bool { return orch.describes() > 0 })
+
+	// ... which it may do before it listens: wait until it takes connections too,
+	// or the first request of the suite meets a closed port and every case fails.
+	check.Eventually(t, "the frontend to accept connections at "+h.url, wait, func() bool {
+		host := strings.TrimPrefix(strings.TrimPrefix(h.url, "https://"), "http://")
+		if i := strings.IndexByte(host, '/'); i >= 0 {
+			host = host[:i]
+		}
+		c, err := net.DialTimeout("tcp", host, 500*time.Millisecond)
+		if err == nil {
+			c.Close()
+		}
+		return err == nil
+	})
 
 	t.Run("RequestMapping", h.requestMapping)
 	t.Run("RequestIDs", h.requestIDs)

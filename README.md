@@ -129,6 +129,7 @@ production: the tokens do not replace it.
 | `--network-token` | `EDGERUN_NETWORK_TOKEN` | | Presented by network services when they register. Without one none may, and functions have no network. |
 | `--secret-key` | `EDGERUN_SECRET_KEY` | **required** | base64 of 32 random bytes; seals secret variables (AES-GCM). Losing it loses the secrets. |
 | `--heartbeat-interval` | | `5s` | Dictated to workers. A worker is alive for three intervals. |
+| `--max-request-bytes` | | `6 MiB` | Largest request body accepted; frontends learn it from `Describe`. |
 | `--invocation-retention` | | `336h` | Older invocation records are deleted. |
 
 The orchestrator is stateless: run as many as you like against one database.

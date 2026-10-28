@@ -69,7 +69,7 @@ func New(cfg Config) *Service {
 
 // Mount registers both services on mux, guarded by the worker scope.
 func (s *Service) Mount(mux *http.ServeMux, v authn.Verifier) {
-	opts := connect.WithInterceptors(authn.Server(v, WorkerScope))
+	opts := connect.WithHandlerOptions(connect.WithInterceptors(authn.Server(v, WorkerScope)), connect.WithCompressMinBytes(authn.CompressMinBytes))
 	mux.Handle(workerv1connect.NewFleetServiceHandler(fleetHandler{s}, opts))
 	mux.Handle(workerv1connect.NewArtifactServiceHandler(artifactHandler{s}, opts))
 }

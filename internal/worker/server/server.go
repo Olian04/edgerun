@@ -62,7 +62,7 @@ func New(info *workerv1.WorkerInfo, engine *runtime.Engine, artifacts *cache.Sto
 func (s *Server) Handler(v authn.Verifier) (string, http.Handler) {
 	return workerv1connect.NewExecutionServiceHandler(s,
 		connect.WithInterceptors(authn.Server(v, ExecuteScope)),
-		connect.WithReadMaxBytes(maxRequestBytes))
+		connect.WithReadMaxBytes(maxRequestBytes), connect.WithCompressMinBytes(authn.CompressMinBytes))
 }
 
 // Info is what this worker advertises.

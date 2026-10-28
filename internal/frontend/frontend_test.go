@@ -483,11 +483,11 @@ func TestClientDisconnectCancelsTheInvocation(t *testing.T) {
 }
 
 func TestStatusFunctionDirectly(t *testing.T) {
-	if s, _ := Status(context.Canceled, context.Canceled); s != 0 {
+	if s, _ := edgerun.FrontendStatus(context.Canceled, context.Canceled); s != 0 {
 		t.Errorf("a cancelled client needs no response, got %d", s)
 	}
 	// Our own deadline wins even if the error looks unrelated.
-	if s, _ := Status(connect.NewError(connect.CodeUnknown, errors.New("x")), context.DeadlineExceeded); s != 504 {
+	if s, _ := edgerun.FrontendStatus(connect.NewError(connect.CodeUnknown, errors.New("x")), context.DeadlineExceeded); s != 504 {
 		t.Errorf("status = %d, want 504", s)
 	}
 }

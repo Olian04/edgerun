@@ -638,3 +638,43 @@ func TestConcurrentInvocationsAcrossWorkers(t *testing.T) {
 		t.Errorf("records = %d, want 60", n)
 	}
 }
+
+// A caller whose own timer is the invocation's budget gives up at about the
+// moment the orchestrator would have: the record must still say the budget ran
+// out, not leave the reason empty.
+func TestACallerThatGivesUpAtTheDeadlineIsRecordedAsTheDeadline(t *testing.T) {
+	hang := func(ctx context.Context, _ *workerv1.ExecuteRequest, _ *connect.ServerStream[workerv1.ExecuteResponse]) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	ep, _ := startWorker(t, hang, execToken)
+	e := newEnv(t, []store.RouteEntry{route("sha256:" + strings.Repeat("a", 64))}, []store.Worker{worker(ep)}, nil)
+	const runs = 6
+	for i := 0; i < runs; i++ {
+		// The orchestrator is told 400ms; the caller leaves at 390.
+		ctx, cancel := context.WithTimeout(withBudget(context.Background(), 400*time.Millisecond), 390*time.Millisecond)
+		res, err := e.client.Invoke(ctx, &ingressv1.InvokeRequest{Request: &commonv1.HttpRequest{Method: "GET", Host: "a.com", Path: "/"}})
+		if err == nil {
+			res.ReadAll()
+		}
+		cancel()
+	}
+	eventually := func() []*controlv1.Invocation {
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			if recs := e.rec.all(); len(recs) >= runs || time.Now().After(deadline) {
+				return recs
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	recs := eventually()
+	if len(recs) != runs {
+		t.Fatalf("%d records, want %d", len(recs), runs)
+	}
+	for i, r := range recs {
+		if r.ErrorReason != commonv1.ErrorReason_ERROR_REASON_DEADLINE_EXCEEDED {
+			t.Errorf("record %d: reason %v, want DEADLINE_EXCEEDED: the budget was spent", i, r.ErrorReason)
+		}
+	}
+}

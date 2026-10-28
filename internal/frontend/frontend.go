@@ -16,12 +16,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"connectrpc.com/connect"
-
 	"github.com/Olian04/edgerun"
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
 	ingressv1 "github.com/Olian04/edgerun/gen/edgerun/ingress/v1"
-	"github.com/Olian04/edgerun/internal/errs"
 )
 
 const (
@@ -244,7 +241,7 @@ func writeHead(w http.ResponseWriter, res *edgerun.Invocation, reqID string) {
 // fail answers with the HTTP status the protocol assigns to a platform error
 // (docs/protocol.md). The body is generic: error messages are for operators.
 func (f *Frontend) fail(w http.ResponseWriter, ctx context.Context, err error) {
-	status, retry := Status(err, ctx.Err())
+	status, retry := edgerun.FrontendStatus(err, ctx.Err())
 	if status == 0 {
 		return // the client cancelled; nobody is listening
 	}
@@ -255,48 +252,6 @@ func (f *Frontend) fail(w http.ResponseWriter, ctx context.Context, err error) {
 		w.Header().Set("Retry-After", "1")
 	}
 	http.Error(w, http.StatusText(status), status)
-}
-
-// Status maps an Invoke error to an HTTP status, and whether to advise a retry.
-// 0 means the client cancelled and no response is needed. ctxErr is the
-// request context's error, if any: our own deadline expiring is a 504 whether
-// or not the orchestrator's typed error got there first.
-func Status(err error, ctxErr error) (status int, retryAfter bool) {
-	switch errs.Reason(err) {
-	case commonv1.ErrorReason_ERROR_REASON_FUNCTION_NOT_FOUND:
-		return http.StatusNotFound, false
-	case commonv1.ErrorReason_ERROR_REASON_NO_CAPACITY:
-		return http.StatusServiceUnavailable, true
-	case commonv1.ErrorReason_ERROR_REASON_DEADLINE_EXCEEDED:
-		return http.StatusGatewayTimeout, false
-	case commonv1.ErrorReason_ERROR_REASON_FUNCTION_TRAPPED,
-		commonv1.ErrorReason_ERROR_REASON_ABI_MISMATCH,
-		commonv1.ErrorReason_ERROR_REASON_RESPONSE_TOO_LARGE,
-		commonv1.ErrorReason_ERROR_REASON_ARTIFACT_NOT_FOUND:
-		return http.StatusBadGateway, false
-	case commonv1.ErrorReason_ERROR_REASON_REQUEST_TOO_LARGE:
-		return http.StatusRequestEntityTooLarge, false
-	case commonv1.ErrorReason_ERROR_REASON_INTERNAL:
-		return http.StatusInternalServerError, false
-	}
-	// No typed reason: classify by what we can observe.
-	switch {
-	case errors.Is(err, edgerun.ErrProtocol):
-		return http.StatusBadGateway, false
-	case errors.Is(ctxErr, context.DeadlineExceeded) || connect.CodeOf(err) == connect.CodeDeadlineExceeded:
-		return http.StatusGatewayTimeout, false
-	case errors.Is(ctxErr, context.Canceled) || connect.CodeOf(err) == connect.CodeCanceled:
-		return 0, false
-	}
-	switch connect.CodeOf(err) {
-	case connect.CodeResourceExhausted: // the transport's message cap (docs/protocol.md)
-		return http.StatusRequestEntityTooLarge, false
-	case connect.CodeUnavailable: // the orchestrator is down or unreachable
-		return http.StatusServiceUnavailable, true
-	case connect.CodeUnauthenticated, connect.CodePermissionDenied: // our own credentials: a deployment error
-		return http.StatusBadGateway, false
-	}
-	return http.StatusInternalServerError, false
 }
 
 func requestID(r *http.Request) string {

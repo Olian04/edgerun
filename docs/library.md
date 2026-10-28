@@ -77,6 +77,20 @@ Things a tool learns the hard way (the rules are in `protocol.md`, "Control sema
   prune on the strength of a filter alone.
 - A validate-only `CreateVersion` carries the whole module, so a dry run followed by an apply uploads it twice.
 
+## Many calls at once
+
+The library's default HTTP client keeps a connection pool sized for many concurrent calls (64 idle connections per
+host), not `http.DefaultClient`'s two. Measured by a traffic generator at a concurrency of 64: 3,000 requests used about
+1,100 TCP connections with the default client and 70-90 with a pool that fits. Servers compress a message only above
+1 KiB (Connect's default is every message, which made compression the biggest allocator on small calls). If you pass
+your own client with `WithHTTPClient`, size its pool the same way. HTTP/2 without TLS needs
+`Transport.Protocols.SetUnencryptedHTTP2(true)`; it uses one connection, and was slower than pooled HTTP/1.1 at high
+rates in the same measurement, so prefer pooling for load generation.
+
+Time to head: `Invoke` returns when the response head arrives. Workers buffer a response before they send it (see
+`wagi-1`), so for the functions edgerun runs today the head and the body arrive together, and the time to head is the
+function's run time, not the time to a first byte.
+
 ## What it does not do
 
 No retries, caches, connection management beyond Connect's, heartbeat loops or workflows (there is no
@@ -106,8 +120,15 @@ if edgerun.IsReason(err, commonv1.ErrorReason_ERROR_REASON_NO_CAPACITY) {
 	// back off and try again
 }
 defer res.Body.Close()
-io.Copy(w, res.Body)
+w.WriteHeader(res.Status())
+if _, err := io.Copy(w, res.Body); err != nil {
+	// The status line is out: the only honest signal that the body is incomplete is to
+	// abort the client's connection (panic(http.ErrAbortHandler) in a net/http handler).
+}
 ```
+
+A frontend that fails *before* the head maps the error to a status with `FrontendStatus(err, ctx.Err())`, the table
+of `protocol.md` as code (it also answers whether to send `Retry-After: 1`, and 0 when the client has gone).
 
 More, compiled with the library, in [`example_test.go`](../example_test.go): deploying, iterating, a frontend, and
 a network service registering itself and heartbeating.

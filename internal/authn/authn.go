@@ -111,3 +111,9 @@ func (c client) WrapStreamingClient(next connect.StreamingClientFunc) connect.St
 func (c client) WrapStreamingHandler(next connect.StreamingHandlerFunc) connect.StreamingHandlerFunc {
 	return next
 }
+
+// CompressMinBytes is the size below which a server does not compress a
+// message. Connect compresses every message by default, which for the small ones
+// (a response head, a heartbeat) costs more than it saves: it is the largest
+// allocator on the client and slows a megabyte response by a third.
+const CompressMinBytes = 1 << 10

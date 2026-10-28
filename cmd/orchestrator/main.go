@@ -38,6 +38,7 @@ func main() {
 	flag.StringVar(&cfg.NetworkToken, "network-token", env("EDGERUN_NETWORK_TOKEN", ""), "token network services present when they register (empty: none may)")
 	flag.StringVar(&key, "secret-key", env("EDGERUN_SECRET_KEY", ""), "base64 of 32 random bytes; seals secret environment values")
 	flag.DurationVar(&cfg.HeartbeatInterval, "heartbeat-interval", 5*time.Second, "heartbeat interval dictated to workers")
+	flag.Uint64Var(&cfg.MaxRequestBodyBytes, "max-request-bytes", 0, "largest request body accepted, reported to frontends (default 6 MiB)")
 	flag.DurationVar(&cfg.InvocationRetention, "invocation-retention", 14*24*time.Hour, "how long invocation records are kept")
 	flag.Parse()
 

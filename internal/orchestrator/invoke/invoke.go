@@ -98,7 +98,7 @@ func New(cfg Config) *Service {
 func (s *Service) Handler(v authn.Verifier) (string, http.Handler) {
 	return ingressv1connect.NewIngressServiceHandler(s,
 		connect.WithInterceptors(authn.Server(v, IngressScope)),
-		connect.WithReadMaxBytes(int(s.cfg.MaxRequestBodyBytes)+(256<<10)))
+		connect.WithReadMaxBytes(int(s.cfg.MaxRequestBodyBytes)+(256<<10)), connect.WithCompressMinBytes(authn.CompressMinBytes))
 }
 
 // Describe implements IngressService.
@@ -282,6 +282,10 @@ func unreachable(err error) bool {
 // translate turns a failure into the error the frontend sees. Worker errors
 // keep their reason; anything else is an internal error whose detail stays in
 // the logs, not on the wire.
+// deadlineSlack is how close to its deadline a cancelled invocation must have
+// been to count as having run out of budget.
+const deadlineSlack = 100 * time.Millisecond
+
 func (s *Service) translate(ctx context.Context, err error) error {
 	if info := errs.Info(err); info != nil && info.GetReason() != commonv1.ErrorReason_ERROR_REASON_UNSPECIFIED {
 		return errs.New(info.GetReason(), "%s", info.GetMessage())
@@ -294,6 +298,13 @@ func (s *Service) translate(ctx context.Context, err error) error {
 		return errs.New(commonv1.ErrorReason_ERROR_REASON_DEADLINE_EXCEEDED, "deadline exceeded")
 	}
 	if errors.Is(err, context.Canceled) || connect.CodeOf(err) == connect.CodeCanceled {
+		// A caller whose own timer is the same budget as ours gives up at about the
+		// same moment we would have: a cancellation within the slack of the
+		// deadline is the deadline, and so is recorded, or "errors by reason"
+		// would count some of the spent budgets as nothing.
+		if dl, ok := ctx.Deadline(); ok && time.Until(dl) < deadlineSlack {
+			return errs.New(commonv1.ErrorReason_ERROR_REASON_DEADLINE_EXCEEDED, "deadline exceeded")
+		}
 		return connect.NewError(connect.CodeCanceled, errors.New("request cancelled"))
 	}
 	s.cfg.Log.Error("worker call failed", "error", err)
