@@ -16,10 +16,10 @@ import (
 
 	"connectrpc.com/connect"
 
+	"github.com/Olian04/edgerun"
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
 	controlv1 "github.com/Olian04/edgerun/gen/edgerun/control/v1"
 	ingressv1 "github.com/Olian04/edgerun/gen/edgerun/ingress/v1"
-	"github.com/Olian04/edgerun/gen/edgerun/ingress/v1/ingressv1connect"
 	workerv1 "github.com/Olian04/edgerun/gen/edgerun/worker/v1"
 	"github.com/Olian04/edgerun/gen/edgerun/worker/v1/workerv1connect"
 	"github.com/Olian04/edgerun/internal/authn"
@@ -125,7 +125,8 @@ type env struct {
 	t      *testing.T
 	svc    *Service
 	rec    *memRecorder
-	client ingressv1connect.IngressServiceClient
+	url    string
+	client *edgerun.Ingress
 }
 
 const (
@@ -165,20 +166,26 @@ func newEnv(t *testing.T, routes []store.RouteEntry, workers []store.Worker, twe
 	mux.Handle(svc.Handler(authn.Verifier{ingressToken: IngressScope}))
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	return &env{t: t, svc: svc, rec: rec,
-		client: ingressv1connect.NewIngressServiceClient(&http.Client{Transport: budgetTransport{}}, srv.URL)}
+	return &env{t: t, svc: svc, rec: rec, url: srv.URL,
+		client: edgerun.NewIngress(srv.URL, ingressToken, edgerun.WithHTTPClient(&http.Client{Transport: budgetTransport{}}))}
 }
 
 // budgetTransport lets a test give the orchestrator a short budget while the
 // test client's own timer stays long: Connect derives the wire deadline from
-// the client's context, which would make the two race.
+// the client's context, which would make the two race. The budget travels in
+// the call's context.
 type budgetTransport struct{}
 
+type budgetKey struct{}
+
+func withBudget(ctx context.Context, d time.Duration) context.Context {
+	return context.WithValue(ctx, budgetKey{}, d)
+}
+
 func (budgetTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	if b := r.Header.Get("X-Test-Budget-Ms"); b != "" {
+	if d, ok := r.Context().Value(budgetKey{}).(time.Duration); ok {
 		r = r.Clone(r.Context())
-		r.Header.Del("X-Test-Budget-Ms")
-		r.Header.Set("Connect-Timeout-Ms", b)
+		r.Header.Set("Connect-Timeout-Ms", strconv.FormatInt(d.Milliseconds(), 10))
 	}
 	return http.DefaultTransport.RoundTrip(r)
 }
@@ -191,38 +198,21 @@ type result struct {
 
 func (e *env) invoke(host, path string, body string, budget time.Duration) result {
 	e.t.Helper()
-	req := connect.NewRequest(&ingressv1.InvokeRequest{
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if budget > 0 {
+		ctx = withBudget(ctx, budget)
+	}
+	res, err := e.client.Invoke(ctx, &ingressv1.InvokeRequest{
 		RequestId: "req-1",
 		Request: &commonv1.HttpRequest{Method: "POST", Host: host, Path: path, RawQuery: "q=1", Body: []byte(body),
 			Headers: []*commonv1.Header{{Name: "x-in", Value: "1"}}},
 	})
-	req.Header().Set("Authorization", "Bearer "+ingressToken)
-	if budget > 0 {
-		req.Header().Set("X-Test-Budget-Ms", strconv.FormatInt(budget.Milliseconds(), 10))
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	st, err := e.client.Invoke(ctx, req)
 	if err != nil {
 		return result{err: err}
 	}
-	defer st.Close()
-	var out result
-	for st.Receive() {
-		switch p := st.Msg().GetPart().(type) {
-		case *ingressv1.InvokeResponse_Head:
-			if out.head != nil {
-				e.t.Error("second head")
-			}
-			out.head = p.Head
-		case *ingressv1.InvokeResponse_Chunk:
-			if out.head == nil {
-				e.t.Error("chunk before head")
-			}
-			out.body = append(out.body, p.Chunk...)
-		}
-	}
-	out.err = st.Err()
+	out := result{head: &ingressv1.InvokeHead{Http: res.Head, InvocationId: res.ID}}
+	out.body, out.err = res.ReadAll()
 	return out
 }
 
@@ -584,14 +574,9 @@ func TestDefaultTimeoutWhenNoDeadlineIsSent(t *testing.T) {
 	e := newEnv(t, []store.RouteEntry{route("sha256:" + strings.Repeat("a", 64))}, []store.Worker{worker(ep)},
 		func(c *Config) { c.DefaultTimeout = 200 * time.Millisecond })
 	// A request carrying no Connect-Timeout-Ms: the orchestrator must still bound it.
-	req := connect.NewRequest(&ingressv1.InvokeRequest{Request: &commonv1.HttpRequest{Method: "GET", Host: "a.com", Path: "/"}})
-	req.Header().Set("Authorization", "Bearer "+ingressToken)
-	st, err := e.client.Invoke(context.Background(), req)
+	res, err := e.client.Invoke(context.Background(), &ingressv1.InvokeRequest{Request: &commonv1.HttpRequest{Method: "GET", Host: "a.com", Path: "/"}})
 	if err == nil {
-		for st.Receive() {
-		}
-		err = st.Err()
-		st.Close()
+		_, err = res.ReadAll()
 	}
 	wantReason(t, err, commonv1.ErrorReason_ERROR_REASON_DEADLINE_EXCEEDED)
 }
@@ -611,15 +596,9 @@ func TestIngressAuthentication(t *testing.T) {
 	ep, fw := startWorker(t, okBehaviour, execToken)
 	e := newEnv(t, []store.RouteEntry{route("sha256:" + strings.Repeat("a", 64))}, []store.Worker{worker(ep)}, nil)
 	for name, tok := range map[string]string{"none": "", "wrong": "nope", "the execution token": execToken} {
-		req := connect.NewRequest(&ingressv1.InvokeRequest{Request: &commonv1.HttpRequest{Method: "GET", Host: "a.com", Path: "/"}})
-		if tok != "" {
-			req.Header().Set("Authorization", "Bearer "+tok)
-		}
-		st, err := e.client.Invoke(context.Background(), req)
+		res, err := edgerun.NewIngress(e.url, tok).Invoke(context.Background(), &ingressv1.InvokeRequest{Request: &commonv1.HttpRequest{Method: "GET", Host: "a.com", Path: "/"}})
 		if err == nil {
-			for st.Receive() {
-			}
-			err = st.Err()
+			_, err = res.ReadAll()
 		}
 		if connect.CodeOf(err) != connect.CodeUnauthenticated {
 			t.Errorf("%s: %v", name, err)
@@ -629,10 +608,8 @@ func TestIngressAuthentication(t *testing.T) {
 		t.Error("unauthenticated requests must not reach workers")
 	}
 	// Describe is guarded too, and reports the limit the frontend must respect.
-	dreq := connect.NewRequest(&ingressv1.DescribeRequest{})
-	dreq.Header().Set("Authorization", "Bearer "+ingressToken)
-	d, err := e.client.Describe(context.Background(), dreq)
-	if err != nil || d.Msg.MaxRequestBodyBytes != 6<<20 || d.Msg.Implementation.Name == "" {
+	d, err := e.client.Describe(context.Background(), &ingressv1.DescribeRequest{})
+	if err != nil || d.MaxRequestBodyBytes != 6<<20 || d.Implementation.Name == "" {
 		t.Errorf("Describe: %+v %v", d, err)
 	}
 }

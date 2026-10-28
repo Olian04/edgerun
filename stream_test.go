@@ -130,9 +130,13 @@ func TestAStreamThatDoesNotBeginWithAHeadIsRefused(t *testing.T) {
 				}
 				return nil
 			}})
-			if res, err := in.Invoke(context.Background(), &ingressv1.InvokeRequest{}); err == nil {
+			res, err := in.Invoke(context.Background(), &ingressv1.InvokeRequest{})
+			if err == nil {
 				res.Body.Close()
 				t.Fatal("a stream with no head is a protocol violation")
+			}
+			if !errors.Is(err, edgerun.ErrProtocol) {
+				t.Errorf("the peer's fault must be said to be: %v", err)
 			}
 		})
 	}
@@ -230,5 +234,25 @@ func TestArtifactBytesAreVerifiedAgainstTheirDigest(t *testing.T) {
 		return edgerun.NewError(commonv1.ErrorReason_ERROR_REASON_INTERNAL, "the orchestrator fell over")
 	}); !edgerun.IsReason(err, commonv1.ErrorReason_ERROR_REASON_INTERNAL) {
 		t.Errorf("a stream that fails after all the bytes is still a failure: %v", err)
+	}
+}
+
+// A second head in the middle of a body is the peer's fault, and the body must
+// not end cleanly after it.
+func TestASecondHeadIsAProtocolViolation(t *testing.T) {
+	in := serve(t, scripted{invoke: func(_ context.Context, _ *connect.Request[ingressv1.InvokeRequest], st *connect.ServerStream[ingressv1.InvokeResponse]) error {
+		st.Send(head(200, "inv-4"))
+		st.Send(chunk("a"))
+		st.Send(head(200, "inv-4"))
+		st.Send(chunk("b"))
+		return nil
+	}})
+	res, err := in.Invoke(context.Background(), &ingressv1.InvokeRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := io.ReadAll(res.Body)
+	if !errors.Is(err, edgerun.ErrProtocol) || string(b) != "a" {
+		t.Errorf("read %q, %v", b, err)
 	}
 }

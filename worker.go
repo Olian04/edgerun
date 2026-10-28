@@ -96,7 +96,13 @@ func (f *Fleet) Deregister(ctx context.Context, req *workerv1.DeregisterRequest)
 // obtains module bytes. It needs a token of ScopeWorker.
 type Artifacts struct {
 	c workerv1connect.ArtifactServiceClient
+	// MaxBytes bounds one artifact, so that a bad server cannot exhaust memory.
+	// Zero means DefaultMaxArtifactBytes.
+	MaxBytes int64
 }
+
+// DefaultMaxArtifactBytes is the bound Artifacts applies unless told otherwise.
+const DefaultMaxArtifactBytes = 1 << 30
 
 // NewArtifacts returns a client for the orchestrator at baseURL.
 func NewArtifacts(baseURL, token string, opts ...Option) *Artifacts {
@@ -112,7 +118,8 @@ var ErrDigestMismatch = errors.New("edgerun: artifact does not match its digest"
 // having verified it: the protocol obliges a client to, and an artifact is
 // worth caching for ever precisely because its digest is its identity. The
 // whole artifact is held in memory; the orchestrator bounds it (see
-// DescribeResponse.MaxModuleBytes of the control protocol).
+// DescribeResponse.MaxModuleBytes of the control protocol); a stream that goes
+// beyond MaxBytes is cut off with an error.
 func (a *Artifacts) GetArtifact(ctx context.Context, digest string) ([]byte, error) {
 	want, ok := strings.CutPrefix(digest, "sha256:")
 	if !ok {
@@ -123,9 +130,17 @@ func (a *Artifacts) GetArtifact(ctx context.Context, digest string) ([]byte, err
 		return nil, err
 	}
 	defer st.Close()
+	limit := a.MaxBytes
+	if limit == 0 {
+		limit = DefaultMaxArtifactBytes
+	}
 	var buf bytes.Buffer
 	for st.Receive() {
-		buf.Write(st.Msg().GetChunk())
+		chunk := st.Msg().GetChunk()
+		if int64(buf.Len()+len(chunk)) > limit {
+			return nil, fmt.Errorf("edgerun: artifact %s exceeds the %d byte limit", digest, limit)
+		}
+		buf.Write(chunk)
 	}
 	if err := st.Err(); err != nil {
 		return nil, err

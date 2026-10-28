@@ -10,6 +10,7 @@ import (
 
 	"connectrpc.com/connect"
 
+	"github.com/Olian04/edgerun"
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
 	controlv1 "github.com/Olian04/edgerun/gen/edgerun/control/v1"
 	workerv1 "github.com/Olian04/edgerun/gen/edgerun/worker/v1"
@@ -27,8 +28,8 @@ type staticWorker struct {
 	t       *testing.T
 	orchURL string
 	srv     *httptest.Server
-	fleet   workerv1connect.FleetServiceClient
-	art     workerv1connect.ArtifactServiceClient
+	fleet   *edgerun.Fleet
+	art     *edgerun.Artifacts
 
 	mu       sync.Mutex
 	workerID string
@@ -59,18 +60,12 @@ func (sw *staticWorker) Execute(ctx context.Context, req *connect.Request[worker
 		return reasoned(commonv1.ErrorReason_ERROR_REASON_ABI_MISMATCH, connect.CodeFailedPrecondition, "only static-1")
 	}
 	// Fetch the "module" from the orchestrator, as any worker does.
-	areq := connect.NewRequest(&workerv1.GetArtifactRequest{Digest: req.Msg.ArtifactDigest})
-	areq.Header().Set("Authorization", "Bearer "+workerToken)
-	as, err := sw.art.GetArtifact(ctx, areq)
+	body, err := sw.art.GetArtifact(ctx, req.Msg.ArtifactDigest)
+	if edgerun.IsReason(err, commonv1.ErrorReason_ERROR_REASON_ARTIFACT_NOT_FOUND) {
+		return reasoned(commonv1.ErrorReason_ERROR_REASON_ARTIFACT_NOT_FOUND, connect.CodeNotFound, "artifact")
+	}
 	if err != nil {
 		return reasoned(commonv1.ErrorReason_ERROR_REASON_INTERNAL, connect.CodeInternal, "artifact: "+err.Error())
-	}
-	var body []byte
-	for as.Receive() {
-		body = append(body, as.Msg().Chunk...)
-	}
-	if err := as.Err(); err != nil {
-		return reasoned(commonv1.ErrorReason_ERROR_REASON_ARTIFACT_NOT_FOUND, connect.CodeNotFound, "artifact")
 	}
 	sw.mu.Lock()
 	sw.served++
@@ -94,22 +89,19 @@ func (s *stack) startStaticWorker() *staticWorker {
 	s.t.Helper()
 	url := "http://" + s.addr
 	sw := &staticWorker{t: s.t, orchURL: url, stopped: make(chan struct{}),
-		fleet: workerv1connect.NewFleetServiceClient(http.DefaultClient, url),
-		art:   workerv1connect.NewArtifactServiceClient(http.DefaultClient, url)}
+		fleet: edgerun.NewFleet(url, workerToken),
+		art:   edgerun.NewArtifacts(url, workerToken)}
 	mux := http.NewServeMux()
 	mux.Handle(workerv1connect.NewExecutionServiceHandler(sw))
 	sw.srv = httptest.NewServer(mux)
 	s.t.Cleanup(func() { sw.stop() })
 
-	call := func(r interface{ Header() http.Header }) { r.Header().Set("Authorization", "Bearer "+workerToken) }
-	reg := connect.NewRequest(&workerv1.RegisterRequest{Endpoint: sw.srv.URL, Info: sw.info()})
-	call(reg)
-	resp, err := sw.fleet.Register(context.Background(), reg)
+	resp, err := sw.fleet.Register(context.Background(), &workerv1.RegisterRequest{Endpoint: sw.srv.URL, Info: sw.info()})
 	if err != nil {
 		s.t.Fatal(err)
 	}
-	sw.workerID = resp.Msg.WorkerId
-	interval := resp.Msg.HeartbeatInterval.AsDuration()
+	sw.workerID = resp.WorkerId
+	interval := resp.HeartbeatInterval.AsDuration()
 
 	go func() {
 		t := time.NewTicker(interval)
@@ -122,14 +114,10 @@ func (s *stack) startStaticWorker() *staticWorker {
 				sw.mu.Lock()
 				id := sw.workerID
 				sw.mu.Unlock()
-				hb := connect.NewRequest(&workerv1.HeartbeatRequest{WorkerId: id, State: workerv1.WorkerState_WORKER_STATE_READY})
-				call(hb)
-				if r, err := sw.fleet.Heartbeat(context.Background(), hb); err == nil && r.Msg.Reregister {
-					rg := connect.NewRequest(&workerv1.RegisterRequest{Endpoint: sw.srv.URL, Info: sw.info()})
-					call(rg)
-					if rr, err := sw.fleet.Register(context.Background(), rg); err == nil {
+				if r, err := sw.fleet.Heartbeat(context.Background(), &workerv1.HeartbeatRequest{WorkerId: id, State: workerv1.WorkerState_WORKER_STATE_READY}); err == nil && r.Reregister {
+					if rr, err := sw.fleet.Register(context.Background(), &workerv1.RegisterRequest{Endpoint: sw.srv.URL, Info: sw.info()}); err == nil {
 						sw.mu.Lock()
-						sw.workerID = rr.Msg.WorkerId
+						sw.workerID = rr.WorkerId
 						sw.mu.Unlock()
 					}
 				}
@@ -142,9 +130,7 @@ func (s *stack) startStaticWorker() *staticWorker {
 func (sw *staticWorker) stop() {
 	sw.once.Do(func() {
 		close(sw.stopped)
-		dr := connect.NewRequest(&workerv1.DeregisterRequest{WorkerId: sw.workerID})
-		dr.Header().Set("Authorization", "Bearer "+workerToken)
-		sw.fleet.Deregister(context.Background(), dr)
+		sw.fleet.Deregister(context.Background(), &workerv1.DeregisterRequest{WorkerId: sw.workerID})
 		sw.srv.Close()
 	})
 }
@@ -165,8 +151,8 @@ func TestSwappingAWorker(t *testing.T) {
 	s.route("wasm.test", "/", wasmFn)
 
 	staticFn := s.createFunction("static")
-	if _, err := s.fn.CreateVersion(ctx, connect.NewRequest(&controlv1.CreateVersionRequest{
-		FunctionId: staticFn, Module: []byte("hello from a completely different worker\n"), Abi: "static-1", Activate: true})); err != nil {
+	if _, err := s.ctl.CreateVersion(ctx, &controlv1.CreateVersionRequest{
+		FunctionId: staticFn, Module: []byte("hello from a completely different worker\n"), Abi: "static-1", Activate: true}); err != nil {
 		t.Fatal(err)
 	}
 	s.route("static.test", "/", staticFn)
@@ -192,12 +178,12 @@ func TestSwappingAWorker(t *testing.T) {
 	})
 
 	t.Run("the fleet view shows both implementations", func(t *testing.T) {
-		ws, err := s.insp.ListWorkers(ctx, connect.NewRequest(&controlv1.ListWorkersRequest{}))
+		ws, err := s.ctl.ListWorkers(ctx, &controlv1.ListWorkersRequest{})
 		if err != nil {
 			t.Fatal(err)
 		}
 		names := map[string]bool{}
-		for _, wk := range ws.Msg.Workers {
+		for _, wk := range ws.Workers {
 			names[wk.Info.Implementation.Name] = true
 		}
 		if !names["static-worker"] || !names["edgerun-worker-wazero"] {

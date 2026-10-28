@@ -6,15 +6,15 @@ package egressclient
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"sync"
 
 	"connectrpc.com/connect"
 
+	"github.com/Olian04/edgerun"
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
 	egressv1 "github.com/Olian04/edgerun/gen/edgerun/egress/v1"
-	"github.com/Olian04/edgerun/gen/edgerun/egress/v1/egressv1connect"
-	"github.com/Olian04/edgerun/internal/authn"
 	"github.com/Olian04/edgerun/internal/errs"
 	"github.com/Olian04/edgerun/internal/worker/runtime"
 )
@@ -24,19 +24,19 @@ import (
 type Client struct {
 	hc    *http.Client
 	token string
-	svcs  sync.Map // base URL -> egressv1connect.EgressServiceClient
+	svcs  sync.Map // base URL -> *edgerun.Egress
 }
 
 // New returns a client that presents token to the network services it calls.
 func New(hc *http.Client, token string) *Client { return &Client{hc: hc, token: token} }
 
-func (c *Client) service(baseURL string) egressv1connect.EgressServiceClient {
+func (c *Client) service(baseURL string) *edgerun.Egress {
 	if s, ok := c.svcs.Load(baseURL); ok {
-		return s.(egressv1connect.EgressServiceClient)
+		return s.(*edgerun.Egress)
 	}
-	s := egressv1connect.NewEgressServiceClient(c.hc, baseURL, connect.WithInterceptors(authn.Client(c.token)))
+	s := edgerun.NewEgress(baseURL, c.token, edgerun.WithHTTPClient(c.hc))
 	actual, _ := c.svcs.LoadOrStore(baseURL, s)
-	return actual.(egressv1connect.EgressServiceClient)
+	return actual.(*edgerun.Egress)
 }
 
 var _ runtime.Network = (*Client)(nil)
@@ -44,37 +44,28 @@ var _ runtime.Network = (*Client)(nil)
 // Fetch implements runtime.Network. The context's deadline is the budget the
 // service is given.
 func (c *Client) Fetch(ctx context.Context, req runtime.NetRequest) (*runtime.NetResponse, error) {
-	st, err := c.service(req.Service).Fetch(ctx, connect.NewRequest(&egressv1.FetchRequest{
+	res, err := c.service(req.Service).Fetch(ctx, &egressv1.FetchRequest{
 		Method: req.Method, Url: req.URL, Headers: req.Headers, Body: req.Body,
 		Allow: req.Allow, MaxResponseBytes: req.MaxResponseBytes, InvocationId: req.InvocationID,
-	}))
+	})
 	if err != nil {
 		return nil, classify(err)
 	}
-	defer st.Close()
+	defer res.Body.Close()
 
-	var out runtime.NetResponse
-	gotHead := false
-	for st.Receive() {
-		switch p := st.Msg().GetPart().(type) {
-		case *egressv1.FetchResponse_Head:
-			gotHead = true
-			out.Status, out.Headers = p.Head.GetStatus(), p.Head.GetHeaders()
-		case *egressv1.FetchResponse_Chunk:
-			out.Body = append(out.Body, p.Chunk...)
-			// A service that exceeds the bound it was given is not trusted to stop.
-			if req.MaxResponseBytes > 0 && uint64(len(out.Body)) > req.MaxResponseBytes {
-				return nil, &runtime.NetError{Kind: runtime.NetTooLarge, Msg: "the response exceeds the limit"}
-			}
-		}
+	// A service that exceeds the bound it was given is not trusted to stop.
+	var body io.Reader = res.Body
+	if req.MaxResponseBytes > 0 {
+		body = io.LimitReader(body, int64(req.MaxResponseBytes)+1)
 	}
-	if err := st.Err(); err != nil {
+	data, err := io.ReadAll(body)
+	if err != nil {
 		return nil, classify(err)
 	}
-	if !gotHead {
-		return nil, &runtime.NetError{Kind: runtime.NetFailed, Msg: "the network service answered without a response head"}
+	if req.MaxResponseBytes > 0 && uint64(len(data)) > req.MaxResponseBytes {
+		return nil, &runtime.NetError{Kind: runtime.NetTooLarge, Msg: "the response exceeds the limit"}
 	}
-	return &out, nil
+	return &runtime.NetResponse{Status: res.Head.GetStatus(), Headers: res.Head.GetHeaders(), Body: data}, nil
 }
 
 // classify turns a failure of the call into a runtime.NetError.

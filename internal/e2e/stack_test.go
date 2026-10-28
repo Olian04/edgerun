@@ -14,15 +14,11 @@ import (
 	"testing"
 	"time"
 
-	"connectrpc.com/connect"
-
+	"github.com/Olian04/edgerun"
 	"github.com/Olian04/edgerun/conformance/guest"
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
 	controlv1 "github.com/Olian04/edgerun/gen/edgerun/control/v1"
-	"github.com/Olian04/edgerun/gen/edgerun/control/v1/controlv1connect"
 	ingressv1 "github.com/Olian04/edgerun/gen/edgerun/ingress/v1"
-	"github.com/Olian04/edgerun/gen/edgerun/ingress/v1/ingressv1connect"
-	"github.com/Olian04/edgerun/internal/authn"
 	"github.com/Olian04/edgerun/internal/errs"
 	orchapp "github.com/Olian04/edgerun/internal/orchestrator/app"
 	"github.com/Olian04/edgerun/internal/orchestrator/orchtest"
@@ -49,10 +45,8 @@ type stack struct {
 	addr string
 	orch *orchapp.Server
 
-	fn      controlv1connect.FunctionServiceClient
-	rt      controlv1connect.RouteServiceClient
-	insp    controlv1connect.InspectionServiceClient
-	ingress ingressv1connect.IngressServiceClient
+	ctl     *edgerun.Control
+	ingress *edgerun.Ingress
 	wasm    []byte
 }
 
@@ -82,23 +76,21 @@ func (s *stack) startOrchestrator(listen string) {
 	}
 	s.orch, s.addr = srv, srv.Addr()
 	url := "http://" + s.addr
-	admin := connect.WithInterceptors(authn.Client(adminToken))
-	s.fn = controlv1connect.NewFunctionServiceClient(http.DefaultClient, url, admin)
-	s.rt = controlv1connect.NewRouteServiceClient(http.DefaultClient, url, admin)
-	s.insp = controlv1connect.NewInspectionServiceClient(http.DefaultClient, url, admin)
-	s.ingress = ingressv1connect.NewIngressServiceClient(&http.Client{Transport: budgetTransport{}}, url,
-		connect.WithInterceptors(authn.Client(ingressToken)))
+	s.ctl = edgerun.NewControl(url, adminToken)
+	s.ingress = edgerun.NewIngress(url, ingressToken, edgerun.WithHTTPClient(&http.Client{Transport: budgetTransport{}}))
 }
 
 // budgetTransport gives the orchestrator a short budget while the test's own
-// timer stays long (Connect would otherwise make the two the same value).
+// timer stays long (Connect would otherwise make the two the same value). The
+// budget travels in the call's context.
 type budgetTransport struct{}
 
+type budgetKey struct{}
+
 func (budgetTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	if b := r.Header.Get("X-Test-Budget-Ms"); b != "" {
+	if d, ok := r.Context().Value(budgetKey{}).(time.Duration); ok {
 		r = r.Clone(r.Context())
-		r.Header.Del("X-Test-Budget-Ms")
-		r.Header.Set("Connect-Timeout-Ms", b)
+		r.Header.Set("Connect-Timeout-Ms", strconv.FormatInt(d.Milliseconds(), 10))
 	}
 	return http.DefaultTransport.RoundTrip(r)
 }
@@ -142,34 +134,34 @@ var ctx = context.Background()
 
 func (s *stack) createFunction(name string) string {
 	s.t.Helper()
-	r, err := s.fn.CreateFunction(ctx, connect.NewRequest(&controlv1.CreateFunctionRequest{Name: name}))
+	r, err := s.ctl.CreateFunction(ctx, &controlv1.CreateFunctionRequest{Name: name})
 	if err != nil {
 		s.t.Fatal(err)
 	}
-	return r.Msg.Function.Id
+	return r.Function.Id
 }
 
 func (s *stack) uploadVersion(fid string, module []byte, limits *commonv1.Limits, activate bool) string {
 	s.t.Helper()
-	r, err := s.fn.CreateVersion(ctx, connect.NewRequest(&controlv1.CreateVersionRequest{
-		FunctionId: fid, Module: module, Abi: "wagi-1", Limits: limits, Activate: activate}))
+	r, err := s.ctl.CreateVersion(ctx, &controlv1.CreateVersionRequest{
+		FunctionId: fid, Module: module, Abi: "wagi-1", Limits: limits, Activate: activate})
 	if err != nil {
 		s.t.Fatal(err)
 	}
-	return r.Msg.Version.Id
+	return r.Version.Id
 }
 
 func (s *stack) route(host, prefix, fid string) {
 	s.t.Helper()
-	if _, err := s.rt.CreateRoute(ctx, connect.NewRequest(&controlv1.CreateRouteRequest{HostPattern: host, PathPrefix: prefix, FunctionId: fid})); err != nil {
+	if _, err := s.ctl.CreateRoute(ctx, &controlv1.CreateRouteRequest{HostPattern: host, PathPrefix: prefix, FunctionId: fid}); err != nil {
 		s.t.Fatal(err)
 	}
 }
 
 func (s *stack) setEnv(fid, name, value string, secret bool) {
 	s.t.Helper()
-	if _, err := s.fn.SetEnv(ctx, connect.NewRequest(&controlv1.SetEnvRequest{FunctionId: fid,
-		Entry: &controlv1.EnvEntry{Name: name, Value: value, Secret: secret}})); err != nil {
+	if _, err := s.ctl.SetEnv(ctx, &controlv1.SetEnvRequest{FunctionId: fid,
+		Entry: &controlv1.EnvEntry{Name: name, Value: value, Secret: secret}}); err != nil {
 		s.t.Fatal(err)
 	}
 }
@@ -197,32 +189,23 @@ func (s *stack) call(r req) result {
 	if r.host == "" {
 		r.host = "e2e.test"
 	}
-	hr := connect.NewRequest(&ingressv1.InvokeRequest{
+	cctx, cancel := context.WithTimeout(ctx, 120*time.Second)
+	defer cancel()
+	if r.budget > 0 {
+		cctx = context.WithValue(cctx, budgetKey{}, r.budget)
+	}
+	start := time.Now()
+	res, err := s.ingress.Invoke(cctx, &ingressv1.InvokeRequest{
 		RequestId: "e2e-" + s.t.Name(),
 		Request: &commonv1.HttpRequest{Method: r.method, Host: r.host, Path: r.path, RawQuery: r.query, Body: []byte(r.body),
 			Headers: []*commonv1.Header{{Name: "content-type", Value: "text/x-e2e"}}},
 	})
-	if r.budget > 0 {
-		hr.Header().Set("X-Test-Budget-Ms", strconv.FormatInt(r.budget.Milliseconds(), 10))
-	}
-	cctx, cancel := context.WithTimeout(ctx, 120*time.Second)
-	defer cancel()
-	start := time.Now()
-	st, err := s.ingress.Invoke(cctx, hr)
 	if err != nil {
 		return result{err: err, elapsed: time.Since(start)}
 	}
-	defer st.Close()
-	var out result
-	for st.Receive() {
-		switch p := st.Msg().GetPart().(type) {
-		case *ingressv1.InvokeResponse_Head:
-			out.head = p.Head
-		case *ingressv1.InvokeResponse_Chunk:
-			out.body = append(out.body, p.Chunk...)
-		}
-	}
-	out.err, out.elapsed = st.Err(), time.Since(start)
+	out := result{head: &ingressv1.InvokeHead{Http: res.Head, InvocationId: res.ID}}
+	out.body, out.err = res.ReadAll()
+	out.elapsed = time.Since(start)
 	return out
 }
 
@@ -260,12 +243,12 @@ func (s *stack) waitServing(host, path string) {
 }
 
 func (s *stack) aliveWorkers() int {
-	r, err := s.insp.ListWorkers(ctx, connect.NewRequest(&controlv1.ListWorkersRequest{}))
+	r, err := s.ctl.ListWorkers(ctx, &controlv1.ListWorkersRequest{})
 	if err != nil {
 		return -1
 	}
 	n := 0
-	for _, w := range r.Msg.Workers {
+	for _, w := range r.Workers {
 		if w.Alive {
 			n++
 		}
@@ -275,11 +258,11 @@ func (s *stack) aliveWorkers() int {
 
 func (s *stack) invocations(fid string) []*controlv1.Invocation {
 	s.t.Helper()
-	r, err := s.insp.ListInvocations(ctx, connect.NewRequest(&controlv1.ListInvocationsRequest{FunctionId: fid, PageSize: 500}))
+	r, err := s.ctl.ListInvocations(ctx, &controlv1.ListInvocationsRequest{FunctionId: fid, PageSize: 500})
 	if err != nil {
 		s.t.Fatal(err)
 	}
-	return r.Msg.Invocations
+	return r.Invocations
 }
 
 func freePort(t *testing.T) string {

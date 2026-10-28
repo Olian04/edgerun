@@ -11,10 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"connectrpc.com/connect"
-
+	"github.com/Olian04/edgerun"
 	workerv1 "github.com/Olian04/edgerun/gen/edgerun/worker/v1"
-	"github.com/Olian04/edgerun/gen/edgerun/worker/v1/workerv1connect"
 )
 
 // Source reports the load a heartbeat carries.
@@ -28,7 +26,7 @@ type Config struct {
 	// Endpoint is the base URL at which the orchestrator reaches this worker.
 	Endpoint string
 	Info     *workerv1.WorkerInfo
-	Fleet    workerv1connect.FleetServiceClient
+	Fleet    *edgerun.Fleet
 	Source   Source
 	Log      *slog.Logger
 	// RetryMin and RetryMax bound the exponential backoff between failed
@@ -97,7 +95,7 @@ func (c *Client) Deregister(ctx context.Context) error {
 	if id == "" {
 		return nil
 	}
-	_, err := c.cfg.Fleet.Deregister(ctx, connect.NewRequest(&workerv1.DeregisterRequest{WorkerId: id}))
+	_, err := c.cfg.Fleet.Deregister(ctx, &workerv1.DeregisterRequest{WorkerId: id})
 	return err
 }
 
@@ -110,16 +108,16 @@ func (c *Client) setID(id string) {
 func (c *Client) register(ctx context.Context) (string, time.Duration, error) {
 	delay := c.cfg.RetryMin
 	for {
-		resp, err := c.cfg.Fleet.Register(ctx, connect.NewRequest(&workerv1.RegisterRequest{
+		resp, err := c.cfg.Fleet.Register(ctx, &workerv1.RegisterRequest{
 			Endpoint: c.cfg.Endpoint, Info: c.cfg.Info,
-		}))
+		})
 		if err == nil {
-			interval := resp.Msg.GetHeartbeatInterval().AsDuration()
+			interval := resp.GetHeartbeatInterval().AsDuration()
 			if interval <= 0 {
 				interval = 5 * time.Second
 			}
-			c.cfg.Log.Info("registered", "worker_id", resp.Msg.GetWorkerId(), "heartbeat_interval", interval)
-			return resp.Msg.GetWorkerId(), interval, nil
+			c.cfg.Log.Info("registered", "worker_id", resp.GetWorkerId(), "heartbeat_interval", interval)
+			return resp.GetWorkerId(), interval, nil
 		}
 		if ctx.Err() != nil {
 			return "", 0, ctx.Err()
@@ -147,9 +145,9 @@ func (c *Client) heartbeats(ctx context.Context, id string, interval time.Durati
 		case <-t.C:
 		case <-c.poke:
 		}
-		resp, err := c.cfg.Fleet.Heartbeat(ctx, connect.NewRequest(&workerv1.HeartbeatRequest{
+		resp, err := c.cfg.Fleet.Heartbeat(ctx, &workerv1.HeartbeatRequest{
 			WorkerId: id, State: c.cfg.Source.State(), InFlight: c.cfg.Source.InFlight(),
-		}))
+		})
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -159,7 +157,7 @@ func (c *Client) heartbeats(ctx context.Context, id string, interval time.Durati
 			c.cfg.Log.Warn("heartbeat failed", "error", err)
 			continue
 		}
-		if resp.Msg.GetReregister() {
+		if resp.GetReregister() {
 			return nil
 		}
 	}

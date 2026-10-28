@@ -14,6 +14,7 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/durationpb"
 
+	"github.com/Olian04/edgerun"
 	workerv1 "github.com/Olian04/edgerun/gen/edgerun/worker/v1"
 	"github.com/Olian04/edgerun/gen/edgerun/worker/v1/workerv1connect"
 )
@@ -85,7 +86,7 @@ func setup(t *testing.T, f *fakeFleet, src *source) (*Client, context.CancelFunc
 	t.Cleanup(srv.Close)
 	c := New(Config{
 		Endpoint: "http://worker.test", Info: &workerv1.WorkerInfo{},
-		Fleet:  workerv1connect.NewFleetServiceClient(srv.Client(), srv.URL),
+		Fleet:  edgerun.NewFleet(srv.URL, "", edgerun.WithHTTPClient(srv.Client())),
 		Source: src, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		RetryMin: 5 * time.Millisecond, RetryMax: 20 * time.Millisecond,
 	})

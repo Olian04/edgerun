@@ -10,6 +10,7 @@ package invoke
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -26,7 +27,6 @@ import (
 	ingressv1 "github.com/Olian04/edgerun/gen/edgerun/ingress/v1"
 	"github.com/Olian04/edgerun/gen/edgerun/ingress/v1/ingressv1connect"
 	workerv1 "github.com/Olian04/edgerun/gen/edgerun/worker/v1"
-	"github.com/Olian04/edgerun/gen/edgerun/worker/v1/workerv1connect"
 	"github.com/Olian04/edgerun/internal/authn"
 	"github.com/Olian04/edgerun/internal/errs"
 	"github.com/Olian04/edgerun/internal/orchestrator/netroute"
@@ -66,7 +66,7 @@ type Service struct {
 	ingressv1connect.UnimplementedIngressServiceHandler
 	cfg Config
 
-	clients sync.Map // endpoint -> workerv1connect.ExecutionServiceClient
+	clients sync.Map // endpoint -> *edgerun.Execution
 	downMu  sync.Mutex
 	down    map[string]time.Time // endpoint -> skip until
 }
@@ -226,39 +226,34 @@ func (s *Service) attempt(ctx context.Context, w store.Worker, exec *workerv1.Ex
 	out *connect.ServerStream[ingressv1.InvokeResponse], rec *controlv1.Invocation,
 	summary **workerv1.ExecutionSummary, headSent *bool) error {
 
-	st, err := s.client(w.Endpoint).Execute(ctx, connect.NewRequest(exec))
+	res, err := s.client(w.Endpoint).Execute(ctx, exec)
 	if err != nil {
 		return err
 	}
-	defer st.Close()
-	for st.Receive() {
-		switch p := st.Msg().GetPart().(type) {
-		case *workerv1.ExecuteResponse_Head:
-			if *headSent {
-				return errs.New(commonv1.ErrorReason_ERROR_REASON_INTERNAL, "worker sent a second response head")
-			}
-			*headSent = true
-			rec.Status = p.Head.GetStatus()
-			if err := out.Send(&ingressv1.InvokeResponse{Part: &ingressv1.InvokeResponse_Head{
-				Head: &ingressv1.InvokeHead{Http: p.Head, InvocationId: rec.Id}}}); err != nil {
-				return err
-			}
-		case *workerv1.ExecuteResponse_Chunk:
-			if !*headSent {
-				return errs.New(commonv1.ErrorReason_ERROR_REASON_INTERNAL, "worker sent a body chunk before the response head")
-			}
-			if err := out.Send(&ingressv1.InvokeResponse{Part: &ingressv1.InvokeResponse_Chunk{Chunk: p.Chunk}}); err != nil {
-				return err
-			}
-		case *workerv1.ExecuteResponse_Summary:
-			*summary = p.Summary
-		}
-	}
-	if err := st.Err(); err != nil {
+	defer res.Body.Close()
+	*headSent = true
+	rec.Status = res.Head.GetStatus()
+	if err := out.Send(&ingressv1.InvokeResponse{Part: &ingressv1.InvokeResponse_Head{
+		Head: &ingressv1.InvokeHead{Http: res.Head, InvocationId: rec.Id}}}); err != nil {
 		return err
 	}
-	if !*headSent || *summary == nil {
-		return errs.New(commonv1.ErrorReason_ERROR_REASON_INTERNAL, "worker ended the response without a head and a summary")
+	buf := make([]byte, 64<<10)
+	for {
+		n, err := res.Body.Read(buf)
+		if n > 0 {
+			if serr := out.Send(&ingressv1.InvokeResponse{Part: &ingressv1.InvokeResponse_Chunk{Chunk: buf[:n]}}); serr != nil {
+				return serr
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+	}
+	if *summary = res.Summary(); *summary == nil {
+		return errs.New(commonv1.ErrorReason_ERROR_REASON_INTERNAL, "worker ended the response without a summary")
 	}
 	return nil
 }
@@ -305,14 +300,13 @@ func (s *Service) translate(ctx context.Context, err error) error {
 	return errs.New(commonv1.ErrorReason_ERROR_REASON_INTERNAL, "worker call failed")
 }
 
-func (s *Service) client(endpoint string) workerv1connect.ExecutionServiceClient {
+func (s *Service) client(endpoint string) *edgerun.Execution {
 	if c, ok := s.clients.Load(endpoint); ok {
-		return c.(workerv1connect.ExecutionServiceClient)
+		return c.(*edgerun.Execution)
 	}
-	c := workerv1connect.NewExecutionServiceClient(s.cfg.HTTP, endpoint,
-		connect.WithInterceptors(authn.Client(s.cfg.ExecutionToken)))
+	c := edgerun.NewExecution(endpoint, s.cfg.ExecutionToken, edgerun.WithHTTPClient(s.cfg.HTTP))
 	actual, _ := s.clients.LoadOrStore(endpoint, c)
-	return actual.(workerv1connect.ExecutionServiceClient)
+	return actual.(*edgerun.Execution)
 }
 
 func (s *Service) markDown(endpoint string) {

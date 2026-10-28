@@ -12,12 +12,9 @@ import (
 	"net/url"
 	"time"
 
-	"connectrpc.com/connect"
-
 	"github.com/Olian04/edgerun"
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
 	workerv1 "github.com/Olian04/edgerun/gen/edgerun/worker/v1"
-	"github.com/Olian04/edgerun/gen/edgerun/worker/v1/workerv1connect"
 	"github.com/Olian04/edgerun/internal/authn"
 	"github.com/Olian04/edgerun/internal/worker/cache"
 	"github.com/Olian04/edgerun/internal/worker/egressclient"
@@ -129,9 +126,9 @@ func Run(ctx context.Context, cfg Config) error {
 	defer engine.Close(context.Background())
 
 	hc := &http.Client{}
-	artifactClient := workerv1connect.NewArtifactServiceClient(hc, cfg.OrchestratorURL,
-		connect.WithInterceptors(authn.Client(cfg.WorkerToken)))
-	artifacts := cache.New(cache.ConnectFetcher{Client: artifactClient, MaxBytes: cfg.MaxArtifactBytes}, cfg.ArtifactCacheBytes)
+	artifactClient := edgerun.NewArtifacts(cfg.OrchestratorURL, cfg.WorkerToken, edgerun.WithHTTPClient(hc))
+	artifactClient.MaxBytes = cfg.MaxArtifactBytes
+	artifacts := cache.New(cache.ArtifactFetcher{Client: artifactClient}, cfg.ArtifactCacheBytes)
 
 	info := &workerv1.WorkerInfo{
 		Implementation: implementation(cfg.Version),
@@ -161,8 +158,7 @@ func Run(ctx context.Context, cfg Config) error {
 
 	fleet := fleetclient.New(fleetclient.Config{
 		Endpoint: advertise, Info: info, Source: srv, Log: log,
-		Fleet: workerv1connect.NewFleetServiceClient(hc, cfg.OrchestratorURL,
-			connect.WithInterceptors(authn.Client(cfg.WorkerToken))),
+		Fleet: edgerun.NewFleet(cfg.OrchestratorURL, cfg.WorkerToken, edgerun.WithHTTPClient(hc)),
 	})
 	// Heartbeats must outlive ctx: they keep reporting DRAINING while we wait.
 	hbCtx, stopHeartbeats := context.WithCancel(context.Background())

@@ -101,5 +101,9 @@ The protocols are versioned in their package names and guarded by `buf breaking`
 incompatibly. The Go API follows the module's version, which is pre-1.0: expect the surface above to hold (it is
 the protocols' surface) and the helpers around it (`Response`, options) to be refined.
 
-edgerun's own admin UI and `edgerunctl` are built on `NewControl`; the other in-repo components still call the
-generated clients directly.
+edgerun's own components are built on the library: the frontend, the orchestrator (calling workers), the worker
+(calling the orchestrator and network services), the network service (registering), the admin UI and `edgerunctl`.
+Their tests use it too. Three places deliberately do not, because they are about the wire itself and a client that
+hides it could not make their point: the conformance suites (`conformance/`), which depend on the generated protocol
+code and nothing else of edgerun so that an implementation cannot also get the test wrong; the test of the
+orchestrator's artifact stream chunking; and the test of the authentication interceptors themselves.

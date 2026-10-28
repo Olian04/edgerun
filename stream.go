@@ -2,6 +2,8 @@ package edgerun
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 
@@ -62,7 +64,7 @@ type source interface {
 // body turns the chunks of a stream into an io.Reader.
 type body struct {
 	src    source
-	chunk  func() []byte // the bytes of the current message; nil if it carries none
+	chunk  func() ([]byte, error) // the bytes of the current message (nil if it carries none), or a protocol violation
 	buf    []byte
 	err    error // sticky; io.EOF once the stream has ended cleanly
 	closed bool
@@ -82,7 +84,9 @@ func (b *body) Read(p []byte) (int, error) {
 			}
 			continue
 		}
-		b.buf = b.chunk()
+		if b.buf, b.err = b.chunk(); b.err != nil {
+			b.src.Close()
+		}
 	}
 	n := copy(p, b.buf)
 	b.buf = b.buf[n:]
@@ -100,14 +104,15 @@ func (b *body) Close() error {
 // openStream reads a stream up to its head. A failure before the head is the
 // call's error (typed, see Reason); a stream that does not begin with a head is
 // a protocol violation. headOf returns the head of a message that is one, and
-// chunkOf the payload of the current message, which a seam may also use to
-// notice parts of its own (a summary).
+// chunkOf the payload of a later message, which a seam may also use to notice
+// parts of its own (a summary). A later message that is a head again is a
+// protocol violation.
 func openStream[M any](st *connect.ServerStreamForClient[M], headOf func(*M) *commonv1.HttpResponseHead, chunkOf func(*M) []byte) (*Response, *M, error) {
 	if !st.Receive() {
 		err := st.Err()
 		st.Close()
 		if err == nil {
-			err = connect.NewError(connect.CodeUnknown, errNoHead)
+			err = errNoHead
 		}
 		return nil, nil, err
 	}
@@ -115,13 +120,22 @@ func openStream[M any](st *connect.ServerStreamForClient[M], headOf func(*M) *co
 	head := headOf(first)
 	if head == nil {
 		st.Close()
-		return nil, nil, connect.NewError(connect.CodeUnknown, errNoHead)
+		return nil, nil, errNoHead
 	}
-	return &Response{Head: head, Body: &body{src: st, chunk: func() []byte { return chunkOf(st.Msg()) }}}, first, nil
+	return &Response{Head: head, Body: &body{src: st, chunk: func() ([]byte, error) {
+		m := st.Msg()
+		if headOf(m) != nil {
+			return nil, errSecondHead
+		}
+		return chunkOf(m), nil
+	}}}, first, nil
 }
 
-type protocolError string
+// ErrProtocol is what a call fails with when the peer answered in a way the
+// protocol does not allow (a response stream with no head, say). It is the
+// peer's fault, not the caller's: a gateway maps it to 502.
+var ErrProtocol = errors.New("edgerun: the peer violated the protocol")
 
-func (e protocolError) Error() string { return string(e) }
+var errSecondHead = fmt.Errorf("%w: a second response head", ErrProtocol)
 
-const errNoHead = protocolError("edgerun: the stream did not begin with a response head")
+var errNoHead = fmt.Errorf("%w: the stream did not begin with a response head", ErrProtocol)

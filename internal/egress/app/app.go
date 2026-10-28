@@ -14,10 +14,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"connectrpc.com/connect"
-
+	"github.com/Olian04/edgerun"
 	egressv1 "github.com/Olian04/edgerun/gen/edgerun/egress/v1"
-	"github.com/Olian04/edgerun/gen/edgerun/egress/v1/egressv1connect"
 	"github.com/Olian04/edgerun/internal/authn"
 	"github.com/Olian04/edgerun/internal/egress/policy"
 	"github.com/Olian04/edgerun/internal/egress/registry"
@@ -132,7 +130,7 @@ func Start(_ context.Context, cfg Config) (*Server, error) {
 	s.reg = registry.New(registry.Config{
 		Endpoint: advertise,
 		Info:     serviceInfo(cfg),
-		Registry: egressv1connect.NewRegistryServiceClient(&http.Client{}, cfg.OrchestratorURL, connect.WithInterceptors(authn.Client(cfg.NetworkToken))),
+		Registry: edgerun.NewRegistry(cfg.OrchestratorURL, cfg.NetworkToken),
 		State: func() egressv1.ServiceState {
 			if s.draining.Load() {
 				return egressv1.ServiceState_SERVICE_STATE_DRAINING

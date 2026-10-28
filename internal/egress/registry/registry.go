@@ -13,8 +13,8 @@ import (
 
 	"connectrpc.com/connect"
 
+	"github.com/Olian04/edgerun"
 	egressv1 "github.com/Olian04/edgerun/gen/edgerun/egress/v1"
-	"github.com/Olian04/edgerun/gen/edgerun/egress/v1/egressv1connect"
 )
 
 // Config configures a Client.
@@ -22,7 +22,7 @@ type Config struct {
 	// Endpoint is the base URL at which workers reach this service.
 	Endpoint string
 	Info     *egressv1.ServiceInfo
-	Registry egressv1connect.RegistryServiceClient
+	Registry *edgerun.Registry
 	// State reports READY, or DRAINING while the service is shutting down.
 	State func() egressv1.ServiceState
 	Log   *slog.Logger
@@ -70,7 +70,7 @@ func (c *Client) HeartbeatNow(ctx context.Context) error {
 	if id == "" {
 		return nil
 	}
-	_, err := c.cfg.Registry.Heartbeat(ctx, connect.NewRequest(&egressv1.HeartbeatRequest{ServiceId: id, State: c.cfg.State()}))
+	_, err := c.cfg.Registry.Heartbeat(ctx, &egressv1.HeartbeatRequest{ServiceId: id, State: c.cfg.State()})
 	return err
 }
 
@@ -106,21 +106,21 @@ func (c *Client) Deregister(ctx context.Context) error {
 	if id == "" {
 		return nil
 	}
-	_, err := c.cfg.Registry.Deregister(ctx, connect.NewRequest(&egressv1.DeregisterRequest{ServiceId: id}))
+	_, err := c.cfg.Registry.Deregister(ctx, &egressv1.DeregisterRequest{ServiceId: id})
 	return err
 }
 
 func (c *Client) register(ctx context.Context) (string, time.Duration, error) {
 	delay := c.cfg.RetryMin
 	for {
-		resp, err := c.cfg.Registry.Register(ctx, connect.NewRequest(&egressv1.RegisterRequest{Endpoint: c.cfg.Endpoint, Info: c.cfg.Info}))
+		resp, err := c.cfg.Registry.Register(ctx, &egressv1.RegisterRequest{Endpoint: c.cfg.Endpoint, Info: c.cfg.Info})
 		if err == nil {
-			interval := resp.Msg.GetHeartbeatInterval().AsDuration()
+			interval := resp.GetHeartbeatInterval().AsDuration()
 			if interval <= 0 {
 				interval = 5 * time.Second
 			}
-			c.cfg.Log.Info("registered", "service_id", resp.Msg.GetServiceId(), "heartbeat_interval", interval, "covers", c.cfg.Info.GetCovers())
-			return resp.Msg.GetServiceId(), interval, nil
+			c.cfg.Log.Info("registered", "service_id", resp.GetServiceId(), "heartbeat_interval", interval, "covers", c.cfg.Info.GetCovers())
+			return resp.GetServiceId(), interval, nil
 		}
 		if ctx.Err() != nil {
 			return "", 0, ctx.Err()
@@ -153,7 +153,7 @@ func (c *Client) heartbeats(ctx context.Context, id string, interval time.Durati
 		case <-t.C:
 		case <-c.poke:
 		}
-		resp, err := c.cfg.Registry.Heartbeat(ctx, connect.NewRequest(&egressv1.HeartbeatRequest{ServiceId: id, State: c.cfg.State()}))
+		resp, err := c.cfg.Registry.Heartbeat(ctx, &egressv1.HeartbeatRequest{ServiceId: id, State: c.cfg.State()})
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -161,7 +161,7 @@ func (c *Client) heartbeats(ctx context.Context, id string, interval time.Durati
 			c.cfg.Log.Warn("heartbeat failed", "error", err)
 			continue
 		}
-		if resp.Msg.GetReregister() {
+		if resp.GetReregister() {
 			return nil
 		}
 	}

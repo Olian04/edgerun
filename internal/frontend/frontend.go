@@ -18,9 +18,9 @@ import (
 
 	"connectrpc.com/connect"
 
+	"github.com/Olian04/edgerun"
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
 	ingressv1 "github.com/Olian04/edgerun/gen/edgerun/ingress/v1"
-	"github.com/Olian04/edgerun/gen/edgerun/ingress/v1/ingressv1connect"
 	"github.com/Olian04/edgerun/internal/errs"
 )
 
@@ -34,7 +34,7 @@ const (
 
 // Config configures a Frontend.
 type Config struct {
-	Ingress ingressv1connect.IngressServiceClient
+	Ingress *edgerun.Ingress
 	// RequestTimeout is the whole-invocation budget handed to the orchestrator.
 	// Default 30s.
 	RequestTimeout time.Duration
@@ -69,11 +69,11 @@ func New(cfg Config) *Frontend {
 
 // RefreshLimits asks the orchestrator for its request body limit.
 func (f *Frontend) RefreshLimits(ctx context.Context) error {
-	resp, err := f.cfg.Ingress.Describe(ctx, connect.NewRequest(&ingressv1.DescribeRequest{}))
+	resp, err := f.cfg.Ingress.Describe(ctx, &ingressv1.DescribeRequest{})
 	if err != nil {
 		return err
 	}
-	if n := resp.Msg.GetMaxRequestBodyBytes(); n > 0 {
+	if n := resp.GetMaxRequestBodyBytes(); n > 0 {
 		f.maxBody.Store(n)
 	}
 	return nil
@@ -143,47 +143,35 @@ func (f *Frontend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), f.cfg.RequestTimeout)
 	defer cancel()
-	st, err := f.cfg.Ingress.Invoke(ctx, connect.NewRequest(&ingressv1.InvokeRequest{
-		RequestId: reqID, Request: f.buildRequest(r, body),
-	}))
+	res, err := f.cfg.Ingress.Invoke(ctx, &ingressv1.InvokeRequest{RequestId: reqID, Request: f.buildRequest(r, body)})
 	if err != nil {
 		f.fail(rec, ctx, err)
 		return
 	}
-	defer st.Close()
+	defer res.Body.Close()
 
+	invocation = res.ID
+	writeHead(rec, res, reqID)
 	rc := http.NewResponseController(rec)
-	headSent := false
-	for st.Receive() {
-		switch p := st.Msg().GetPart().(type) {
-		case *ingressv1.InvokeResponse_Head:
-			invocation = p.Head.GetInvocationId()
-			writeHead(rec, p.Head, reqID)
-			headSent = true
-		case *ingressv1.InvokeResponse_Chunk:
-			if !headSent {
-				continue // a protocol violation by the orchestrator; wait for the head
-			}
+	buf := make([]byte, 64<<10)
+	for {
+		n, err := res.Body.Read(buf)
+		if n > 0 {
 			rc.SetWriteDeadline(time.Now().Add(writeTimeout))
-			if _, err := rec.Write(p.Chunk); err != nil && !errors.Is(err, http.ErrBodyNotAllowed) {
+			if _, werr := rec.Write(buf[:n]); werr != nil && !errors.Is(werr, http.ErrBodyNotAllowed) {
 				return // the client went away; cancel() ends the invocation
 			}
 			rc.Flush()
 		}
-	}
-	if err := st.Err(); err != nil {
-		if headSent {
+		if err == io.EOF {
+			return
+		}
+		if err != nil {
 			// The status line is out: we can no longer say "502". Aborting the
 			// connection is the only honest signal that the body is incomplete.
 			f.cfg.Log.Error("response failed after it had started", "request_id", reqID, "error", err)
 			panic(http.ErrAbortHandler)
 		}
-		f.fail(rec, ctx, err)
-		return
-	}
-	if !headSent { // a clean end without a head is a protocol violation
-		f.cfg.Log.Error("orchestrator ended the stream without a response", "request_id", reqID)
-		http.Error(rec, "Bad Gateway", http.StatusBadGateway)
 	}
 }
 
@@ -233,9 +221,9 @@ func (f *Frontend) buildRequest(r *http.Request, body []byte) *commonv1.HttpRequ
 
 // writeHead writes the function's status and headers, minus the ones that
 // describe the connection or the framing: this server frames the response.
-func writeHead(w http.ResponseWriter, head *ingressv1.InvokeHead, reqID string) {
+func writeHead(w http.ResponseWriter, res *edgerun.Invocation, reqID string) {
 	h := w.Header()
-	for _, hd := range head.GetHttp().GetHeaders() {
+	for _, hd := range res.Head.GetHeaders() {
 		n := strings.ToLower(hd.GetName())
 		if hopByHop[n] || n == "content-length" {
 			continue
@@ -243,10 +231,10 @@ func writeHead(w http.ResponseWriter, head *ingressv1.InvokeHead, reqID string) 
 		h.Add(n, hd.GetValue())
 	}
 	h.Set("X-Request-Id", reqID)
-	if id := head.GetInvocationId(); id != "" {
+	if id := res.ID; id != "" {
 		h.Set("X-Edgerun-Invocation-Id", id)
 	}
-	status := int(head.GetHttp().GetStatus())
+	status := res.Status()
 	if status < 200 || status > 599 {
 		status = http.StatusBadGateway
 	}
@@ -293,6 +281,8 @@ func Status(err error, ctxErr error) (status int, retryAfter bool) {
 	}
 	// No typed reason: classify by what we can observe.
 	switch {
+	case errors.Is(err, edgerun.ErrProtocol):
+		return http.StatusBadGateway, false
 	case errors.Is(ctxErr, context.DeadlineExceeded) || connect.CodeOf(err) == connect.CodeDeadlineExceeded:
 		return http.StatusGatewayTimeout, false
 	case errors.Is(ctxErr, context.Canceled) || connect.CodeOf(err) == connect.CodeCanceled:

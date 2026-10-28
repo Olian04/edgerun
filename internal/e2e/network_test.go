@@ -11,8 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"connectrpc.com/connect"
-
 	"github.com/Olian04/edgerun/conformance/guest"
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
 	controlv1 "github.com/Olian04/edgerun/gen/edgerun/control/v1"
@@ -69,8 +67,8 @@ func TestAFunctionsNetworkIsClosedUntilItsOperatorOpensIt(t *testing.T) {
 
 	fid := s.createFunction("talker")
 	module := guest.BuildNet(t)
-	v, err := s.fn.CreateVersion(ctx, connect.NewRequest(&controlv1.CreateVersionRequest{
-		FunctionId: fid, Module: module, Abi: "wagi-2", Activate: true}))
+	v, err := s.ctl.CreateVersion(ctx, &controlv1.CreateVersionRequest{
+		FunctionId: fid, Module: module, Abi: "wagi-2", Activate: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +92,7 @@ func TestAFunctionsNetworkIsClosedUntilItsOperatorOpensIt(t *testing.T) {
 	}
 
 	// Opened by the operator: the very next invocation reaches it.
-	if _, err := s.fn.SetEgress(ctx, connect.NewRequest(&controlv1.SetEgressRequest{FunctionId: fid, Allow: []string{originAddr}})); err != nil {
+	if _, err := s.ctl.SetEgress(ctx, &controlv1.SetEgressRequest{FunctionId: fid, Allow: []string{originAddr}}); err != nil {
 		t.Fatal(err)
 	}
 	got := fetch()
@@ -123,7 +121,7 @@ func TestAFunctionsNetworkIsClosedUntilItsOperatorOpensIt(t *testing.T) {
 	}
 
 	// Closed again.
-	if _, err := s.fn.SetEgress(ctx, connect.NewRequest(&controlv1.SetEgressRequest{FunctionId: fid})); err != nil {
+	if _, err := s.ctl.SetEgress(ctx, &controlv1.SetEgressRequest{FunctionId: fid}); err != nil {
 		t.Fatal(err)
 	}
 	if got := fetch(); !strings.Contains(got, "code=-1") || hits.Load() != 1 {
@@ -131,8 +129,8 @@ func TestAFunctionsNetworkIsClosedUntilItsOperatorOpensIt(t *testing.T) {
 	}
 
 	// The same bytes deployed as wagi-1 are refused: they import the network.
-	if _, err := s.fn.CreateVersion(ctx, connect.NewRequest(&controlv1.CreateVersionRequest{
-		FunctionId: fid, Module: module, Abi: "wagi-1", Activate: true})); err != nil {
+	if _, err := s.ctl.CreateVersion(ctx, &controlv1.CreateVersionRequest{
+		FunctionId: fid, Module: module, Abi: "wagi-1", Activate: true}); err != nil {
 		t.Fatal(err)
 	}
 	r := s.call(req{host: "net.test", path: "/noop"})

@@ -17,6 +17,7 @@ import (
 
 	"connectrpc.com/connect"
 
+	"github.com/Olian04/edgerun"
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
 	ingressv1 "github.com/Olian04/edgerun/gen/edgerun/ingress/v1"
 	"github.com/Olian04/edgerun/gen/edgerun/ingress/v1/ingressv1connect"
@@ -95,7 +96,7 @@ func newRig(t *testing.T, behave func(context.Context, *ingressv1.InvokeRequest,
 	osrv := httptest.NewServer(mux)
 	t.Cleanup(osrv.Close)
 
-	cfg := Config{Ingress: ingressv1connect.NewIngressServiceClient(osrv.Client(), osrv.URL), Log: quiet}
+	cfg := Config{Ingress: edgerun.NewIngress(osrv.URL, "", edgerun.WithHTTPClient(osrv.Client())), Log: quiet}
 	if tweak != nil {
 		tweak(&cfg)
 	}

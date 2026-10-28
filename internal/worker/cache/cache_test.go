@@ -14,6 +14,7 @@ import (
 
 	"connectrpc.com/connect"
 
+	"github.com/Olian04/edgerun"
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
 	workerv1 "github.com/Olian04/edgerun/gen/edgerun/worker/v1"
 	"github.com/Olian04/edgerun/gen/edgerun/worker/v1/workerv1connect"
@@ -218,15 +219,15 @@ func (a artifactServer) GetArtifact(_ context.Context, req *connect.Request[work
 	return nil
 }
 
-func TestConnectFetcher(t *testing.T) {
+func TestArtifactFetcher(t *testing.T) {
 	a, da := blob("0123456789abcdefghijklmnopqrstuvwxyz")
 	mux := http.NewServeMux()
 	mux.Handle(workerv1connect.NewArtifactServiceHandler(artifactServer{blobs: map[string][]byte{da: a}}))
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
-	client := workerv1connect.NewArtifactServiceClient(srv.Client(), srv.URL)
+	client := edgerun.NewArtifacts(srv.URL, "", edgerun.WithHTTPClient(srv.Client()))
 
-	f := ConnectFetcher{Client: client, MaxBytes: 1 << 20}
+	f := ArtifactFetcher{Client: client}
 	got, err := f.Fetch(context.Background(), da)
 	if err != nil || !bytes.Equal(got, a) {
 		t.Fatalf("reassembly: %q %v", got, err)
@@ -237,7 +238,8 @@ func TestConnectFetcher(t *testing.T) {
 		t.Errorf("not-found reason lost over the wire: %v", err)
 	}
 
-	small := ConnectFetcher{Client: client, MaxBytes: 10}
+	small := ArtifactFetcher{Client: edgerun.NewArtifacts(srv.URL, "", edgerun.WithHTTPClient(srv.Client()))}
+	small.Client.MaxBytes = 10
 	if _, err := small.Fetch(context.Background(), da); err == nil || !strings.Contains(err.Error(), "exceeds") {
 		t.Errorf("size cap not enforced: %v", err)
 	}

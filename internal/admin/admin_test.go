@@ -9,12 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"connectrpc.com/connect"
-
+	"github.com/Olian04/edgerun"
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
 	ingressv1 "github.com/Olian04/edgerun/gen/edgerun/ingress/v1"
-	"github.com/Olian04/edgerun/gen/edgerun/ingress/v1/ingressv1connect"
-	"github.com/Olian04/edgerun/internal/authn"
 	workerapp "github.com/Olian04/edgerun/internal/worker/app"
 )
 
@@ -50,26 +47,15 @@ func (r *rig) startWorker() {
 // invoke sends a request the way a frontend would.
 func (r *rig) invoke(host, pathAndQuery string) (status uint32, body string, err error) {
 	path, query, _ := strings.Cut(pathAndQuery, "?")
-	client := ingressv1connect.NewIngressServiceClient(http.DefaultClient, "http://"+r.orch.Addr(),
-		connect.WithInterceptors(authn.Client(ingressToken)))
 	ictx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	st, err := client.Invoke(ictx, connect.NewRequest(&ingressv1.InvokeRequest{
-		Request: &commonv1.HttpRequest{Method: "GET", Host: host, Path: path, RawQuery: query}}))
+	res, err := edgerun.NewIngress("http://"+r.orch.Addr(), ingressToken).Invoke(ictx, &ingressv1.InvokeRequest{
+		Request: &commonv1.HttpRequest{Method: "GET", Host: host, Path: path, RawQuery: query}})
 	if err != nil {
 		return 0, "", err
 	}
-	defer st.Close()
-	var sb strings.Builder
-	for st.Receive() {
-		switch p := st.Msg().GetPart().(type) {
-		case *ingressv1.InvokeResponse_Head:
-			status = p.Head.GetHttp().GetStatus()
-		case *ingressv1.InvokeResponse_Chunk:
-			sb.Write(p.Chunk)
-		}
-	}
-	return status, sb.String(), st.Err()
+	b, err := res.ReadAll()
+	return uint32(res.Status()), string(b), err
 }
 
 // --- the sign-in gate ---------------------------------------------------------------

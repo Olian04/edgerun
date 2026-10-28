@@ -52,8 +52,8 @@ func TestDeployAndInvoke(t *testing.T) {
 				t.Errorf("guest environment lacks %q:\n%s", want, env)
 			}
 		}
-		listed, _ := s.fn.ListEnv(ctx, connect.NewRequest(&controlv1.ListEnvRequest{FunctionId: fid}))
-		for _, e := range listed.Msg.Entries {
+		listed, _ := s.ctl.ListEnv(ctx, &controlv1.ListEnvRequest{FunctionId: fid})
+		for _, e := range listed.Entries {
 			if e.Name == "API_KEY" && (e.Value != "" || !e.Secret) {
 				t.Errorf("secrets are write-only over the control API: %+v", e)
 			}
@@ -88,13 +88,13 @@ func TestDeployAndInvoke(t *testing.T) {
 			t.Fatalf("v2 (256 MiB) must fit it, immediately after deploy: %v", res.err)
 		}
 		// Rollback is just another pointer move.
-		if _, err := s.fn.ActivateVersion(ctx, connect.NewRequest(&controlv1.ActivateVersionRequest{FunctionId: fid, VersionId: v1})); err != nil {
+		if _, err := s.ctl.ActivateVersion(ctx, &controlv1.ActivateVersionRequest{FunctionId: fid, VersionId: v1}); err != nil {
 			t.Fatal(err)
 		}
 		if reason(s.call(req{path: "/memhog", query: "mb=60"}).err) != commonv1.ErrorReason_ERROR_REASON_FUNCTION_TRAPPED {
 			t.Error("after rollback to v1 the 32 MiB limit must apply again")
 		}
-		s.fn.ActivateVersion(ctx, connect.NewRequest(&controlv1.ActivateVersionRequest{FunctionId: fid, VersionId: v2}))
+		s.ctl.ActivateVersion(ctx, &controlv1.ActivateVersionRequest{FunctionId: fid, VersionId: v2})
 	})
 
 	t.Run("routing by host and path", func(t *testing.T) {

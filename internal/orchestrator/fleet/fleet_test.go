@@ -13,6 +13,7 @@ import (
 
 	"connectrpc.com/connect"
 
+	"github.com/Olian04/edgerun"
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
 	workerv1 "github.com/Olian04/edgerun/gen/edgerun/worker/v1"
 	"github.com/Olian04/edgerun/gen/edgerun/worker/v1/workerv1connect"
@@ -35,9 +36,12 @@ const (
 var ctx = context.Background()
 
 type rig struct {
-	st      *store.Store
-	fleet   workerv1connect.FleetServiceClient
-	art     workerv1connect.ArtifactServiceClient
+	st    *store.Store
+	fleet *edgerun.Fleet
+	art   *edgerun.Artifacts
+	// raw is for the one test that is about the shape of the artifact stream
+	// (its chunking), which the library's client exists to hide.
+	raw     workerv1connect.ArtifactServiceClient
 	changes *atomic.Int32
 	srv     *httptest.Server
 }
@@ -52,10 +56,12 @@ func newRig(t *testing.T) *rig {
 	svc.Mount(mux, authn.Verifier{workerToken: fleet.WorkerScope, adminToken: "admin"})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	auth := connect.WithInterceptors(authn.Client(workerToken))
+	hc := edgerun.WithHTTPClient(srv.Client())
 	return &rig{st: st, changes: changes, srv: srv,
-		fleet: workerv1connect.NewFleetServiceClient(srv.Client(), srv.URL, auth),
-		art:   workerv1connect.NewArtifactServiceClient(srv.Client(), srv.URL, auth)}
+		fleet: edgerun.NewFleet(srv.URL, workerToken, hc),
+		art:   edgerun.NewArtifacts(srv.URL, workerToken, hc),
+		raw: workerv1connect.NewArtifactServiceClient(srv.Client(), srv.URL,
+			connect.WithInterceptors(authn.Client(workerToken)))}
 }
 
 func info() *workerv1.WorkerInfo {
@@ -65,20 +71,20 @@ func info() *workerv1.WorkerInfo {
 
 func TestRegisterHeartbeatDeregister(t *testing.T) {
 	r := newRig(t)
-	reg, err := r.fleet.Register(ctx, connect.NewRequest(&workerv1.RegisterRequest{Endpoint: "http://10.0.0.1:9000", Info: info()}))
+	reg, err := r.fleet.Register(ctx, &workerv1.RegisterRequest{Endpoint: "http://10.0.0.1:9000", Info: info()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reg.Msg.WorkerId == "" || reg.Msg.HeartbeatInterval.AsDuration() != 2*time.Second {
-		t.Errorf("register response = %+v: the orchestrator dictates the interval", reg.Msg)
+	if reg.WorkerId == "" || reg.HeartbeatInterval.AsDuration() != 2*time.Second {
+		t.Errorf("register response = %+v: the orchestrator dictates the interval", reg)
 	}
 	if r.changes.Load() != 1 {
 		t.Error("registering must notify so the invoke path sees the worker at once")
 	}
 
-	hb, err := r.fleet.Heartbeat(ctx, connect.NewRequest(&workerv1.HeartbeatRequest{
-		WorkerId: reg.Msg.WorkerId, State: workerv1.WorkerState_WORKER_STATE_READY, InFlight: 2}))
-	if err != nil || hb.Msg.Reregister {
+	hb, err := r.fleet.Heartbeat(ctx, &workerv1.HeartbeatRequest{
+		WorkerId: reg.WorkerId, State: workerv1.WorkerState_WORKER_STATE_READY, InFlight: 2})
+	if err != nil || hb.Reregister {
 		t.Fatalf("heartbeat: %v %+v", err, hb)
 	}
 	if r.changes.Load() != 1 {
@@ -89,72 +95,65 @@ func TestRegisterHeartbeatDeregister(t *testing.T) {
 		t.Errorf("ready workers = %+v", ws)
 	}
 
-	if _, err := r.fleet.Deregister(ctx, connect.NewRequest(&workerv1.DeregisterRequest{WorkerId: reg.Msg.WorkerId})); err != nil {
+	if _, err := r.fleet.Deregister(ctx, &workerv1.DeregisterRequest{WorkerId: reg.WorkerId}); err != nil {
 		t.Fatal(err)
 	}
 	if r.changes.Load() != 2 {
 		t.Error("deregistering must notify")
 	}
-	hb, _ = r.fleet.Heartbeat(ctx, connect.NewRequest(&workerv1.HeartbeatRequest{
-		WorkerId: reg.Msg.WorkerId, State: workerv1.WorkerState_WORKER_STATE_READY}))
-	if !hb.Msg.Reregister {
+	hb, _ = r.fleet.Heartbeat(ctx, &workerv1.HeartbeatRequest{
+		WorkerId: reg.WorkerId, State: workerv1.WorkerState_WORKER_STATE_READY})
+	if !hb.Reregister {
 		t.Error("a heartbeat from an unknown worker must tell it to re-register")
 	}
 }
 
 func TestReregistrationInvalidatesTheOldID(t *testing.T) {
 	r := newRig(t)
-	a, _ := r.fleet.Register(ctx, connect.NewRequest(&workerv1.RegisterRequest{Endpoint: "http://w:1", Info: info()}))
-	b, _ := r.fleet.Register(ctx, connect.NewRequest(&workerv1.RegisterRequest{Endpoint: "http://w:1", Info: info()}))
-	if a.Msg.WorkerId == b.Msg.WorkerId {
+	a, _ := r.fleet.Register(ctx, &workerv1.RegisterRequest{Endpoint: "http://w:1", Info: info()})
+	b, _ := r.fleet.Register(ctx, &workerv1.RegisterRequest{Endpoint: "http://w:1", Info: info()})
+	if a.WorkerId == b.WorkerId {
 		t.Fatal("same endpoint must get a fresh id")
 	}
-	hb, _ := r.fleet.Heartbeat(ctx, connect.NewRequest(&workerv1.HeartbeatRequest{WorkerId: a.Msg.WorkerId, State: workerv1.WorkerState_WORKER_STATE_READY}))
-	if !hb.Msg.Reregister {
+	hb, _ := r.fleet.Heartbeat(ctx, &workerv1.HeartbeatRequest{WorkerId: a.WorkerId, State: workerv1.WorkerState_WORKER_STATE_READY})
+	if !hb.Reregister {
 		t.Error("the replaced worker id must be told to re-register")
 	}
 }
 
 func TestValidationAndErrors(t *testing.T) {
 	r := newRig(t)
-	_, err := r.fleet.Register(ctx, connect.NewRequest(&workerv1.RegisterRequest{Endpoint: "not a url", Info: info()}))
+	_, err := r.fleet.Register(ctx, &workerv1.RegisterRequest{Endpoint: "not a url", Info: info()})
 	if connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Errorf("bad endpoint: %v", err)
 	}
-	_, err = r.fleet.Register(ctx, connect.NewRequest(&workerv1.RegisterRequest{Endpoint: "http://w:1"}))
+	_, err = r.fleet.Register(ctx, &workerv1.RegisterRequest{Endpoint: "http://w:1"})
 	if connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Errorf("no info: %v", err)
 	}
 	for _, st := range []workerv1.WorkerState{workerv1.WorkerState_WORKER_STATE_UNSPECIFIED, 99} {
-		_, err = r.fleet.Heartbeat(ctx, connect.NewRequest(&workerv1.HeartbeatRequest{WorkerId: "x", State: st}))
+		_, err = r.fleet.Heartbeat(ctx, &workerv1.HeartbeatRequest{WorkerId: "x", State: st})
 		if connect.CodeOf(err) != connect.CodeInvalidArgument {
 			t.Errorf("heartbeat state %v: %v", st, err)
 		}
 	}
-	if _, err := r.fleet.Deregister(ctx, connect.NewRequest(&workerv1.DeregisterRequest{WorkerId: "never-existed"})); err != nil {
+	if _, err := r.fleet.Deregister(ctx, &workerv1.DeregisterRequest{WorkerId: "never-existed"}); err != nil {
 		t.Errorf("deregister must be idempotent: %v", err)
 	}
 }
 
 func TestOnlyWorkerScopeMayCall(t *testing.T) {
 	r := newRig(t)
-	for name, opts := range map[string][]connect.ClientOption{
-		"none":  nil,
-		"admin": {connect.WithInterceptors(authn.Client(adminToken))},
-	} {
-		f := workerv1connect.NewFleetServiceClient(r.srv.Client(), r.srv.URL, opts...)
-		a := workerv1connect.NewArtifactServiceClient(r.srv.Client(), r.srv.URL, opts...)
+	for name, tok := range map[string]string{"none": "", "admin": adminToken} {
+		hc := edgerun.WithHTTPClient(r.srv.Client())
+		f := edgerun.NewFleet(r.srv.URL, tok, hc)
+		a := edgerun.NewArtifacts(r.srv.URL, tok, hc)
 		want := connect.CodeUnauthenticated
 		if name == "admin" {
 			want = connect.CodePermissionDenied
 		}
-		_, e1 := f.Register(ctx, connect.NewRequest(&workerv1.RegisterRequest{Endpoint: "http://w:1", Info: info()}))
-		st, e2 := a.GetArtifact(ctx, connect.NewRequest(&workerv1.GetArtifactRequest{Digest: store.Digest([]byte("x"))}))
-		if e2 == nil {
-			for st.Receive() {
-			}
-			e2 = st.Err()
-		}
+		_, e1 := f.Register(ctx, &workerv1.RegisterRequest{Endpoint: "http://w:1", Info: info()})
+		_, e2 := a.GetArtifact(ctx, store.Digest([]byte("x")))
 		if connect.CodeOf(e1) != want || connect.CodeOf(e2) != want {
 			t.Errorf("%s: register %v, artifact %v; want %v", name, e1, e2, want)
 		}
@@ -173,7 +172,7 @@ func TestArtifactsStreamInChunksAndTheWorkersFetcherVerifiesThem(t *testing.T) {
 	}
 
 	// Raw stream: more than one chunk, none over 1 MiB.
-	st, err := r.art.GetArtifact(ctx, connect.NewRequest(&workerv1.GetArtifactRequest{Digest: v.ArtifactDigest}))
+	st, err := r.raw.GetArtifact(ctx, connect.NewRequest(&workerv1.GetArtifactRequest{Digest: v.ArtifactDigest}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +189,7 @@ func TestArtifactsStreamInChunksAndTheWorkersFetcherVerifiesThem(t *testing.T) {
 	}
 
 	// The worker's cache fetches and verifies it.
-	cs := cache.New(cache.ConnectFetcher{Client: r.art, MaxBytes: 64 << 20}, 64<<20)
+	cs := cache.New(cache.ArtifactFetcher{Client: r.art}, 64<<20)
 	got, err := cs.Get(ctx, v.ArtifactDigest)
 	if err != nil || !bytes.Equal(got, module) {
 		t.Fatalf("worker-side fetch: %v", err)

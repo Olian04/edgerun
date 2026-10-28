@@ -16,11 +16,9 @@ import (
 	"sync"
 	"time"
 
-	"connectrpc.com/connect"
 	"golang.org/x/sync/singleflight"
 
-	workerv1 "github.com/Olian04/edgerun/gen/edgerun/worker/v1"
-	"github.com/Olian04/edgerun/gen/edgerun/worker/v1/workerv1connect"
+	"github.com/Olian04/edgerun"
 	"github.com/Olian04/edgerun/internal/errs"
 )
 
@@ -151,31 +149,14 @@ func (s *Store) store(digest string, b []byte) {
 	}
 }
 
-// ConnectFetcher fetches artifacts through the worker.v1 ArtifactService.
-type ConnectFetcher struct {
-	Client workerv1connect.ArtifactServiceClient
-	// MaxBytes bounds one artifact so a bad server cannot exhaust memory.
-	MaxBytes int64
+// ArtifactFetcher fetches artifacts through the worker.v1 ArtifactService. The
+// client verifies and bounds what it returns; the store does not rely on that.
+type ArtifactFetcher struct {
+	Client *edgerun.Artifacts
 }
 
 // Fetch implements Fetcher. Errors from the service, including their
 // ErrorInfo detail, are returned unchanged.
-func (f ConnectFetcher) Fetch(ctx context.Context, digest string) ([]byte, error) {
-	st, err := f.Client.GetArtifact(ctx, connect.NewRequest(&workerv1.GetArtifactRequest{Digest: digest}))
-	if err != nil {
-		return nil, err
-	}
-	defer st.Close()
-	var out []byte
-	for st.Receive() {
-		chunk := st.Msg().GetChunk()
-		if int64(len(out)+len(chunk)) > f.MaxBytes {
-			return nil, fmt.Errorf("artifact %s exceeds the %d byte limit", digest, f.MaxBytes)
-		}
-		out = append(out, chunk...)
-	}
-	if err := st.Err(); err != nil {
-		return nil, err
-	}
-	return out, nil
+func (f ArtifactFetcher) Fetch(ctx context.Context, digest string) ([]byte, error) {
+	return f.Client.GetArtifact(ctx, digest)
 }

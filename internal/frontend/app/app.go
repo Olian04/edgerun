@@ -12,10 +12,7 @@ import (
 	"net/url"
 	"time"
 
-	"connectrpc.com/connect"
-
-	"github.com/Olian04/edgerun/gen/edgerun/ingress/v1/ingressv1connect"
-	"github.com/Olian04/edgerun/internal/authn"
+	"github.com/Olian04/edgerun"
 	"github.com/Olian04/edgerun/internal/frontend"
 )
 
@@ -76,8 +73,7 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.MaxIdleConnsPerHost = 256
 	transport.DialContext = (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext
-	client := ingressv1connect.NewIngressServiceClient(&http.Client{Transport: transport}, cfg.OrchestratorURL,
-		connect.WithInterceptors(authn.Client(cfg.IngressToken)))
+	client := edgerun.NewIngress(cfg.OrchestratorURL, cfg.IngressToken, edgerun.WithHTTPClient(&http.Client{Transport: transport}))
 	fe := frontend.New(frontend.Config{
 		Ingress: client, RequestTimeout: cfg.RequestTimeout, TrustForwarded: cfg.TrustForwarded, Log: cfg.Log,
 	})
