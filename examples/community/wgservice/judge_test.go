@@ -32,6 +32,13 @@ func TestJudge(t *testing.T) {
 	if testing.Short() {
 		t.Skip("takes a minute")
 	}
+	// As --print-config asks (the suite's host only), and as an operator would
+	// configure a service inside a private network (the whole range).
+	t.Run("as print-config says", func(t *testing.T) { judge(t, "10.20.0.2,*.covered.test", "10.20.0.2/32") })
+	t.Run("a whole private range", func(t *testing.T) { judge(t, "10.20.0.0/16,*.covered.test", "10.20.0.0/16") })
+}
+
+func judge(t *testing.T, covers, allowNet string) {
 	site, err := wgtest.NewSite(portJudgeSite, map[string][]netip.Addr{})
 	if err != nil {
 		t.Fatal(err)
@@ -64,7 +71,7 @@ func TestJudge(t *testing.T) {
 	// Exactly what --print-config asks of a service: carry the suite's host and
 	// *.covered.test, be allowed to connect to the suite's host; the second
 	// carries "*" and is allowed nothing.
-	open := start(t, "judge-open", nil, wgserviceBin(t), common(portJudgeOpen, "10.20.0.2,*.covered.test", conf1, "--allow-network", "10.20.0.2/32")...)
+	open := start(t, "judge-open", nil, wgserviceBin(t), common(portJudgeOpen, covers, conf1, "--allow-network", allowNet)...)
 	closed := start(t, "judge-default", nil, wgserviceBin(t), common(portJudgeClose, "*", conf2)...)
 	stopCmd := func(p *process) string { return fmt.Sprintf("kill -TERM %d", p.cmd.Process.Pid) }
 

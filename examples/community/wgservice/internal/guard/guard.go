@@ -48,14 +48,9 @@ var forbidden6 = []struct {
 }{
 	{p("2001::/23"), "IETF protocol assignments (Teredo, benchmarking, ORCHID, ...)"},
 	{p("2001:db8::/32"), "documentation"},
+	{p("2002::/16"), "6to4 (embeds an IPv4 address; refused whole, as docs/protocol.md says)"},
 	{p("3fff::/20"), "documentation"},
 }
-
-var (
-	nat64      = p("64:ff9b::/96")
-	nat64Local = p("64:ff9b:1::/48")
-	sixToFour  = p("2002::/16")
-)
 
 // Check returns nil if a connection to a may be made, and otherwise an error
 // saying which class of address it is. allowed are the ranges the operator
@@ -85,31 +80,12 @@ func Class(a netip.Addr) error {
 		}
 		return nil
 	}
-	if nat64.Contains(a) {
-		// 64:ff9b::/96 (outside 2000::/3) carries an IPv4 address in its last
-		// 32 bits: it is as forbidden as that address is.
-		b := a.As16()
-		if err := Class(netip.AddrFrom4([4]byte(b[12:16]))); err != nil {
-			return fmt.Errorf("IPv6 form of a forbidden IPv4 address (NAT64): %w", err)
-		}
-		return nil
-	}
 	if !global6.Contains(a) {
 		return fmt.Errorf("non-global IPv6 address %s (unspecified, loopback, unique-local, link-local, multicast or reserved)", a)
 	}
 	for _, f := range forbidden6 {
 		if f.net.Contains(a) {
 			return fmt.Errorf("%s address %s", f.what, a)
-		}
-	}
-	b := a.As16()
-	switch {
-	case nat64Local.Contains(a):
-		return fmt.Errorf("local-use NAT64 address %s", a)
-	case sixToFour.Contains(a):
-		// 2002:aabb:ccdd::/48 embeds the IPv4 address aa.bb.cc.dd.
-		if err := Class(netip.AddrFrom4([4]byte(b[2:6]))); err != nil {
-			return fmt.Errorf("IPv6 form of a forbidden IPv4 address (6to4): %w", err)
 		}
 	}
 	return nil

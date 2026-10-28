@@ -40,15 +40,13 @@ const (
 )
 
 var (
-	repoRoot string // the edgerun checkout this module replaces
-	modRoot  string // this module
-	tmpRoot  string // our own unique temp dir
+	modRoot string // this module
+	tmpRoot string // our own unique temp dir
 )
 
 func TestMain(m *testing.M) {
 	var err error
 	modRoot, _ = os.Getwd()
-	repoRoot, _ = filepath.Abs(filepath.Join(modRoot, "..", "..", ".."))
 	tmpRoot, err = os.MkdirTemp("", "wgservice-test-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -88,20 +86,27 @@ func build(t testing.TB, name, dir string, env []string, args ...string) string 
 }
 
 func wgserviceBin(t testing.TB) string { return build(t, "wgservice", modRoot, nil, "./cmd/wgservice") }
-func orchestratorBin(t testing.TB) string {
-	return build(t, "orchestrator", repoRoot, nil, "./cmd/orchestrator")
-}
-func workerBin(t testing.TB) string { return build(t, "worker", repoRoot, nil, "./cmd/worker") }
 
-// conformanceBin is the conformance executable with the guests compiled in
-// (the Makefile's `conformance` target, built into our own directory).
+// What a community developer has is the module, not a checkout: edgerun's
+// programs are built from this module's dependency on it (the replace
+// directive points at the checkout, a released version would work the same).
+const lib = "github.com/Olian04/edgerun"
+
+func orchestratorBin(t testing.TB) string {
+	return build(t, "orchestrator", modRoot, nil, lib+"/cmd/orchestrator")
+}
+func workerBin(t testing.TB) string { return build(t, "worker", modRoot, nil, lib+"/cmd/worker") }
+
+// conformanceBin is the conformance executable. Built without the Makefile's
+// `prebuilt` tag: the egress suite needs no guests, and the tag needs files
+// that are not part of the module.
 func conformanceBin(t testing.TB) string {
-	return build(t, "edgerun-conformance", repoRoot, nil, "-tags", "prebuilt", "./cmd/edgerun-conformance")
+	return build(t, "edgerun-conformance", modRoot, nil, lib+"/cmd/edgerun-conformance")
 }
 
 func fetchWasm(t testing.TB) []byte {
 	t.Helper()
-	p := build(t, "fetch.wasm", repoRoot, []string{"GOOS=wasip1", "GOARCH=wasm", "CGO_ENABLED=0"}, "-trimpath", "./examples/fetch")
+	p := build(t, "fetch.wasm", modRoot, []string{"GOOS=wasip1", "GOARCH=wasm", "CGO_ENABLED=0"}, "-trimpath", lib+"/examples/fetch")
 	b, err := os.ReadFile(p)
 	if err != nil {
 		t.Fatal(err)

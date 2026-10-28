@@ -106,7 +106,7 @@ func TestURLs(t *testing.T) {
 		"", "echo", "/echo", "ftp://x.test/", "file:///etc/passwd", "http:///echo", "http://u:p@x.test/", "http://u@x.test/",
 		"http://127.0.0.1:0/", "http://127.0.0.1:99999/", "http://bücher.example/", "http://exa mple.com/", "http://x.test:/",
 		"http://127.1/", "http://2130706433/", "http://0x7f.0.0.1/", "http://0177.0.0.1/", "http://[fe80::1%25eth0]/", "http://[::1/",
-		"http://x.test%2e.evil/", "http://x.test/\n", "mailto:a@b.c", "http:x.test", "//x.test/", "http://-x.test/", "http://x..test/",
+		"http://x.test%2e.evil/", "http://x.test/\n", "http://x.test/a b", "http://x.test/?q=a b", "http://x.test/é", "http://x.test/\x7f", "http://x.test/a\tb", "mailto:a@b.c", "http:x.test", "//x.test/", "http://-x.test/", "http://x..test/",
 	}
 	for _, in := range bad {
 		if _, d, err := ParseURL(in); err == nil {

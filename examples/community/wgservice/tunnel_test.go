@@ -136,6 +136,26 @@ func TestTunnel(t *testing.T) {
 		}
 	})
 
+	t.Run("netstack's DialContext resolves again: a checked name must not be dialed by name", func(t *testing.T) {
+		// This is why wgnet.Tunnel splits LookupHost from DialIP. The obvious
+		// implementation (check the resolved addresses, then hand the NAME to
+		// tnet.DialContext) resolves twice, and the second answer is the one used.
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		q := site.DNSLookup.Load()
+		if _, err := gw.LookupHost(ctx, "origin.corp.internal"); err != nil { // the check
+			t.Fatal(err)
+		}
+		c, err := gw.Net.DialContext(ctx, "tcp", "origin.corp.internal:80") // the naive connection
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.Close()
+		if n := site.DNSLookup.Load() - q; n != 2 {
+			t.Errorf("%d DNS queries; expected the check and netstack's own lookup: 2", n)
+		}
+	})
+
 	t.Run("https through the tunnel: a private CA is trusted only when configured", func(t *testing.T) {
 		cert, pool, err := wgtest.SelfSigned(wgtest.OriginAddr)
 		if err != nil {

@@ -1,3 +1,3 @@
-// Package wgservice exists to hold the tests of the module: see cmd/wgservice
-// for the program, FINDINGS.md for what building it taught, and README.md.
+// Package wgservice exists to hold the tests of the module (the tunnel test, the
+// whole-chain test and the conformance judge); the program is cmd/wgservice.
 package wgservice

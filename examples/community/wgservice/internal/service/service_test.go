@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"connectrpc.com/connect"
+
 	"github.com/Olian04/edgerun"
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
 	egressv1 "github.com/Olian04/edgerun/gen/edgerun/egress/v1"
@@ -208,6 +210,12 @@ func TestRequestRules(t *testing.T) {
 	// Request bound.
 	_, _, err = r.fetch(&egressv1.FetchRequest{Method: "POST", Url: "http://good.test/", Allow: allowGood, Body: make([]byte, 1001)})
 	want(t, err, commonv1.ErrorReason_ERROR_REASON_REQUEST_TOO_LARGE)
+	// Far over: the transport refuses it before it is decoded, untyped (the
+	// read cap set in Handler; without it the whole body would be held in memory first).
+	_, _, err = r.fetch(&egressv1.FetchRequest{Method: "POST", Url: "http://good.test/", Allow: allowGood, Body: make([]byte, 3<<20)})
+	if connect.CodeOf(err) != connect.CodeResourceExhausted || edgerun.Reason(err) != commonv1.ErrorReason_ERROR_REASON_UNSPECIFIED {
+		t.Errorf("a body far over the limit: %v, want an untyped resource_exhausted", err)
+	}
 	if _, _, err = r.fetch(&egressv1.FetchRequest{Method: "POST", Url: "http://good.test/", Allow: allowGood, Body: []byte(strings.Repeat("a", 1000))}); err != nil {
 		t.Errorf("a body of exactly the limit: %v", err)
 	}
