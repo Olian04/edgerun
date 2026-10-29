@@ -83,6 +83,10 @@ Things a tool learns the hard way (the rules are in `protocol.md`, "Control sema
   with others `PatchLabels` its own keys, which cannot lose theirs. A filter that is nil or empty means
   *everything*; `match_labels` with a typo in a key matches nothing (the `has_label_keys` and `lacks_label_keys`
   lists refuse a malformed key instead): never prune on the strength of a filter alone.
+- `Validate` and `Apply` take at most 128 steps; the modules of the version steps travel in the request (and count
+  against the same size bound as an upload), so a plan with several large modules is cut into requests; and a
+  validation stops at the first failing step. `failure.code` is the Connect code as a lower-case string
+  (`invalid_argument`, `not_found`, `already_exists`).
 - A validate-only `CreateVersion` carries the whole module, so a dry run followed by an apply uploads it twice.
 
 ## Many calls at once

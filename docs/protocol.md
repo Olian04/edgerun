@@ -349,7 +349,13 @@ They exist so that tools can mark what they own and find it again. A tool should
   list, a key in both, and a key in `lacks_label_keys` that `match_labels` requires.
 - `ListFunctions` takes a `name` (the one function that has it, exactly, or none: names are unique and
   lower case) and `ListRoutes` a `function_id` (the routes that point at it; an id that names nothing, a malformed
-  one included, selects none). Both combine with the label filters.
+  one included, selects none). Both combine with the label filters. Like `match_labels` (and unlike
+  `has_label_keys` and `lacks_label_keys`), neither is validated as to its form: a name or an id that is malformed
+  names nothing, and the answer is an empty list, not `invalid_argument`.
+- A page token continues a list after the last item of the page it came from. It is **not bound to the filters** of
+  the request that issued it: use it only with that request. (A token the server never issued is
+  `invalid_argument`; one it issued, used with other filters, merely continues where it stood and may answer an
+  empty page.)
 - Deleting a function deletes its labels with everything else.
 
 ### Env revisions
@@ -427,7 +433,13 @@ deletion, variables deleted to make room for new ones under the limit of 64.
   malformed bind or a bind on another kind of step is `invalid_argument` at that step. An id of the real state is
   written as itself, in the same plan. Ids of what the plan creates are empty in the results, as in the response
   of a validate-only create: nothing says an id that names nothing.
-- The request is bounded as an upload is (the modules of its version steps are in it).
+- The request is bounded as an upload is (the modules of its version steps are in it): a plan whose modules together
+  exceed what the transport takes (`max_module_bytes` plus 1 MiB) is refused whole, with `resource_exhausted` and no
+  step index, not as a `failure`. A plan is cut by its caller into requests that fit; two requests cannot see each
+  other, so a cut is sound only where the plan has no dependency across it. There are 128 steps at most, which a
+  function with its whole 64-variable limit swapped (64 deletions, 64 writes) already uses up.
+- It stops at the first step that fails, so a caller that wants every problem in a plan finds them one request at a
+  time, each carrying the modules again.
 - It is a check against the state at that moment, as every validation is: a plan that validates is **not** thereby
   applied, and another writer can change what a step meant in between.
 
