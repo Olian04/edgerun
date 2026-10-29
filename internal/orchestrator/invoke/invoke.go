@@ -188,6 +188,8 @@ func (s *Service) Invoke(ctx context.Context, req *connect.Request[ingressv1.Inv
 			return finish(s.translate(ctx, err))
 		}
 		lastErr = err
+		s.cfg.Log.Debug("trying another worker", "invocation_id", rec.Id, "attempt", i+1,
+			"worker", w.Endpoint, "reason", errs.Reason(err).String())
 	}
 	// Every attempt was refused or unreachable.
 	if errs.Reason(lastErr) == commonv1.ErrorReason_ERROR_REASON_NO_CAPACITY {
@@ -305,7 +307,13 @@ func (s *Service) translate(ctx context.Context, err error) error {
 		if dl, ok := ctx.Deadline(); ok && time.Until(dl) < deadlineSlack {
 			return errs.New(commonv1.ErrorReason_ERROR_REASON_DEADLINE_EXCEEDED, "deadline exceeded")
 		}
-		return connect.NewError(connect.CodeCanceled, errors.New("request cancelled"))
+		// Cancelled is the caller's only if the caller's context has ended. A
+		// worker that dies mid-call (a reset connection) is reported by the
+		// transport as cancelled too, and passing that on would tell the frontend
+		// that nobody is waiting, so it would answer nothing: a success, silently.
+		if ctx.Err() != nil {
+			return connect.NewError(connect.CodeCanceled, errors.New("request cancelled"))
+		}
 	}
 	s.cfg.Log.Error("worker call failed", "error", err)
 	return errs.New(commonv1.ErrorReason_ERROR_REASON_INTERNAL, "worker call failed")

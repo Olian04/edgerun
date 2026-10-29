@@ -199,7 +199,9 @@ makes one replaceable is that every frontend maps HTTP onto the protocol the sam
 - A function's own error statuses, 500 included, are forwarded as they are.
 - A platform error before the head is answered with the status in the table above, a generic body
   and `Retry-After: 1` where the table says so. An error with no `ErrorInfo` is classified by what
-  can be seen: an expired deadline is 504; a cancelled call needs no answer; `resource_exhausted` is
+  can be seen: an expired deadline is 504; a call that is cancelled *because the client went away* (the request's own context has ended) needs no answer, but
+  an error that merely says "cancelled" while the client is still waiting (a worker that died mid-call is reported that
+  way by the transport) is a failure upstream and is answered 500, never an empty 200; `resource_exhausted` is
   413 (the transport's size cap); `unavailable` (the orchestrator cannot be reached) is 503 with
   `Retry-After: 1`; `unauthenticated` and `permission_denied` (the frontend's own credentials) are 502;
   anything else is 500.

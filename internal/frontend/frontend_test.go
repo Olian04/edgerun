@@ -491,3 +491,16 @@ func TestStatusFunctionDirectly(t *testing.T) {
 		t.Errorf("status = %d, want 504", s)
 	}
 }
+
+// "Cancelled" from the orchestrator while the client is still waiting is a
+// failure upstream. It is answered, never swallowed into an empty 200.
+func TestACancelledAnswerForAClientThatIsStillWaitingIsAnError(t *testing.T) {
+	r := newRig(t, func(context.Context, *ingressv1.InvokeRequest, *connect.ServerStream[ingressv1.InvokeResponse]) error {
+		return connect.NewError(connect.CodeCanceled, errors.New("read: connection reset by peer"))
+	}, nil)
+	res := r.do(t, "GET", "/x", "")
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusInternalServerError {
+		t.Errorf("status %d, want 500: a client that is waiting must be answered", res.StatusCode)
+	}
+}

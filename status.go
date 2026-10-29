@@ -14,7 +14,9 @@ import (
 // fails before the response head, and whether to advise the client to retry
 // (Retry-After: 1). It is the table in docs/protocol.md, "Frontend mapping of
 // platform errors", as code, so that every frontend maps the same way.
-// 0 means the client cancelled and no response is needed. ctxErr is the
+// 0 means the client cancelled (ctxErr says so) and no response is needed: an
+// error that merely says "cancelled" while the client is still waiting is a
+// failure upstream, and is answered, never swallowed. ctxErr is the
 // request context's error, if any: our own deadline expiring is a 504 whether
 // or not the orchestrator's typed error got there first.
 func FrontendStatus(err error, ctxErr error) (status int, retryAfter bool) {
@@ -41,7 +43,7 @@ func FrontendStatus(err error, ctxErr error) (status int, retryAfter bool) {
 		return http.StatusBadGateway, false
 	case errors.Is(ctxErr, context.DeadlineExceeded) || connect.CodeOf(err) == connect.CodeDeadlineExceeded:
 		return http.StatusGatewayTimeout, false
-	case errors.Is(ctxErr, context.Canceled) || connect.CodeOf(err) == connect.CodeCanceled:
+	case errors.Is(ctxErr, context.Canceled):
 		return 0, false
 	}
 	switch connect.CodeOf(err) {

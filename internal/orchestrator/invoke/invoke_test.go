@@ -678,3 +678,26 @@ func TestACallerThatGivesUpAtTheDeadlineIsRecordedAsTheDeadline(t *testing.T) {
 		}
 	}
 }
+
+// A worker that dies mid-call is reported by the transport as "cancelled". That
+// is only the caller's cancellation if the caller's context has ended: otherwise
+// it is a failure of the worker, and must be answered as one (the frontend
+// reads "cancelled" as "nobody is waiting" and writes nothing).
+func TestAWorkerThatDiesIsNotTheCallersCancellation(t *testing.T) {
+	e := newEnv(t, nil, nil, nil)
+	reset := connect.NewError(connect.CodeCanceled, errors.New(`read tcp 127.0.0.1:1->127.0.0.1:2: read: connection reset by peer`))
+
+	err := e.svc.translate(context.Background(), reset)
+	if got := errs.Reason(err); got != commonv1.ErrorReason_ERROR_REASON_INTERNAL {
+		t.Errorf("a cancellation while the caller is waiting: reason %v (%v), want INTERNAL", got, err)
+	}
+	if connect.CodeOf(err) == connect.CodeCanceled {
+		t.Error("it must not be passed on as cancelled")
+	}
+
+	gone, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := e.svc.translate(gone, reset); connect.CodeOf(err) != connect.CodeCanceled {
+		t.Errorf("a caller that has gone: %v, want cancelled", err)
+	}
+}
