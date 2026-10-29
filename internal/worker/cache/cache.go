@@ -13,6 +13,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 	"sync"
 	"time"
 
@@ -57,6 +62,7 @@ type Store struct {
 	maxBytes     int64
 	fetchTimeout time.Duration
 	group        singleflight.Group
+	requests     metric.Int64Counter
 
 	mu    sync.Mutex
 	items map[string]*list.Element // digest -> element of *item
@@ -73,7 +79,7 @@ type item struct {
 func New(f Fetcher, maxBytes int64) *Store {
 	return &Store{
 		fetcher: f, maxBytes: maxBytes, fetchTimeout: 60 * time.Second,
-		items: map[string]*list.Element{}, lru: list.New(),
+		items: map[string]*list.Element{}, lru: list.New(), requests: newRequests(),
 	}
 }
 
@@ -87,10 +93,15 @@ func (s *Store) Get(ctx context.Context, digest string) ([]byte, error) {
 	if !ValidDigest(digest) {
 		return nil, errs.Invalid("malformed artifact digest %q", digest)
 	}
+	ctx, span := otel.Tracer(scope).Start(ctx, "edgerun.artifact.get", trace.WithAttributes(attribute.String("edgerun.artifact.digest", digest)))
+	defer span.End()
 	if b, ok := s.lookup(digest); ok {
+		s.note(ctx, span, "hit")
 		return b, nil
 	}
+	led := false
 	ch := s.group.DoChan(digest, func() (any, error) {
+		led = true
 		// A caller may have filled the cache between our lookup and here.
 		if b, ok := s.lookup(digest); ok {
 			return b, nil
@@ -110,7 +121,14 @@ func (s *Store) Get(ctx context.Context, digest string) ([]byte, error) {
 	select {
 	case r := <-ch:
 		if r.Err != nil {
+			span.SetStatus(codes.Error, "artifact unavailable")
+			s.note(ctx, span, "error")
 			return nil, r.Err
+		}
+		if led {
+			s.note(ctx, span, "fetched")
+		} else {
+			s.note(ctx, span, "shared") // another invocation was already fetching it
 		}
 		return r.Val.([]byte), nil
 	case <-ctx.Done():

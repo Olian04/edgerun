@@ -4,6 +4,10 @@ package server
 import (
 	"context"
 	"errors"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 	"log/slog"
 	"net/http"
 	"slices"
@@ -18,6 +22,7 @@ import (
 	"github.com/Olian04/edgerun/gen/edgerun/worker/v1/workerv1connect"
 	"github.com/Olian04/edgerun/internal/authn"
 	"github.com/Olian04/edgerun/internal/errs"
+	"github.com/Olian04/edgerun/internal/telemetry"
 	"github.com/Olian04/edgerun/internal/worker/cache"
 	"github.com/Olian04/edgerun/internal/worker/runtime"
 )
@@ -44,6 +49,7 @@ type Server struct {
 	// defaultTimeout bounds invocations whose RPC carries no deadline.
 	defaultTimeout time.Duration
 
+	refused  metric.Int64Counter
 	mu       sync.Mutex
 	inFlight int
 	draining bool
@@ -52,16 +58,30 @@ type Server struct {
 
 // New creates a server. info.MaxConcurrency must be positive.
 func New(info *workerv1.WorkerInfo, engine *runtime.Engine, artifacts *cache.Store, log *slog.Logger) *Server {
-	return &Server{
+	s := &Server{
 		info: info, engine: engine, artifacts: artifacts, log: log,
 		defaultTimeout: 30 * time.Second, idle: make(chan struct{}),
 	}
+	m := otel.Meter("github.com/Olian04/edgerun/internal/worker/server")
+	inFlight, _ := m.Int64ObservableGauge("edgerun.worker.in_flight", metric.WithUnit("{invocation}"),
+		metric.WithDescription("Invocations executing on this worker now."))
+	slots, _ := m.Int64ObservableGauge("edgerun.worker.slots", metric.WithUnit("{invocation}"),
+		metric.WithDescription("How many invocations this worker runs at once; beyond it, it answers NO_CAPACITY."))
+	refused, _ := m.Int64Counter("edgerun.worker.refused", metric.WithUnit("{invocation}"),
+		metric.WithDescription("Invocations this worker turned away, because it had no free slot or was draining."))
+	s.refused = refused
+	_, _ = m.RegisterCallback(func(_ context.Context, o metric.Observer) error {
+		o.ObserveInt64(inFlight, int64(s.InFlight()))
+		o.ObserveInt64(slots, int64(s.info.GetMaxConcurrency()))
+		return nil
+	}, inFlight, slots)
+	return s
 }
 
 // Handler returns the path and handler to mount, guarded by the verifier.
 func (s *Server) Handler(v authn.Verifier) (string, http.Handler) {
 	return workerv1connect.NewExecutionServiceHandler(s,
-		connect.WithInterceptors(authn.Server(v, ExecuteScope)),
+		connect.WithInterceptors(telemetry.ServerInterceptor(), authn.Server(v, ExecuteScope)),
 		connect.WithReadMaxBytes(maxRequestBytes), connect.WithCompressMinBytes(authn.CompressMinBytes))
 }
 
@@ -142,7 +162,10 @@ func (s *Server) Execute(ctx context.Context, req *connect.Request[workerv1.Exec
 	if !cache.ValidDigest(m.GetArtifactDigest()) {
 		return errs.Invalid("malformed artifact digest %q", m.GetArtifactDigest())
 	}
+	trace.SpanFromContext(ctx).SetAttributes(attribute.String("edgerun.invocation.id", m.GetInvocationId()),
+		attribute.String("edgerun.module.digest", m.GetArtifactDigest()), attribute.String("edgerun.abi", m.GetAbi()))
 	if err := s.acquire(); err != nil {
+		s.refused.Add(ctx, 1)
 		return err
 	}
 	defer s.release()
@@ -156,10 +179,10 @@ func (s *Server) Execute(ctx context.Context, req *connect.Request[workerv1.Exec
 	log := s.log.With("invocation_id", m.GetInvocationId(), "digest", m.GetArtifactDigest())
 	res, err := s.run(ctx, m)
 	if err != nil {
-		log.Info("invocation failed", "reason", errs.Reason(err).String(), "error", err)
+		log.InfoContext(ctx, "invocation failed", "reason", errs.Reason(err).String(), "error", err)
 		return err
 	}
-	log.Info("invocation done", "status", res.Head.GetStatus(), "duration", res.Duration, "peak_memory", res.PeakMemoryBytes)
+	log.InfoContext(ctx, "invocation done", "status", res.Head.GetStatus(), "duration", res.Duration, "peak_memory", res.PeakMemoryBytes)
 
 	if err := stream.Send(&workerv1.ExecuteResponse{Part: &workerv1.ExecuteResponse_Head{Head: res.Head}}); err != nil {
 		return err

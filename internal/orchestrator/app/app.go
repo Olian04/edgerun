@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/exaring/otelpgx"
 	"log/slog"
 	"net"
 	"net/http"
@@ -138,9 +139,19 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 	}
 	log := cfg.Log
 
-	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
+	pcfg, err := pgxpool.ParseConfig(cfg.DatabaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("database: %w", err)
+	}
+	// A span per statement (its text, never its arguments) and the pool's own metrics.
+	pcfg.ConnConfig.Tracer = otelpgx.NewTracer(otelpgx.WithTrimSQLInSpanName())
+	pool, err := pgxpool.NewWithConfig(ctx, pcfg)
+	if err != nil {
+		return nil, fmt.Errorf("database: %w", err)
+	}
+	if err := otelpgx.RecordStats(pool); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("database metrics: %w", err)
 	}
 	ok := false
 	defer func() {

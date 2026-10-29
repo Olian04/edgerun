@@ -870,3 +870,35 @@ func (h *harness) egressReachesTheWorker(t *testing.T) {
 		t.Errorf("after a deploy the worker was told %s: the list is the function's, not a version's", got)
 	}
 }
+
+// traceContext: the orchestrator continues the trace of an Invoke in the Execute
+// it makes, and says in the record which trace the invocation belongs to
+// (docs/protocol.md, "Observability").
+func (h *harness) traceContext(t *testing.T) {
+	const traceID = "4bf92f3577b34da6a3ce929d0e0e4736"
+	w, f := h.stack(t, respond("ok"))
+	h.served(t, f.host)
+	before := len(w.calls())
+	h.mustInvoke(t, call{host: f.host, requestID: "trace-" + h.run, traceparent: "00-" + traceID + "-00f067aa0ba902b7-01"})
+
+	calls := w.calls()
+	if len(calls) <= before {
+		t.Fatal("the worker was not asked to run anything")
+	}
+	tp := calls[len(calls)-1].header.Get("Traceparent")
+	if parts := strings.Split(tp, "-"); len(parts) != 4 || parts[1] != traceID {
+		t.Errorf("the Execute carries traceparent %q: an Invoke that carried a trace is continued in the call to the worker (trace id %s)", tp, traceID)
+	}
+	if b := calls[len(calls)-1].header.Get("Baggage"); b != "" {
+		t.Errorf("the Execute carries baggage %q: it is not propagated", b)
+	}
+
+	check.Eventually(t, "the record to name the trace", settle, func() bool {
+		for _, r := range h.records(t, f.fn.GetId(), 0) {
+			if r.GetRequestId() == "trace-"+h.run {
+				return r.GetTraceId() == traceID
+			}
+		}
+		return false
+	})
+}

@@ -8,6 +8,10 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 	"io"
 	"log/slog"
 	"net"
@@ -49,6 +53,7 @@ type Config struct {
 type Frontend struct {
 	cfg     Config
 	maxBody atomic.Uint64
+	m       struct{ aborted metric.Int64Counter }
 }
 
 // New returns a frontend.
@@ -60,6 +65,9 @@ func New(cfg Config) *Frontend {
 		cfg.MaxBodyBytes = DefaultMaxBodyBytes
 	}
 	f := &Frontend{cfg: cfg}
+	f.m.aborted, _ = otel.Meter("github.com/Olian04/edgerun/internal/frontend").Int64Counter("edgerun.frontend.aborted",
+		metric.WithUnit("{response}"),
+		metric.WithDescription("Responses whose connection was aborted because the function's response failed after its head was sent: the client saw a status and an incomplete body."))
 	f.maxBody.Store(cfg.MaxBodyBytes)
 	return f
 }
@@ -105,15 +113,22 @@ var forwarding = map[string]bool{
 	"x-forwarded-for": true, "x-forwarded-proto": true, "x-forwarded-host": true, "forwarded": true, "x-real-ip": true,
 }
 
+// traceHeaders carry a trace between hops. The frontend takes the client's
+// trace context into its own span and passes the trace on in the call to the
+// orchestrator, not in the request the function is given: the function is given
+// the worker's span (docs/protocol.md, "Observability").
+var traceHeaders = map[string]bool{"traceparent": true, "tracestate": true, "baggage": true}
+
 // ServeHTTP implements http.Handler.
 func (f *Frontend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	reqID := requestID(r)
 	w.Header().Set("X-Request-Id", reqID)
+	trace.SpanFromContext(r.Context()).SetAttributes(attribute.String("edgerun.request.id", reqID))
 	rec := &recorder{ResponseWriter: w}
 	invocation := ""
 	defer func() {
-		f.cfg.Log.Info("request", "method", r.Method, "host", r.Host, "path", r.URL.Path, "status", rec.status,
+		f.cfg.Log.InfoContext(r.Context(), "request", "method", r.Method, "host", r.Host, "path", r.URL.Path, "status", rec.status,
 			"bytes", rec.bytes, "duration", time.Since(start), "request_id", reqID, "invocation_id", invocation)
 	}()
 
@@ -166,7 +181,8 @@ func (f *Frontend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			// The status line is out: we can no longer say "502". Aborting the
 			// connection is the only honest signal that the body is incomplete.
-			f.cfg.Log.Error("response failed after it had started", "request_id", reqID, "error", err)
+			f.m.aborted.Add(r.Context(), 1)
+			f.cfg.Log.ErrorContext(r.Context(), "response failed after it had started", "request_id", reqID, "error", err)
 			panic(http.ErrAbortHandler)
 		}
 	}
@@ -188,7 +204,7 @@ func (f *Frontend) buildRequest(r *http.Request, body []byte) *commonv1.HttpRequ
 
 	for name, values := range r.Header {
 		n := strings.ToLower(name)
-		if hopByHop[n] || (forwarding[n] && !f.cfg.TrustForwarded) {
+		if hopByHop[n] || traceHeaders[n] || (forwarding[n] && !f.cfg.TrustForwarded) {
 			continue
 		}
 		if n == "x-forwarded-for" { // trusted: appended to below
@@ -246,7 +262,7 @@ func (f *Frontend) fail(w http.ResponseWriter, ctx context.Context, err error) {
 		return // the client cancelled; nobody is listening
 	}
 	if status >= 500 {
-		f.cfg.Log.Warn("invocation failed", "status", status, "error", err) // detail is for operators, never for the client
+		f.cfg.Log.WarnContext(ctx, "invocation failed", "status", status, "error", err) // detail is for operators, never for the client
 	}
 	if retry {
 		w.Header().Set("Retry-After", "1")

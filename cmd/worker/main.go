@@ -5,7 +5,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log/slog"
 	"os"
 	"os/signal"
 	"strconv"
@@ -13,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Olian04/edgerun/internal/telemetry"
 	"github.com/Olian04/edgerun/internal/worker/app"
 )
 
@@ -65,7 +65,9 @@ func main() {
 	cfg.MaxConcurrency = uint32(*maxConc)
 	cfg.Labels = lbl
 	cfg.Version = version
-	cfg.Log = slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	log, flush := telemetry.Init("edgerun-worker", version)
+	defer flush()
+	cfg.Log = log
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

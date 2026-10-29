@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/Olian04/edgerun/internal/telemetry"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"log/slog"
 	"net"
 	"net/http"
@@ -84,7 +86,8 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 	}
 	s := &Server{cfg: cfg, ln: ln, stopped: make(chan struct{})}
 	// No write timeout: responses stream. Slow clients are bounded per write.
-	s.http = &http.Server{Handler: fe, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 60 * time.Second,
+	s.http = &http.Server{Handler: otelhttp.NewHandler(fe, "edgerun.frontend",
+		otelhttp.WithPropagators(telemetry.Propagator()), otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string { return r.Method })), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 60 * time.Second,
 		IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 64 << 10}
 
 	if cfg.HealthListen != "" {

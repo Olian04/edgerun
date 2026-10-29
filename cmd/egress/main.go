@@ -6,7 +6,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log/slog"
 	"net/netip"
 	"os"
 	"os/signal"
@@ -14,6 +13,7 @@ import (
 	"syscall"
 
 	"github.com/Olian04/edgerun/internal/egress/app"
+	"github.com/Olian04/edgerun/internal/telemetry"
 )
 
 func env(key, def string) string {
@@ -72,7 +72,9 @@ func main() {
 			cfg.Covers = append(cfg.Covers, c)
 		}
 	}
-	cfg.Log = slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	log, flush := telemetry.Init("edgerun-egress", "dev")
+	defer flush()
+	cfg.Log = log
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

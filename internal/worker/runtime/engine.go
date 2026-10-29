@@ -7,6 +7,10 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"github.com/Olian04/edgerun/internal/telemetry"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"sync"
 	"time"
 
@@ -120,6 +124,7 @@ type Result struct {
 
 // Engine runs invocations. It is safe for concurrent use.
 type Engine struct {
+	tel   *engineTel
 	cfg   Config
 	cache wazero.CompilationCache
 
@@ -141,7 +146,7 @@ func New(cfg Config) (*Engine, error) {
 	} else {
 		cache = wazero.NewCompilationCache()
 	}
-	return &Engine{cfg: cfg, cache: cache, buckets: map[uint64]*bucket{}}, nil
+	return &Engine{cfg: cfg, cache: cache, buckets: map[uint64]*bucket{}, tel: newEngineTel()}, nil
 }
 
 // ABIs lists the guest ABIs this engine can run.
@@ -215,6 +220,28 @@ func (e *Engine) bucket(ctx context.Context, size uint64) (*bucket, error) {
 // Run executes one invocation. The context deadline is the wall-clock budget.
 // Errors are *Error, except a cancelled context, which is returned as is.
 func (e *Engine) Run(ctx context.Context, inv Invocation) (*Result, error) {
+	abi := inv.ABI
+	if abi == "" {
+		abi = ABI
+	}
+	ctx, span := tracer().Start(ctx, "edgerun.guest.run", trace.WithAttributes(
+		attribute.String("edgerun.abi", abi), attribute.String("edgerun.module.digest", inv.Digest),
+		attribute.String("edgerun.invocation.id", inv.InvocationID)))
+	defer span.End()
+	// The guest is given the span of its own run, in place of whatever traceparent
+	// the client sent, so that it can continue the trace in telemetry of its own.
+	if inv.Request != nil {
+		inv.Request = &commonv1.HttpRequest{
+			Method: inv.Request.GetMethod(), Host: inv.Request.GetHost(), Path: inv.Request.GetPath(), RawQuery: inv.Request.GetRawQuery(),
+			Headers: telemetry.InjectHeaders(ctx, inv.Request.GetHeaders()), Body: inv.Request.GetBody(), RemoteAddr: inv.Request.GetRemoteAddr(),
+		}
+	}
+	res, err := e.run(ctx, inv)
+	e.tel.finish(ctx, span, abi, res, err)
+	return res, err
+}
+
+func (e *Engine) run(ctx context.Context, inv Invocation) (*Result, error) {
 	size := e.bucketSize(inv.Limits.GetMemoryLimitBytes())
 	maxOut := inv.Limits.GetMaxResponseBytes()
 	if maxOut == 0 {
@@ -398,7 +425,13 @@ func (b *bucket) module(ctx context.Context, digest string, wasm []byte) (wazero
 	b.mu.Unlock()
 
 	ent.once.Do(func() {
-		ent.cm, ent.err = b.compile(ctx, wasm)
+		cctx, span := tracer().Start(ctx, "edgerun.module.compile", trace.WithAttributes(
+			attribute.String("edgerun.module.digest", digest), attribute.Int("edgerun.module.size", len(wasm))))
+		ent.cm, ent.err = b.compile(cctx, wasm)
+		if ent.err != nil {
+			span.SetStatus(codes.Error, "compile failed")
+		}
+		span.End()
 		b.mu.Lock()
 		ent.ready = true
 		b.evictLocked()

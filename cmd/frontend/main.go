@@ -5,13 +5,13 @@ package main
 import (
 	"context"
 	"flag"
-	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
 	"github.com/Olian04/edgerun/internal/frontend/app"
+	"github.com/Olian04/edgerun/internal/telemetry"
 )
 
 func env(key, def string) string {
@@ -30,7 +30,9 @@ func main() {
 	flag.DurationVar(&cfg.RequestTimeout, "request-timeout", 30*time.Second, "whole-invocation budget per request")
 	flag.BoolVar(&cfg.TrustForwarded, "trust-forwarded", false, "believe client X-Forwarded-* headers (only behind a proxy you control)")
 	flag.Parse()
-	cfg.Log = slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	log, flush := telemetry.Init("edgerun-frontend", "dev")
+	defer flush()
+	cfg.Log = log
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

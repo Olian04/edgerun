@@ -4,6 +4,8 @@ import (
 	"net/http"
 
 	"connectrpc.com/connect"
+	"connectrpc.com/otelconnect"
+	"go.opentelemetry.io/otel/propagation"
 
 	"github.com/Olian04/edgerun/internal/authn"
 )
@@ -50,9 +52,21 @@ func settings(token string, opts []Option) (connect.HTTPClient, []connect.Client
 	for _, f := range opts {
 		f(&o)
 	}
-	co := append([]connect.ClientOption(nil), o.opts...)
+	// Calls carry the caller's trace and are traced themselves (OpenTelemetry): with
+	// no OpenTelemetry set up by the program this passes a trace along untouched
+	// and costs a few allocations.
+	co := []connect.ClientOption{connect.WithInterceptors(traceInterceptor())}
+	co = append(co, o.opts...)
 	if token != "" {
 		co = append(co, connect.WithInterceptors(authn.Client(token)))
 	}
 	return o.http, co
+}
+
+func traceInterceptor() connect.Interceptor {
+	i, err := otelconnect.NewInterceptor(otelconnect.WithPropagator(propagation.TraceContext{}))
+	if err != nil {
+		panic("edgerun: " + err.Error()) // only for a bad option, which is a bug
+	}
+	return i
 }

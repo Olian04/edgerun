@@ -20,6 +20,7 @@ import (
 	"github.com/Olian04/edgerun/internal/errs"
 	"github.com/Olian04/edgerun/internal/orchestrator/apierr"
 	"github.com/Olian04/edgerun/internal/orchestrator/store"
+	"github.com/Olian04/edgerun/internal/telemetry"
 )
 
 // AdminScope is the token scope operators present.
@@ -65,7 +66,7 @@ func New(cfg Config) *Service {
 
 // Mount registers the services on mux, guarded by the admin scope.
 func (s *Service) Mount(mux *http.ServeMux, v authn.Verifier) {
-	small := connect.WithHandlerOptions(connect.WithInterceptors(authn.Server(v, AdminScope)), connect.WithCompressMinBytes(authn.CompressMinBytes))
+	small := connect.WithHandlerOptions(connect.WithInterceptors(telemetry.ServerInterceptor(), authn.Server(v, AdminScope)), connect.WithCompressMinBytes(authn.CompressMinBytes))
 	upload := []connect.HandlerOption{small, connect.WithReadMaxBytes(int(s.cfg.MaxModuleBytes) + (1 << 20))}
 	mux.Handle(controlv1connect.NewFunctionServiceHandler(functions{s}, upload...))
 	mux.Handle(controlv1connect.NewRouteServiceHandler(routes{s}, small))

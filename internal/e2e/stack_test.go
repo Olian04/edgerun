@@ -48,6 +48,8 @@ type stack struct {
 	ctl     *edgerun.Control
 	ingress *edgerun.Ingress
 	wasm    []byte
+	// workerLog, if set, is the logger workers started afterwards use.
+	workerLog *slog.Logger
 }
 
 func orchConfig(dsn, listen string) orchapp.Config {
@@ -109,7 +111,7 @@ func (s *stack) startWorker(maxConcurrency uint32) *worker {
 		done <- workerapp.Run(ctx, workerapp.Config{
 			Listen: "127.0.0.1:0", OrchestratorURL: "http://" + s.addr,
 			WorkerToken: workerToken, ExecutionToken: executionToken,
-			MaxConcurrency: maxConcurrency, DrainTimeout: 10 * time.Second, Log: quiet,
+			MaxConcurrency: maxConcurrency, DrainTimeout: 10 * time.Second, Log: s.logOr(quiet),
 		})
 	}()
 	var once sync.Once
@@ -277,3 +279,10 @@ func freePort(t *testing.T) string {
 
 func testpgDSN(t *testing.T) string { t.Helper(); return testpg.DSN(t) }
 func wasmBytes(t *testing.T) []byte { t.Helper(); return guest.Build(t) }
+
+func (s *stack) logOr(l *slog.Logger) *slog.Logger {
+	if s.workerLog != nil {
+		return s.workerLog
+	}
+	return l
+}

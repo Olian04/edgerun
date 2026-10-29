@@ -5,6 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"net/url"
 	"strconv"
 	"strings"
@@ -212,7 +215,16 @@ func hostFetch(ctx context.Context, mod api.Module, stack []uint64) {
 	}
 	req.Service, req.Allow, req.MaxResponseBytes, req.InvocationID = service, allow, min(st.maxResp, maxFetchResponse), st.id
 
-	resp, err := st.net.Fetch(ctx, *req)
+	fctx, span := tracer().Start(ctx, "edgerun.guest.fetch", trace.WithAttributes(
+		attribute.String("http.request.method", req.Method), attribute.String("server.address", hostOf(req.URL)),
+		attribute.String("edgerun.egress.service", service)))
+	resp, err := st.net.Fetch(fctx, *req)
+	defer span.End()
+	if err == nil {
+		span.SetAttributes(attribute.Int("http.response.status_code", int(resp.Status)))
+	} else {
+		span.SetStatus(codes.Error, "fetch failed")
+	}
 	if err != nil {
 		// The budget ran out while the request was in flight. The guest must not
 		// be allowed to carry on and finish as if it had merely been refused.
@@ -316,4 +328,14 @@ func spent(ctx context.Context) error {
 		<-ctx.Done()
 	}
 	return ctx.Err()
+}
+
+// hostOf is the host of a URL, for a span: the host only, never the path or
+// query, which may carry what a guest does not mean to publish.
+func hostOf(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
 }

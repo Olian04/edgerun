@@ -126,6 +126,7 @@ func Run(t *testing.T, target Target) {
 	t.Run("InvokeForwarding", h.invokeForwarding)
 	t.Run("InvokeStreaming", h.invokeStreaming)
 	t.Run("InvokeValidation", h.invokeValidation)
+	t.Run("TraceContext", h.traceContext)
 	t.Run("RoutingPrecedence", h.routingPrecedence)
 	t.Run("ABIScheduling", h.abiScheduling)
 	t.Run("Retries", h.retries)
@@ -302,6 +303,7 @@ type call struct {
 	body                         []byte
 	headers                      []*commonv1.Header
 	requestID                    string
+	traceparent                  string // the call carries this trace context, if set
 	budget                       time.Duration
 }
 
@@ -331,6 +333,9 @@ func (h *harness) invoke(t testing.TB, c call) result {
 		},
 	})
 	ireq.Header().Set(budgetHeader, strconv.FormatInt(c.budget.Milliseconds(), 10))
+	if c.traceparent != "" {
+		ireq.Header().Set("Traceparent", c.traceparent)
+	}
 	st, err := h.ing.Invoke(ctx, ireq)
 	if err != nil {
 		return result{err: err}

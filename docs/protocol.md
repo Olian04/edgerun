@@ -70,6 +70,35 @@ know several tokens of different scopes (the orchestrator, a network service tha
 token). TLS or mTLS is expected between components in production; the
 token scheme does not replace it.
 
+## Observability
+
+Every seam is HTTP, so a trace crosses it the way it crosses any HTTP hop: as **W3C Trace Context**
+(`traceparent` and `tracestate` headers) on the call. Components may export traces, metrics and logs as they
+please (the reference implementation uses OpenTelemetry, [`observability.md`](observability.md)); what the protocol
+asks of every component, whether it exports anything or not, is to **pass the trace on**, so that the components
+that do export can join one trace:
+
+- A call a component makes *because of* a call it received carries the same trace id: the frontend's `Invoke`
+  continues the trace of the client's request, the orchestrator's `Execute` continues that of the `Invoke`, and the
+  worker's `Fetch` that of the `Execute`. (A component that makes spans gives the forwarded call a `traceparent` of
+  its own span; one that makes none forwards what it received. Either is conforming: the trace id is the contract.)
+  Baggage is not propagated.
+- A frontend that is given a `traceparent` by its client continues that trace; it does **not** also forward the header
+  to the function (it is in the call to the orchestrator, not in `HttpRequest.headers`), and neither does it forward
+  `tracestate` or `baggage`.
+- The orchestrator records the trace id (32 lower-case hex digits) in the invocation record
+  (`Invocation.trace_id`) when the `Invoke` carried one or it started one, empty otherwise: the way from a record to
+  its trace.
+- The worker gives the **guest** a `traceparent` request header (`HTTP_TRACEPARENT` in its environment, see the ABI)
+  with the trace id of the `Execute` call and a span id of its own, so that a function with telemetry of its own can
+  continue the trace. A `traceparent`, `tracestate` or `baggage` the *client* sent is never given to the guest: it
+  is replaced by the platform's, or, if the call carried no trace, absent.
+- A network service **never adds trace context to the request it makes upstream** (it adds nothing, see "What a
+  network service does with a `Fetch`"): the origin sees a `traceparent` only if the guest sent one as a header of
+  its own request.
+- A span or a metric of the platform names a destination by host, never by URL: a path and a query may hold
+  what a guest does not mean to publish.
+
 ## Versioning and compatibility
 
 - The major version is part of the package name (`v1`). A breaking change means a new package

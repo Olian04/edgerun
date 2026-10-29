@@ -19,6 +19,7 @@ import (
 
 	"github.com/Olian04/edgerun/internal/admin/app"
 	"github.com/Olian04/edgerun/internal/admin/auth"
+	"github.com/Olian04/edgerun/internal/telemetry"
 )
 
 func env(key, def string) string {
@@ -44,7 +45,9 @@ func main() {
 	flag.BoolVar(&cfg.SecureCookies, "secure-cookies", false, "mark the session cookie Secure (set when served over HTTPS)")
 	flag.DurationVar(&cfg.AutoRefresh, "auto-refresh", 10*time.Second, "reload the read-only pages (overview, workers, invocations) this often; 0 disables")
 	flag.Parse()
-	cfg.Log = slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	log, flush := telemetry.Init("edgerun-admin", "dev")
+	defer flush()
+	cfg.Log = log
 
 	us, err := auth.ParseUsers(users)
 	if err != nil {

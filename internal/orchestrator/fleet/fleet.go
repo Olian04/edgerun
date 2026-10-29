@@ -22,6 +22,7 @@ import (
 	"github.com/Olian04/edgerun/internal/errs"
 	"github.com/Olian04/edgerun/internal/orchestrator/apierr"
 	"github.com/Olian04/edgerun/internal/orchestrator/store"
+	"github.com/Olian04/edgerun/internal/telemetry"
 )
 
 // WorkerScope is the token scope workers present to the orchestrator.
@@ -69,7 +70,7 @@ func New(cfg Config) *Service {
 
 // Mount registers both services on mux, guarded by the worker scope.
 func (s *Service) Mount(mux *http.ServeMux, v authn.Verifier) {
-	opts := connect.WithHandlerOptions(connect.WithInterceptors(authn.Server(v, WorkerScope)), connect.WithCompressMinBytes(authn.CompressMinBytes))
+	opts := connect.WithHandlerOptions(connect.WithInterceptors(telemetry.ServerInterceptor(), authn.Server(v, WorkerScope)), connect.WithCompressMinBytes(authn.CompressMinBytes))
 	mux.Handle(workerv1connect.NewFleetServiceHandler(fleetHandler{s}, opts))
 	mux.Handle(workerv1connect.NewArtifactServiceHandler(artifactHandler{s}, opts))
 }

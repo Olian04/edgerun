@@ -221,6 +221,23 @@ func (h *harness) network(t *testing.T) {
 		}
 	})
 
+	t.Run("the trace of the invocation reaches the network service", func(t *testing.T) {
+		const traceID = "4bf92f3577b34da6a3ce929d0e0e4736"
+		h.egress.script(reply(200, nil, []byte("ok")))
+		before := len(h.egress.received())
+		h.netCall(t, "/fetch", "GET http://api.test/trace\n\n", h.egress.grants("api.test"), func(inv *invocation) {
+			inv.traceparent = "00-" + traceID + "-00f067aa0ba902b7-01"
+		})
+		calls := h.egress.received()
+		if len(calls) != before+1 {
+			t.Fatalf("%d calls to the network service, want %d", len(calls), before+1)
+		}
+		tp := calls[len(calls)-1].header.Get("Traceparent")
+		if parts := strings.Split(tp, "-"); len(parts) != 4 || parts[1] != traceID {
+			t.Errorf("the Fetch carries traceparent %q: a call made because of an Execute continues its trace (trace id %s)", tp, traceID)
+		}
+	})
+
 	t.Run("a request and its response", func(t *testing.T) {
 		long := strings.Repeat("0123456789", 25) // more than one 100-byte read
 		h.egress.script(reply(201, []*commonv1.Header{hdr("x-a", "1"), hdr("x-a", "2"), hdr("content-type", "text/x-conformance")}, []byte(long[:100]), []byte(long[100:])))

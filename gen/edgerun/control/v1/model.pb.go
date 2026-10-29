@@ -523,8 +523,12 @@ type Invocation struct {
 	// Tail of the guest's stderr, truncated. For an invocation that failed
 	// before the worker could report, the error message instead (for a trapped
 	// function that message ends with the guest's stderr tail).
-	Stderr        []byte                 `protobuf:"bytes,12,opt,name=stderr,proto3" json:"stderr,omitempty"`
-	StartTime     *timestamppb.Timestamp `protobuf:"bytes,13,opt,name=start_time,json=startTime,proto3" json:"start_time,omitempty"`
+	Stderr    []byte                 `protobuf:"bytes,12,opt,name=stderr,proto3" json:"stderr,omitempty"`
+	StartTime *timestamppb.Timestamp `protobuf:"bytes,13,opt,name=start_time,json=startTime,proto3" json:"start_time,omitempty"`
+	// The trace this invocation belongs to (W3C trace id, 32 lower-case hex
+	// digits), if the request arrived carrying one: the way from a record to its
+	// trace in whatever the deployment collects traces in. Empty otherwise.
+	TraceId       string `protobuf:"bytes,14,opt,name=trace_id,json=traceId,proto3" json:"trace_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -648,6 +652,13 @@ func (x *Invocation) GetStartTime() *timestamppb.Timestamp {
 		return x.StartTime
 	}
 	return nil
+}
+
+func (x *Invocation) GetTraceId() string {
+	if x != nil {
+		return x.TraceId
+	}
+	return ""
 }
 
 // NetworkServiceStatus is a registered network service as the orchestrator
@@ -794,7 +805,7 @@ const file_edgerun_control_v1_model_proto_rawDesc = "" +
 	"\x05state\x18\x04 \x01(\x0e2\x1e.edgerun.worker.v1.WorkerStateR\x05state\x12\x1b\n" +
 	"\tin_flight\x18\x05 \x01(\rR\binFlight\x12J\n" +
 	"\x13last_heartbeat_time\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\x11lastHeartbeatTime\x12\x14\n" +
-	"\x05alive\x18\a \x01(\bR\x05alive\"\xc7\x03\n" +
+	"\x05alive\x18\a \x01(\bR\x05alive\"\xe2\x03\n" +
 	"\n" +
 	"Invocation\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
@@ -814,7 +825,8 @@ const file_edgerun_control_v1_model_proto_rawDesc = "" +
 	"\x11peak_memory_bytes\x18\v \x01(\x04R\x0fpeakMemoryBytes\x12\x16\n" +
 	"\x06stderr\x18\f \x01(\fR\x06stderr\x129\n" +
 	"\n" +
-	"start_time\x18\r \x01(\v2\x1a.google.protobuf.TimestampR\tstartTime\"\x8f\x02\n" +
+	"start_time\x18\r \x01(\v2\x1a.google.protobuf.TimestampR\tstartTime\x12\x19\n" +
+	"\btrace_id\x18\x0e \x01(\tR\atraceId\"\x8f\x02\n" +
 	"\x14NetworkServiceStatus\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1a\n" +
 	"\bendpoint\x18\x02 \x01(\tR\bendpoint\x122\n" +

@@ -235,6 +235,13 @@ bodies as readers and typed errors. See [`docs/library.md`](docs/library.md).
 Not a Go shop? The protocols are plain protobuf over Connect; see [`docs/other-languages.md`](docs/other-languages.md)
 (a worker in Node.js passes the conformance suite).
 
+## Observability
+
+Traces, metrics and logs are exported as [OpenTelemetry](https://opentelemetry.io) says: set the standard
+`OTEL_EXPORTER_OTLP_ENDPOINT` (and friends) on any component and a request shows up as one trace from the frontend
+to the origin a function called, with `edgerun.*` metrics and logs correlated to the trace. Off unless asked for;
+the trace is passed on either way. See [`docs/observability.md`](docs/observability.md).
+
 ## Development
 
 ```sh

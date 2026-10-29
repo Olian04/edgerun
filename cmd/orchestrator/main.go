@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Olian04/edgerun/internal/orchestrator/app"
+	"github.com/Olian04/edgerun/internal/telemetry"
 )
 
 // version is set at build time: -ldflags "-X main.version=..."
@@ -43,7 +44,9 @@ func main() {
 	flag.Parse()
 
 	cfg.Version = version
-	cfg.Log = slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	log, flush := telemetry.Init("edgerun-orchestrator", version)
+	defer flush()
+	cfg.Log = log
 	if key != "" {
 		b, err := base64.StdEncoding.DecodeString(key)
 		if err != nil {

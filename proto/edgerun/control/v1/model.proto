@@ -116,6 +116,10 @@ message Invocation {
   // function that message ends with the guest's stderr tail).
   bytes stderr = 12;
   google.protobuf.Timestamp start_time = 13;
+  // The trace this invocation belongs to (W3C trace id, 32 lower-case hex
+  // digits), if the request arrived carrying one: the way from a record to its
+  // trace in whatever the deployment collects traces in. Empty otherwise.
+  string trace_id = 14;
 }
 
 // NetworkServiceStatus is a registered network service as the orchestrator

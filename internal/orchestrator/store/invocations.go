@@ -40,12 +40,12 @@ func (s *Store) InsertInvocations(ctx context.Context, invs []*controlv1.Invocat
 		}
 		batch.Queue(`INSERT INTO invocations
 			(id, request_id, function_id, version_id, worker_id, method, path, status, error_reason,
-			 duration_micros, peak_memory_bytes, stderr, start_time)
-			VALUES ($1::uuid, $2, NULLIF($3, '')::uuid, NULLIF($4, '')::uuid, NULLIF($5, '')::uuid, $6, $7, $8, $9, $10, $11, $12, $13)
+			 duration_micros, peak_memory_bytes, stderr, start_time, trace_id)
+			VALUES ($1::uuid, $2, NULLIF($3, '')::uuid, NULLIF($4, '')::uuid, NULLIF($5, '')::uuid, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 			ON CONFLICT (id) DO NOTHING`,
 			v.GetId(), v.GetRequestId(), v.GetFunctionId(), v.GetVersionId(), v.GetWorkerId(), v.GetMethod(), path,
 			int32(v.GetStatus()), int32(v.GetErrorReason()), int64(v.GetDurationMicros()), int64(v.GetPeakMemoryBytes()),
-			stderr, v.GetStartTime().AsTime())
+			stderr, v.GetStartTime().AsTime(), v.GetTraceId())
 	}
 	br := s.pool.SendBatch(ctx, batch)
 	defer br.Close()
@@ -58,7 +58,7 @@ func (s *Store) InsertInvocations(ctx context.Context, invs []*controlv1.Invocat
 }
 
 const invocationCols = `id::text, request_id, coalesce(function_id::text, ''), coalesce(version_id::text, ''),
-	coalesce(worker_id::text, ''), method, path, status, error_reason, duration_micros, peak_memory_bytes, stderr, start_time`
+	coalesce(worker_id::text, ''), method, path, status, error_reason, duration_micros, peak_memory_bytes, stderr, start_time, trace_id`
 
 // ListInvocations pages through records, newest first, optionally for one
 // function.
@@ -103,7 +103,7 @@ func (s *Store) ListInvocations(ctx context.Context, functionID string, size uin
 		var dur, peak int64
 		var start time.Time
 		if err := rows.Scan(&v.Id, &v.RequestId, &v.FunctionId, &v.VersionId, &v.WorkerId, &v.Method, &v.Path,
-			&status, &reason, &dur, &peak, &v.Stderr, &start); err != nil {
+			&status, &reason, &dur, &peak, &v.Stderr, &start, &v.TraceId); err != nil {
 			return nil, "", err
 		}
 		v.Status, v.ErrorReason = uint32(status), commonv1.ErrorReason(reason)

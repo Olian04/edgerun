@@ -157,6 +157,7 @@ func Run(t *testing.T, target Target) {
 	t.Run("ResponseLimit", h.responseLimit)
 	t.Run("ABIViolations", h.abiViolations)
 	t.Run("MalformedRequests", h.malformedRequests)
+	t.Run("TraceContext", h.traceContext)
 	t.Run("RealTimeAndEntropy", h.timeAndEntropy)
 	t.Run("Network", h.network)
 	t.Run("Capacity", h.capacity)
@@ -258,6 +259,8 @@ type invocation struct {
 	env                 []*commonv1.EnvVar
 	timeout             time.Duration
 	token               *string                 // nil: the correct token; pointer to "": none
+	traceparent         string                  // the call carries this trace context, if set
+	clientHeaders       []*commonv1.Header      // more headers on the request the guest is given
 	egress              []*workerv1.EgressGrant // the function's network grants
 }
 
@@ -289,9 +292,12 @@ func (h *harness) call(t *testing.T, inv invocation) outcome {
 		Request: &commonv1.HttpRequest{
 			Method: inv.method, Host: "conformance.test", Path: inv.path, RawQuery: inv.query,
 			Body: []byte(inv.body), RemoteAddr: "192.0.2.1:1234",
-			Headers: []*commonv1.Header{{Name: "content-type", Value: "text/x-conformance"}, {Name: "x-multi", Value: "a"}, {Name: "x-multi", Value: "b"}},
+			Headers: append([]*commonv1.Header{{Name: "content-type", Value: "text/x-conformance"}, {Name: "x-multi", Value: "a"}, {Name: "x-multi", Value: "b"}}, inv.clientHeaders...),
 		},
 	})
+	if inv.traceparent != "" {
+		req.Header().Set("Traceparent", inv.traceparent)
+	}
 	req.Header().Set(budgetHeader, strconv.FormatInt(inv.timeout.Milliseconds(), 10))
 	switch {
 	case inv.token == nil:
@@ -664,6 +670,38 @@ func (h *harness) malformedRequests(t *testing.T) {
 		if r, _ := reasonOf(out.err); r != commonv1.ErrorReason_ERROR_REASON_UNSPECIFIED {
 			t.Errorf("environment variable %q: a malformed request carries no reason, got %v", name, r)
 		}
+	}
+}
+
+// traceContext: the guest is given the platform's trace context, never the
+// client's (docs/protocol.md, "Observability").
+func (h *harness) traceContext(t *testing.T) {
+	const callTrace, clientTrace = "4bf92f3577b34da6a3ce929d0e0e4736", "0af7651916cd43dd8448eb211c80319c"
+	client := []*commonv1.Header{
+		{Name: "traceparent", Value: "00-" + clientTrace + "-b7ad6b7169203331-01"},
+		{Name: "tracestate", Value: "vendor=client"},
+		{Name: "baggage", Value: "user=somebody"},
+	}
+
+	// The call carries a trace: the guest is given that trace, with a span id of the worker's own.
+	env := string(h.ok(t, invocation{path: "/env", traceparent: "00-" + callTrace + "-00f067aa0ba902b7-01", clientHeaders: client}).body)
+	var tp string
+	for _, line := range strings.Split(env, "\n") {
+		if v, ok := strings.CutPrefix(line, "HTTP_TRACEPARENT="); ok {
+			tp = v
+		}
+	}
+	if parts := strings.Split(tp, "-"); len(parts) != 4 || parts[1] != callTrace {
+		t.Errorf("HTTP_TRACEPARENT = %q: the guest is given the trace of the Execute call (trace id %s)", tp, callTrace)
+	}
+	if strings.Contains(env, clientTrace) || strings.Contains(env, "vendor=client") || strings.Contains(env, "HTTP_BAGGAGE") {
+		t.Errorf("the guest was given trace context the client sent: it is replaced by the platform's:\n%s", env)
+	}
+
+	// The call carries none: the client's is still not handed on.
+	env = string(h.ok(t, invocation{path: "/env", clientHeaders: client}).body)
+	if strings.Contains(env, clientTrace) || strings.Contains(env, "vendor=client") || strings.Contains(env, "HTTP_BAGGAGE") {
+		t.Errorf("with no trace in the call, the guest was given the client's:\n%s", env)
 	}
 }
 

@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/Olian04/edgerun/internal/telemetry"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"log/slog"
 	"net"
 	"net/http"
@@ -66,7 +68,8 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 	}
 	// ReadTimeout bounds a module upload (webui asks for it); there is no write
 	// timeout because pages stream.
-	s := &Server{cfg: cfg, ln: ln, http: &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second,
+	s := &Server{cfg: cfg, ln: ln, http: &http.Server{Handler: otelhttp.NewHandler(h, "edgerun.admin",
+		otelhttp.WithPropagators(telemetry.Propagator()), otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string { return r.Method })), ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout: 5 * time.Minute, IdleTimeout: 2 * time.Minute}}
 	go func() {
 		if err := s.http.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {

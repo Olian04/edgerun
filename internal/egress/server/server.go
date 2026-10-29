@@ -9,6 +9,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"io"
 	"log/slog"
 	"net"
@@ -29,6 +32,7 @@ import (
 	"github.com/Olian04/edgerun/internal/authn"
 	"github.com/Olian04/edgerun/internal/egress/policy"
 	"github.com/Olian04/edgerun/internal/errs"
+	"github.com/Olian04/edgerun/internal/telemetry"
 )
 
 // Scope is the token scope workers present to a network service.
@@ -69,6 +73,7 @@ type Service struct {
 	cfg    Config
 	covers policy.Covers
 	client *http.Client
+	tel    *egressTel
 }
 
 // New returns a service. cfg.Covers must be valid and non-empty: a service
@@ -113,7 +118,7 @@ func New(cfg Config) *Service {
 		// declared, and chooses what to accept.
 		DisableCompression: true,
 	}
-	return &Service{cfg: cfg, covers: covers, client: &http.Client{
+	return &Service{cfg: cfg, covers: covers, tel: newEgressTel(), client: &http.Client{
 		Transport: tr,
 		// Redirects are the caller's to follow: each hop is a destination of
 		// its own, and must pass the allow list on its own.
@@ -124,7 +129,7 @@ func New(cfg Config) *Service {
 // Handler returns the path and handler to mount, guarded by the verifier.
 func (s *Service) Handler(v authn.Verifier) (string, http.Handler) {
 	return egressv1connect.NewEgressServiceHandler(s,
-		connect.WithInterceptors(authn.Server(v, Scope)),
+		connect.WithInterceptors(telemetry.ServerInterceptor(), authn.Server(v, Scope)),
 		connect.WithReadMaxBytes(int(s.cfg.MaxRequestBody)+(256<<10)), connect.WithCompressMinBytes(authn.CompressMinBytes))
 }
 
@@ -156,7 +161,16 @@ var hopByHop = map[string]bool{
 
 // Fetch implements EgressService.
 func (s *Service) Fetch(ctx context.Context, req *connect.Request[egressv1.FetchRequest], st *connect.ServerStream[egressv1.FetchResponse]) error {
-	r := req.Msg
+	start := time.Now()
+	var o fetchOutcome
+	err := s.fetch(ctx, req.Msg, st, &o)
+	s.tel.finish(ctx, req.Msg, &o, err, time.Since(start))
+	return err
+}
+
+// fetch is Fetch, reporting what it learned (the upstream's status, the bytes
+// returned) through o for the telemetry.
+func (s *Service) fetch(ctx context.Context, r *egressv1.FetchRequest, st *connect.ServerStream[egressv1.FetchResponse], o *fetchOutcome) error {
 	target, rules, err := s.check(r)
 	if err != nil {
 		return err
@@ -168,13 +182,13 @@ func (s *Service) Fetch(ctx context.Context, req *connect.Request[egressv1.Fetch
 		port, _ = strconv.Atoi(p)
 	}
 	if !rules.Allows(target.Scheme, target.Hostname(), port) {
-		s.cfg.Log.Info("egress denied", "invocation_id", r.GetInvocationId(), "host", target.Host, "reason", "not on the allow list")
+		s.cfg.Log.InfoContext(ctx, "egress denied", "invocation_id", r.GetInvocationId(), "host", target.Host, "reason", "not on the allow list")
 		return errs.New(commonv1.ErrorReason_ERROR_REASON_EGRESS_DENIED, "%s is not on the function's allow list", target.Host)
 	}
 
 	// What this service carries is the second limit, after the function's own.
 	if !s.covers.MatchesHost(target.Hostname()) {
-		s.cfg.Log.Info("egress denied", "invocation_id", r.GetInvocationId(), "host", target.Host, "reason", "not carried by this service")
+		s.cfg.Log.InfoContext(ctx, "egress denied", "invocation_id", r.GetInvocationId(), "host", target.Host, "reason", "not carried by this service")
 		return errs.New(commonv1.ErrorReason_ERROR_REASON_EGRESS_DENIED, "%s is not carried by this network service", target.Host)
 	}
 
@@ -201,11 +215,20 @@ func (s *Service) Fetch(ctx context.Context, req *connect.Request[egressv1.Fetch
 		out.Header["User-Agent"] = []string{""}
 	}
 
-	resp, err := s.client.Do(out)
+	// A span around the upstream exchange. The request is NOT given the trace:
+	// what the origin sees is the guest's request and nothing a service adds.
+	uctx, uspan := tracer().Start(ctx, "edgerun.egress.upstream", trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(attribute.String("http.request.method", r.GetMethod()), attribute.String("server.address", target.Hostname()),
+			attribute.String("url.scheme", target.Scheme)))
+	defer uspan.End()
+	resp, err := s.client.Do(out.WithContext(uctx))
 	if err != nil {
+		uspan.SetStatus(codes.Error, "upstream request failed")
 		return s.upstreamErr(ctx, r, err)
 	}
 	defer resp.Body.Close()
+	o.status = resp.StatusCode
+	uspan.SetAttributes(attribute.Int("http.response.status_code", resp.StatusCode))
 
 	limit := s.cfg.MaxResponseBody
 	if n := r.GetMaxResponseBytes(); n > 0 && n < limit {
@@ -244,6 +267,7 @@ func (s *Service) Fetch(ctx context.Context, req *connect.Request[egressv1.Fetch
 				return errs.New(commonv1.ErrorReason_ERROR_REASON_RESPONSE_TOO_LARGE, "the response exceeds the limit of %d bytes", limit)
 			}
 			sent += uint64(n)
+			o.bytes = sent
 			if err := st.Send(&egressv1.FetchResponse{Part: &egressv1.FetchResponse_Chunk{Chunk: append([]byte(nil), buf[:n]...)}}); err != nil {
 				return err
 			}
@@ -319,7 +343,7 @@ func ascii(s string) bool {
 func (s *Service) upstreamErr(ctx context.Context, r *egressv1.FetchRequest, err error) error {
 	switch {
 	case isDenied(err):
-		s.cfg.Log.Info("egress denied", "invocation_id", r.GetInvocationId(), "url_host", hostOf(r.GetUrl()), "reason", err.Error())
+		s.cfg.Log.InfoContext(ctx, "egress denied", "invocation_id", r.GetInvocationId(), "url_host", hostOf(r.GetUrl()), "reason", err.Error())
 		return errs.New(commonv1.ErrorReason_ERROR_REASON_EGRESS_DENIED, "%v", err)
 	case errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded):
 		return errs.New(commonv1.ErrorReason_ERROR_REASON_DEADLINE_EXCEEDED, "deadline exceeded")

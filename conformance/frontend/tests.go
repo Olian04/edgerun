@@ -536,3 +536,29 @@ func (h *harness) orchestratorDown(t *testing.T) {
 		t.Errorf("status %d, Retry-After %q, want 503 and 1", r.status, r.header.Get("Retry-After"))
 	}
 }
+
+// traceContext: a trace crosses the frontend (docs/protocol.md, "Observability").
+func (h *harness) traceContext(t *testing.T) {
+	const traceID = "4bf92f3577b34da6a3ce929d0e0e4736"
+	h.orch.script(answer(200, "ok"))
+	h.send(t, "trace", "GET", "/", nil, func(r *http.Request) {
+		r.Header.Set("Traceparent", "00-"+traceID+"-00f067aa0ba902b7-01")
+		r.Header.Set("Tracestate", "vendor=x")
+		r.Header.Set("Baggage", "user=somebody")
+	})
+	got := h.only(t, "trace")
+
+	tp := got.header.Get("Traceparent")
+	if parts := strings.Split(tp, "-"); len(parts) != 4 || parts[1] != traceID {
+		t.Errorf("the call to the orchestrator carries traceparent %q: a request that arrived with a trace continues it (trace id %s)", tp, traceID)
+	}
+	if b := got.header.Get("Baggage"); b != "" {
+		t.Errorf("the call carries baggage %q: it is not propagated", b)
+	}
+	for _, hd := range got.req.GetRequest().GetHeaders() {
+		switch strings.ToLower(hd.GetName()) {
+		case "traceparent", "tracestate", "baggage":
+			t.Errorf("the request given to the function carries %s: the trace is in the call, and the function is given the platform's span by the worker", hd.GetName())
+		}
+	}
+}

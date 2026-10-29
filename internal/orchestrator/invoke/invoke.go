@@ -10,6 +10,10 @@ package invoke
 import (
 	"context"
 	"errors"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 	"io"
 	"log/slog"
 	"net"
@@ -33,6 +37,7 @@ import (
 	"github.com/Olian04/edgerun/internal/orchestrator/sched"
 	"github.com/Olian04/edgerun/internal/orchestrator/snapshot"
 	"github.com/Olian04/edgerun/internal/orchestrator/store"
+	"github.com/Olian04/edgerun/internal/telemetry"
 )
 
 // IngressScope is the token scope a frontend presents.
@@ -67,6 +72,7 @@ type Service struct {
 	cfg Config
 
 	clients sync.Map // endpoint -> *edgerun.Execution
+	tel     *instruments
 	downMu  sync.Mutex
 	down    map[string]time.Time // endpoint -> skip until
 }
@@ -91,13 +97,13 @@ func New(cfg Config) *Service {
 	if cfg.Version == "" {
 		cfg.Version = "dev"
 	}
-	return &Service{cfg: cfg, down: map[string]time.Time{}}
+	return &Service{cfg: cfg, down: map[string]time.Time{}, tel: newInstruments(cfg.Cache)}
 }
 
 // Handler returns the path and handler to mount, guarded by the verifier.
 func (s *Service) Handler(v authn.Verifier) (string, http.Handler) {
 	return ingressv1connect.NewIngressServiceHandler(s,
-		connect.WithInterceptors(authn.Server(v, IngressScope)),
+		connect.WithInterceptors(telemetry.ServerInterceptor(), authn.Server(v, IngressScope)),
 		connect.WithReadMaxBytes(int(s.cfg.MaxRequestBodyBytes)+(256<<10)), connect.WithCompressMinBytes(authn.CompressMinBytes))
 }
 
@@ -136,8 +142,18 @@ func (s *Service) Invoke(ctx context.Context, req *connect.Request[ingressv1.Inv
 		Id: newID(), RequestId: req.Msg.GetRequestId(), FunctionId: route.FunctionID, VersionId: route.Version.ID,
 		Method: r.GetMethod(), Path: r.GetPath(), StartTime: timestamppb.New(started),
 	}
+	span := trace.SpanFromContext(ctx)
+	if sc := span.SpanContext(); sc.IsValid() {
+		rec.TraceId = sc.TraceID().String()
+	}
+	span.SetAttributes(
+		attribute.String("edgerun.invocation.id", rec.Id), attribute.String("edgerun.request.id", rec.RequestId),
+		attribute.String("edgerun.function.name", route.FunctionName), attribute.String("edgerun.function.id", route.FunctionID),
+		attribute.String("edgerun.version.id", route.Version.ID), attribute.String("edgerun.abi", route.Version.ABI))
+	attempts := 0
 	var summary *workerv1.ExecutionSummary
 	finish := func(err error) error {
+		s.tel.finish(ctx, span, rec, route.FunctionName, attempts, started, err)
 		if err != nil {
 			info := errs.Info(err)
 			rec.ErrorReason = info.GetReason()
@@ -154,7 +170,7 @@ func (s *Service) Invoke(ctx context.Context, req *connect.Request[ingressv1.Inv
 		return err
 	}
 	if route.EnvErr != nil {
-		s.cfg.Log.Error("cannot open the environment of a routed function", "function", route.FunctionName, "error", route.EnvErr)
+		s.cfg.Log.ErrorContext(ctx, "cannot open the environment of a routed function", "function", route.FunctionName, "error", route.EnvErr)
 		return finish(errs.New(commonv1.ErrorReason_ERROR_REASON_INTERNAL, "function %q has an unreadable environment", route.FunctionName))
 	}
 
@@ -180,15 +196,31 @@ func (s *Service) Invoke(ctx context.Context, req *connect.Request[ingressv1.Inv
 	for i := 0; i < min(s.cfg.MaxAttempts, len(order)); i++ {
 		w := order[i]
 		rec.WorkerId = w.ID
-		err := s.attempt(ctx, w, exec, stream, rec, &summary, &headSent)
+		attempts++
+		actx, aspan := s.tel.tracer.Start(ctx, "edgerun.attempt", trace.WithAttributes(
+			attribute.Int("edgerun.attempt", attempts), attribute.String("edgerun.worker.id", w.ID),
+			attribute.String("server.address", w.Endpoint)))
+		err := s.attempt(actx, w, exec, stream, rec, &summary, &headSent)
 		if err == nil {
+			aspan.SetAttributes(attribute.String("edgerun.attempt.outcome", "served"))
+			aspan.End()
 			return finish(nil)
 		}
-		if headSent || !s.retryable(w, err) {
+		if headSent || !s.retryable(ctx, w, err) {
+			aspan.SetAttributes(attribute.String("edgerun.attempt.outcome", "failed"), errorType(errs.Reason(err)))
+			aspan.SetStatus(codes.Error, errs.Reason(err).String())
+			aspan.End()
 			return finish(s.translate(ctx, err))
 		}
+		kind := "unreachable"
+		if errs.Reason(err) == commonv1.ErrorReason_ERROR_REASON_NO_CAPACITY {
+			kind = "no_capacity"
+		}
+		aspan.SetAttributes(attribute.String("edgerun.attempt.outcome", "refused: "+kind))
+		aspan.End()
+		s.tel.refusals.Add(ctx, 1, metric.WithAttributes(attribute.String("edgerun.refusal.kind", kind)))
 		lastErr = err
-		s.cfg.Log.Debug("trying another worker", "invocation_id", rec.Id, "attempt", i+1,
+		s.cfg.Log.DebugContext(ctx, "trying another worker", "invocation_id", rec.Id, "attempt", attempts,
 			"worker", w.Endpoint, "reason", errs.Reason(err).String())
 	}
 	// Every attempt was refused or unreachable.
@@ -262,13 +294,13 @@ func (s *Service) attempt(ctx context.Context, w store.Worker, exec *workerv1.Ex
 
 // retryable reports whether the invocation cannot have run, so it is safe to
 // try another worker. An unreachable worker is also remembered as down.
-func (s *Service) retryable(w store.Worker, err error) bool {
+func (s *Service) retryable(ctx context.Context, w store.Worker, err error) bool {
 	if errs.Reason(err) == commonv1.ErrorReason_ERROR_REASON_NO_CAPACITY {
 		return true
 	}
 	if unreachable(err) {
 		s.markDown(w.Endpoint)
-		s.cfg.Log.Warn("worker unreachable; trying another", "endpoint", w.Endpoint, "error", err)
+		s.cfg.Log.WarnContext(ctx, "worker unreachable; trying another", "endpoint", w.Endpoint, "error", err)
 		return true
 	}
 	return false
@@ -315,7 +347,7 @@ func (s *Service) translate(ctx context.Context, err error) error {
 			return connect.NewError(connect.CodeCanceled, errors.New("request cancelled"))
 		}
 	}
-	s.cfg.Log.Error("worker call failed", "error", err)
+	s.cfg.Log.ErrorContext(ctx, "worker call failed", "error", err)
 	return errs.New(commonv1.ErrorReason_ERROR_REASON_INTERNAL, "worker call failed")
 }
 
