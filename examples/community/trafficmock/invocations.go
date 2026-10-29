@@ -26,7 +26,7 @@ func (c *Collector) Add(r *Result) {
 	case OutRejected, OutDropped, OutCanceled:
 		return
 	}
-	if r.Reason == "FUNCTION_NOT_FOUND" || (r.Outcome == OutPlatformError && !r.Typed && !r.LocalTimer) {
+	if r.Reason == "FUNCTION_NOT_FOUND" || (r.Outcome == OutPlatformError && !r.Typed && !r.LocalTimer && r.Reason != ReasonCanceledByPeer) {
 		return
 	}
 	c.mu.Lock()

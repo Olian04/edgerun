@@ -40,7 +40,12 @@ type Result struct {
 	InvocationID string        `json:"invocation_id,omitempty"`
 	Bytes        int64         `json:"bytes"`
 	RetryAfter   bool          `json:"retry_after,omitempty"` // the frontend would add Retry-After: 1
-	Error        string        `json:"error,omitempty"`
+	// Verify is set when the template verifies responses: "ok", or what did not
+	// match (body_mismatch, header_mismatch, body_and_header_mismatch), with
+	// VerifyDetail saying what was received instead.
+	Verify       string `json:"verify,omitempty"`
+	VerifyDetail string `json:"verify_detail,omitempty"`
+	Error        string `json:"error,omitempty"`
 }
 
 const (
@@ -102,6 +107,9 @@ type shard struct {
 
 	errs []*Result
 	top  []*Result // slowest by Total
+
+	echoChecked, echoBody, echoHdr, echoAny int64
+	mism                                    []*Result
 }
 
 func newShard() *shard {
@@ -199,6 +207,25 @@ func (s *Stats) Record(r *Result) {
 		rec(sh.total, r.Total)
 		rec(ts.Total, r.Total)
 		sh.top = keepSlowest(sh.top, r)
+		if r.Verify != "" {
+			sh.echoChecked++
+			switch r.Verify {
+			case VerifyBody:
+				sh.echoBody++
+			case VerifyHeader:
+				sh.echoHdr++
+			case VerifyBodyHdr:
+				sh.echoBody++
+				sh.echoHdr++
+			}
+			if r.Verify != VerifyOK {
+				sh.echoAny++
+				if len(sh.mism) < sampleErr {
+					c := *r
+					sh.mism = append(sh.mism, &c)
+				}
+			}
+		}
 	case OutPlatformError, OutRejected:
 		if r.Outcome == OutPlatformError {
 			ts.Errors++
@@ -273,7 +300,11 @@ type Snapshot struct {
 	Templates                    map[string]*tmplStats
 	Errors                       []*Result
 	Slowest                      []*Result
-	Timeline                     []TimelinePoint
+	// Verification of response content (templates with verify:)
+	EchoChecked, EchoMismatches     int64 // requests checked; requests with any mismatch
+	EchoBodyMismatch, EchoHdrMismat int64
+	Mismatched                      []*Result // a bounded sample, by sequence
+	Timeline                        []TimelinePoint
 }
 
 type TimelinePoint struct {
@@ -328,11 +359,20 @@ func (s *Stats) Snapshot() *Snapshot {
 			sn.Errors = append(sn.Errors, e)
 		}
 		sn.Slowest = append(sn.Slowest, sh.top...)
+		sn.EchoChecked += sh.echoChecked
+		sn.EchoMismatches += sh.echoAny
+		sn.EchoBodyMismatch += sh.echoBody
+		sn.EchoHdrMismat += sh.echoHdr
+		sn.Mismatched = append(sn.Mismatched, sh.mism...)
 		sh.mu.Unlock()
 	}
 	sort.Slice(sn.Errors, func(i, j int) bool { return sn.Errors[i].Seq < sn.Errors[j].Seq })
 	if len(sn.Errors) > sampleErr {
 		sn.Errors = sn.Errors[:sampleErr]
+	}
+	sort.Slice(sn.Mismatched, func(i, j int) bool { return sn.Mismatched[i].Seq < sn.Mismatched[j].Seq })
+	if len(sn.Mismatched) > sampleErr {
+		sn.Mismatched = sn.Mismatched[:sampleErr]
 	}
 	sort.Slice(sn.Slowest, func(i, j int) bool { return sn.Slowest[i].Total > sn.Slowest[j].Total })
 	if len(sn.Slowest) > sampleTop {

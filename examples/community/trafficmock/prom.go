@@ -36,6 +36,12 @@ func metricsHandler(st *Stats, runID string, lim *Limits, reqLogDropped func() i
 		for _, k := range sortedKeys(sn.Reasons) {
 			p("trafficmock_platform_errors_total{%s,reason=%q,http_status=\"%d\"} %d\n", lbl, k, sn.ReasonStatus[k], sn.Reasons[k])
 		}
+		{
+			p("# HELP trafficmock_echo_checked_total Responses whose content was verified against the request.\n# TYPE trafficmock_echo_checked_total counter\ntrafficmock_echo_checked_total{%s} %d\n", lbl, sn.EchoChecked)
+			p("# HELP trafficmock_echo_mismatches_total Responses that were not the response to their request, by what differed (body, header).\n# TYPE trafficmock_echo_mismatches_total counter\n")
+			p("trafficmock_echo_mismatches_total{%s,kind=\"body\"} %d\n", lbl, sn.EchoBodyMismatch)
+			p("trafficmock_echo_mismatches_total{%s,kind=\"header\"} %d\n", lbl, sn.EchoHdrMismat)
+		}
 		p("# HELP trafficmock_in_flight Requests in flight.\n# TYPE trafficmock_in_flight gauge\ntrafficmock_in_flight{%s} %d\n", lbl, sn.InFlight)
 		p("# HELP trafficmock_response_bytes_total Body bytes received.\n# TYPE trafficmock_response_bytes_total counter\ntrafficmock_response_bytes_total{%s} %d\n", lbl, sn.Bytes)
 		p("# HELP trafficmock_max_request_body_bytes The orchestrator's limit.\n# TYPE trafficmock_max_request_body_bytes gauge\ntrafficmock_max_request_body_bytes{%s} %d\n", lbl, lim.Max())

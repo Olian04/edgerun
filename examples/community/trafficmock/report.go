@@ -46,6 +46,10 @@ type Report struct {
 		PeakInFlight   int64   `json:"peak_in_flight"`
 	} `json:"totals"`
 
+	// Echo is present when any template verifies its responses (verify: echo).
+	// A mismatch is a response that is not the one for the request it answers.
+	Echo *EchoSummary `json:"echo_verification,omitempty"`
+
 	// Status is what a client of a real frontend would have seen (the function's
 	// own status, or the mapped status of a platform error). "aborted" is a
 	// connection a frontend would have cut after the head.
@@ -63,11 +67,21 @@ type Report struct {
 	Samples   struct {
 		Errors  []*Result `json:"errors"`
 		Slowest []*Result `json:"slowest"`
+		// Mismatches is a bounded sample (50) of the requests whose response
+		// was not the right one, with what was received.
+		Mismatches []*Result `json:"echo_mismatches,omitempty"`
 	} `json:"samples"`
 
 	Invocations *InvocationSummary `json:"invocations,omitempty"`
 	Expect      []Expectation      `json:"expect,omitempty"`
 	Warnings    []string           `json:"warnings,omitempty"`
+}
+
+type EchoSummary struct {
+	Checked        int64 `json:"checked"`
+	Mismatches     int64 `json:"mismatches"` // requests with any mismatch
+	BodyMismatches int64 `json:"body_mismatches"`
+	HdrMismatches  int64 `json:"header_mismatches"`
 }
 
 type ReasonStat struct {
@@ -162,6 +176,13 @@ func BuildReport(sc *Scenario, runID, mode, target, httpMode string, started tim
 	}
 	r.Timeline = sn.Timeline
 	r.Samples.Errors, r.Samples.Slowest = sn.Errors, sn.Slowest
+	if sn.EchoChecked > 0 {
+		r.Echo = &EchoSummary{Checked: sn.EchoChecked, Mismatches: sn.EchoMismatches, BodyMismatches: sn.EchoBodyMismatch, HdrMismatches: sn.EchoHdrMismat}
+		r.Samples.Mismatches = sn.Mismatched
+		if sn.EchoMismatches > 0 {
+			r.Warnings = append(r.Warnings, fmt.Sprintf("%d of %d verified responses were NOT the response to their request (see the echo mismatches)", sn.EchoMismatches, sn.EchoChecked))
+		}
+	}
 	return r
 }
 
@@ -219,6 +240,16 @@ func (r *Report) Text(w io.Writer) {
 		}
 		if r.DeadlineSource.LocalTimer > 0 {
 			fmt.Fprintf(w, "  (DEADLINE_EXCEEDED: %d typed by the orchestrator, %d from this tool's own timer)\n", r.DeadlineSource.Orchestrator, r.DeadlineSource.LocalTimer)
+		}
+	}
+	if e := r.Echo; e != nil {
+		fmt.Fprintf(w, "\nresponse verification: %d checked, %d mismatches (body %d, header %d)\n", e.Checked, e.Mismatches, e.BodyMismatches, e.HdrMismatches)
+		for i, m := range r.Samples.Mismatches {
+			if i == 10 {
+				fmt.Fprintf(w, "  ... and %d more in the JSON report\n", len(r.Samples.Mismatches)-i)
+				break
+			}
+			fmt.Fprintf(w, "  %s  invocation %s  %s: %s\n", m.RequestID, m.InvocationID, m.Verify, m.VerifyDetail)
 		}
 	}
 	if len(r.Templates) > 1 {

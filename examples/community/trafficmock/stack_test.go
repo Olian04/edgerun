@@ -27,8 +27,8 @@ import (
 // that other people are editing is not a stable thing to build), and the test
 // guest of this module. Nothing of edgerun's internals is imported.
 //
-// Set TRAFFICMOCK_BIN to a directory holding prebuilt orchestrator, worker and
-// edgerun-conformance binaries to skip the snapshot build.
+// Set TRAFFICMOCK_BIN to a directory holding prebuilt orchestrator, worker,
+// frontend and edgerun-conformance binaries to skip the snapshot build.
 // Ports are taken from 24000-24099; every file lives under one temp directory.
 
 const (
@@ -43,6 +43,7 @@ var env struct {
 	root      string
 	bin       string // orchestrator, worker, edgerun-conformance
 	tmBin     string // edgerun-trafficmock
+	tmRaceBin string // the same, built with -race when the tests run with it (else tmBin)
 	pgBin     string
 	pgSock    string
 	pgUser    string
@@ -111,7 +112,7 @@ func setupEnv() error {
 			return err
 		}
 		defer sh(env.repoRoot, nil, "git", "worktree", "remove", "--force", snap)
-		if err := sh(snap, nil, "go", "build", "-o", env.bin+"/", "./cmd/orchestrator", "./cmd/worker", "./cmd/edgerun-conformance"); err != nil {
+		if err := sh(snap, nil, "go", "build", "-o", env.bin+"/", "./cmd/orchestrator", "./cmd/worker", "./cmd/frontend", "./cmd/edgerun-conformance"); err != nil {
 			return err
 		}
 		if err := sh(snap, wasm, "go", "build", "-trimpath", "-o", helloOut, "./examples/hello"); err != nil {
@@ -135,6 +136,13 @@ func setupEnv() error {
 	env.tmBin = filepath.Join(env.root, "edgerun-trafficmock")
 	if err := sh(here, nil, "go", "build", "-o", env.tmBin, "."); err != nil {
 		return err
+	}
+	env.tmRaceBin = env.tmBin
+	if raceOn { // the separate processes of the multi-instance test run with the race detector too
+		env.tmRaceBin = env.tmBin + "-race"
+		if err := sh(here, nil, "go", "build", "-race", "-o", env.tmRaceBin, "."); err != nil {
+			return err
+		}
 	}
 
 	// 3. A private PostgreSQL (the logic of scripts/devstack.sh).
@@ -255,12 +263,18 @@ type Stack struct {
 	WorkerID []string
 	OrchPID  int
 	WorkPIDs []int
+	WorkURLs []string     // the endpoint each worker advertises (the proxy's, with CountExecute)
+	Proxies  []*execProxy // with CountExecute: one per worker
 }
 
 type StackOpts struct {
 	Workers     int // default 1
 	Concurrency int // per worker, default 8
 	Guest       []byte
+	// CountExecute puts a counting proxy between the orchestrator and every
+	// worker, to count the Execute attempts per worker: attempts beyond one
+	// per invocation are the orchestrator's retries (NO_CAPACITY).
+	CountExecute bool
 }
 
 func newStack(t testing.TB, o StackOpts) *Stack {
@@ -290,16 +304,25 @@ func newStack(t testing.TB, o StackOpts) *Stack {
 	}, filepath.Join(env.bin, "orchestrator"), "--heartbeat-interval", "1s")
 	waitHTTP(t, orchURL+"/healthz", filepath.Join(dir, "orchestrator.log"))
 	var workPIDs []int
+	var workURLs []string
+	var proxies []*execProxy
 	for i := 0; i < o.Workers; i++ {
 		wp := freePort(t)
+		advertise := fmt.Sprintf("http://127.0.0.1:%d", wp)
+		if o.CountExecute {
+			px := startExecProxy(t, freePort(t), "http://"+fmt.Sprintf("127.0.0.1:%d", wp))
+			advertise = px.URL
+			proxies = append(proxies, px)
+		}
+		workURLs = append(workURLs, advertise)
 		w := startProc(t, dir, fmt.Sprintf("worker%d", i), []string{
 			"EDGERUN_ORCHESTRATOR_URL=" + orchURL, "EDGERUN_WORKER_TOKEN=" + workerToken, "EDGERUN_EXECUTION_TOKEN=" + executionToken,
-			fmt.Sprintf("EDGERUN_WORKER_LISTEN=127.0.0.1:%d", wp), fmt.Sprintf("EDGERUN_WORKER_ADVERTISE_URL=http://127.0.0.1:%d", wp),
+			fmt.Sprintf("EDGERUN_WORKER_LISTEN=127.0.0.1:%d", wp), "EDGERUN_WORKER_ADVERTISE_URL=" + advertise,
 		}, filepath.Join(env.bin, "worker"), "--drain-timeout", "2s", "--max-concurrency", strconv.Itoa(o.Concurrency))
 		workPIDs = append(workPIDs, w.Process.Pid)
 	}
 
-	s := &Stack{URL: orchURL, dir: dir, Ctl: edgerun.NewControl(orchURL, adminToken), Ing: edgerun.NewIngress(orchURL, ingressToken), OrchPID: orch.Process.Pid, WorkPIDs: workPIDs}
+	s := &Stack{URL: orchURL, dir: dir, Ctl: edgerun.NewControl(orchURL, adminToken), Ing: edgerun.NewIngress(orchURL, ingressToken), OrchPID: orch.Process.Pid, WorkPIDs: workPIDs, WorkURLs: workURLs, Proxies: proxies}
 	deadline := time.Now().Add(20 * time.Second)
 	for {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)

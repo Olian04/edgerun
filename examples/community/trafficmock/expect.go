@@ -17,6 +17,7 @@ import (
 //	[total.|ttfb.|all.]{min,mean,p50,p90,p95,p99,p999,max}   latency (total = head to end of body; plain pNN is total; all.* includes errored requests)
 //	errors, status.<N|Nxx>, reason.<NAME>                    percent of attempted requests (add .count for a count)
 //	rps, sent, completed, ok, dropped, canceled, rejected, stream_failures   numbers
+//	echo_checked, echo_mismatches, echo_body_mismatches, echo_header_mismatches   numbers (templates with verify:): e.g. echo_mismatches==0
 // Values: a duration (200ms), a percentage (1%), or a number.
 
 var exprRe = regexp.MustCompile(`^\s*([A-Za-z0-9_.:\-]+)\s*(<=|>=|==|!=|<|>)\s*(\S+)\s*$`)
@@ -147,6 +148,14 @@ func metric(name string, sn *Snapshot, rep *Report) (value, error) {
 		return value{float64(sn.Outcomes[OutRejected]), ""}, nil
 	case "stream_failures":
 		return value{float64(sn.Outcomes[OutStreamFailure]), ""}, nil
+	case "echo_checked":
+		return value{float64(sn.EchoChecked), ""}, nil
+	case "echo_mismatches": // requests whose response was not the one for them (body or header)
+		return value{float64(sn.EchoMismatches), ""}, nil
+	case "echo_body_mismatches":
+		return value{float64(sn.EchoBodyMismatch), ""}, nil
+	case "echo_header_mismatches":
+		return value{float64(sn.EchoHdrMismat), ""}, nil
 	}
 	if rest, ok := strings.CutPrefix(base, "status."); ok {
 		var n int64

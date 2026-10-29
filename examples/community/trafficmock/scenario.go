@@ -62,6 +62,15 @@ type TemplateSp struct {
 	Body          *BodySpec           `yaml:"body"`
 	Budget        time.Duration       `yaml:"budget"`
 	AllowOversize bool                `yaml:"allow_oversize"` // send even if over the orchestrator's limit (to see REQUEST_TOO_LARGE)
+	// Verify checks the content of every response: "echo" (the body of the
+	// response is the body of the request, byte for byte) or "echo-with-id" (the
+	// request id, a newline, then the request body). A response that is not the
+	// one for this request is counted as a mismatch. Needs body.stamp, so that
+	// every body is unique to its request.
+	Verify string `yaml:"verify"`
+	// VerifyHeader names a response header that must carry the request id the
+	// instance sent (the guest echoes it back).
+	VerifyHeader string `yaml:"verify_header"`
 }
 
 // StrOrSeq is a header value or a list of them.
@@ -99,6 +108,10 @@ type BodySpec struct {
 	SizeMin ByteSize `yaml:"size_min"`
 	SizeMax ByteSize `yaml:"size_max"`
 	Kind    string   `yaml:"kind"` // random (default), zeros, text
+	// Stamp starts every body with its own request id and the run id
+	// ("tm1 <request id> <run id>\n"), unique per request, and appends the
+	// padding of size/size_min..size_max and kind after it (no padding if no size).
+	Stamp bool `yaml:"stamp"`
 }
 
 func (b *BodySpec) UnmarshalYAML(n *yaml.Node) error {
@@ -290,6 +303,9 @@ type tmpl struct {
 	bodyMax       int
 	budget        time.Duration
 	allowOversize bool
+	stamp         bool
+	verify        verifyMode
+	verifyHeader  string
 }
 
 type pathQuery struct{ path, query string }
@@ -354,6 +370,19 @@ func (sc *Scenario) compile() (*compiled, error) {
 		if err := sc.compileBody(t, sp.Body); err != nil {
 			return nil, fmt.Errorf("request %q: %w", t.name, err)
 		}
+		switch sp.Verify {
+		case "":
+		case "echo":
+			t.verify = verifyEcho
+		case "echo-with-id":
+			t.verify = verifyEchoWithID
+		default:
+			return nil, fmt.Errorf("request %q: verify %q: want echo or echo-with-id", t.name, sp.Verify)
+		}
+		if t.verify != verifyNone && !t.stamp {
+			return nil, fmt.Errorf("request %q: verify needs body.stamp: true (a body that is the same for every request cannot show whose response it got)", t.name)
+		}
+		t.verifyHeader = sp.VerifyHeader
 		total += t.weight
 		c.tmpls = append(c.tmpls, t)
 		c.cum = append(c.cum, total)
@@ -366,6 +395,12 @@ func (sc *Scenario) compileBody(t *tmpl, b *BodySpec) error {
 		return nil
 	}
 	n := 0
+	if b.Stamp {
+		if b.Inline != nil || b.File != "" {
+			return fmt.Errorf("body: stamp goes with size (padding), not with inline or file")
+		}
+		t.stamp = true
+	}
 	if b.Inline != nil {
 		n++
 	}
@@ -375,10 +410,11 @@ func (sc *Scenario) compileBody(t *tmpl, b *BodySpec) error {
 	if b.Size > 0 || b.SizeMax > 0 {
 		n++
 	}
-	if n != 1 {
+	if n != 1 && !(b.Stamp && n == 0) {
 		return fmt.Errorf("body: exactly one of inline, file, size (or size_min and size_max)")
 	}
 	switch {
+	case b.Stamp && n == 0: // a stamp and nothing else
 	case b.Inline != nil:
 		t.body = []byte(*b.Inline)
 	case b.File != "":
@@ -401,6 +437,9 @@ func (sc *Scenario) compileBody(t *tmpl, b *BodySpec) error {
 		}
 		t.bodyMin, t.bodyMax = lo, hi
 		t.body = make([]byte, hi)
+		if b.Stamp {
+			t.body = make([]byte, hi+stampSlack) // each request starts at a different offset of the pool
+		}
 		switch b.Kind {
 		case "zeros":
 		case "text":
@@ -445,6 +484,8 @@ type Planned struct {
 	AllowOversize bool
 	Intended      time.Time // when the load model wanted it sent
 	Sink          Sink      // optional, see Invoker.Do
+	Verify        verifyMode
+	VerifyHeader  string
 }
 
 // build makes one request out of the template: pick a host, path and body size,
@@ -460,7 +501,17 @@ func (t *tmpl) build(rng *rand.Rand, seq uint64, runID string, clients int) *Pla
 		pq = t.paths[rng.IntN(len(t.paths))]
 	}
 	body := t.body
-	if t.bodyMax > 0 {
+	if t.stamp {
+		n := t.bodyMin
+		if t.bodyMax > t.bodyMin {
+			n += rng.IntN(t.bodyMax - t.bodyMin + 1)
+		}
+		off := 0
+		if slack := len(t.body) - t.bodyMax; slack > 0 {
+			off = rng.IntN(slack + 1)
+		}
+		body = append(stampOf(id, runID), t.body[off:off+n]...)
+	} else if t.bodyMax > 0 {
 		n := t.bodyMin
 		if t.bodyMax > t.bodyMin {
 			n += rng.IntN(t.bodyMax - t.bodyMin + 1)
@@ -475,6 +526,7 @@ func (t *tmpl) build(rng *rand.Rand, seq uint64, runID string, clients int) *Pla
 	hs = appendForwarded(hs, ip, "http", host)
 	return &Planned{
 		Seq: seq, RequestID: id, Template: t.name, Budget: t.budget, AllowOversize: t.allowOversize,
+		Verify: t.verify, VerifyHeader: t.verifyHeader,
 		Req: &ingressv1.InvokeRequest{RequestId: id, Request: &commonv1.HttpRequest{
 			Method: t.method, Host: host, Path: pq.path, RawQuery: pq.query, Headers: hs, Body: body,
 			RemoteAddr: ip + ":" + strconv.Itoa(30000+c%30000),

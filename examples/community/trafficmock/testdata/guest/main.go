@@ -4,7 +4,11 @@
 //	/status/N   answer N
 //	/sleep/MS   sleep, then 200
 //	/bytes/N    200 with N bytes
-//	/echo       200 with the request body
+//	/echo       200 with the request body (and the header X-Echo-Request-Id, as /echo-with-id)
+//	/echo-with-id   200 with the request id the guest was given (CGI HTTP_X_REQUEST_ID, from the
+//	            x-request-id request header), a newline, then the request body; the id is also in
+//	            the response header X-Echo-Request-Id
+//	/jitter/MS  sleep a random time up to MS, then do /echo-with-id (responses come back out of order)
 //	/trap       exit 3 (FUNCTION_TRAPPED)
 //	/spin       burn CPU forever (the budget must stop it)
 //	/headers    200 listing the CGI environment the request produced
@@ -15,6 +19,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"os"
 	"sort"
 	"strconv"
@@ -46,7 +51,19 @@ func main() {
 		}
 	case "echo":
 		body, _ := io.ReadAll(os.Stdin)
-		fmt.Fprint(out, "Content-Type: application/octet-stream\n\n")
+		fmt.Fprint(out, "Content-Type: application/octet-stream\n")
+		if id := os.Getenv("HTTP_X_REQUEST_ID"); id != "" {
+			fmt.Fprintf(out, "X-Echo-Request-Id: %s\n", id)
+		}
+		fmt.Fprint(out, "\n")
+		out.Write(body)
+	case "echo-with-id", "jitter":
+		body, _ := io.ReadAll(os.Stdin)
+		if parts[0] == "jitter" && arg > 0 {
+			time.Sleep(time.Duration(rand.Int64N(int64(arg)*int64(time.Millisecond) + 1)))
+		}
+		id := os.Getenv("HTTP_X_REQUEST_ID")
+		fmt.Fprintf(out, "Content-Type: application/octet-stream\nX-Echo-Request-Id: %s\n\n%s\n", id, id)
 		out.Write(body)
 	case "trap":
 		out.Flush()

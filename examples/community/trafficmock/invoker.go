@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -137,9 +138,18 @@ func (iv *Invoker) Do(parent context.Context, p *Planned) *Result {
 	if err != nil {
 		r.Total = r.TTFB
 		m := mapError(err, ctx.Err())
-		if parent.Err() != nil || m.Status == 0 {
+		if parent.Err() != nil || (m.Status == 0 && ctx.Err() != nil) {
 			r.Outcome = OutCanceled
 			return iv.finish(r)
+		}
+		if m.Status == 0 {
+			// The orchestrator said "cancelled" but nobody here cancelled anything (a
+			// SIGKILLed worker has been seen to produce this: connect-go reports a
+			// "connection reset by peer" as CodeCanceled). docs/protocol.md would have a
+			// frontend send no answer to a client that is still waiting, which Go's
+			// net/http turns into "200 OK" with an empty body. This tool counts it as
+			// the platform error it is, answered 500.
+			m = Mapped{Reason: ReasonCanceledByPeer, Status: 500}
 		}
 		r.Outcome, r.Status, r.Reason, r.Typed, r.LocalTimer, r.Error, r.RetryAfter = OutPlatformError, m.Status, m.Reason, m.Typed, m.LocalDeadline, errString(err), m.RetryAfter
 		return iv.finish(r)
@@ -153,13 +163,22 @@ func (iv *Invoker) Do(parent context.Context, p *Planned) *Result {
 		return iv.finish(r)
 	}
 	var sink io.Writer
+	var ec *echoCheck
+	if p.Verify != verifyNone {
+		ec = newEchoCheck(p.Verify, p.RequestID, p.Req.Request.Body)
+		sink = ec
+	}
 	if p.Sink != nil {
 		if err := p.Sink.Head(inv); err != nil {
 			inv.Body.Close()
 			r.Total, r.Outcome = time.Since(t0), OutCanceled
 			return iv.finish(r)
 		}
-		sink = p.Sink
+		if sink != nil {
+			sink = io.MultiWriter(ec, p.Sink)
+		} else {
+			sink = p.Sink
+		}
 	}
 	bp := iv.bufs.Get().(*[]byte)
 	n, rerr := drain(inv.Body, *bp, sink)
@@ -181,8 +200,15 @@ func (iv *Invoker) Do(parent context.Context, p *Planned) *Result {
 		return iv.finish(r)
 	}
 	r.Outcome, r.Status = OutOK, r.FuncStatus
+	if ec != nil {
+		verifyResult(r, ec, inv, p)
+	}
 	return iv.finish(r)
 }
+
+// ReasonCanceledByPeer is the reason of an Invoke error that says "cancelled"
+// when the caller did not cancel.
+const ReasonCanceledByPeer = "UNTYPED_CANCELED_BY_PEER"
 
 var errSinkGone = errors.New("the client went away")
 
@@ -243,3 +269,34 @@ func newHTTPClient(mode string, conns int) *http.Client {
 var _ = connect.CodeOf
 
 func netListen(addr string) (net.Listener, error) { return net.Listen("tcp", addr) }
+
+// verifyResult says whether the response was the one for this request.
+func verifyResult(r *Result, ec *echoCheck, inv *edgerun.Invocation, p *Planned) {
+	body := ec.finish(p.RequestID)
+	hdr := ""
+	if p.VerifyHeader != "" {
+		hdr = checkHeader(inv.Head.GetHeaders(), p.VerifyHeader, p.RequestID)
+	}
+	switch {
+	case body == "" && hdr == "":
+		r.Verify = VerifyOK
+		return
+	case body != "" && hdr != "":
+		r.Verify = VerifyBodyHdr
+	case body != "":
+		r.Verify = VerifyBody
+	default:
+		r.Verify = VerifyHeader
+	}
+	r.VerifyDetail = fmt.Sprintf("status %d: %s", r.FuncStatus, strings.Join(nonEmpty(body, hdr), " | "))
+}
+
+func nonEmpty(s ...string) []string {
+	var out []string
+	for _, v := range s {
+		if v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}

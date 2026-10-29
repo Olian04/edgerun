@@ -32,9 +32,11 @@ import (
 //	/status/N     answer N
 //	/sleep/MS     wait, then 200
 //	/bytes/N      200 with N bytes
-//	/echo         200 with the request body
+//	/echo         200 with the request body, and the request id in the header x-echo-request-id
+//	/echo-with-id 200 with the request id, a newline and the request body (and the same header)
 //	/nohead       the stream ends without a head (a protocol violation)
 //	/trap         FUNCTION_TRAPPED
+//	/canceled     a "cancelled" error with no reason, though the caller did not cancel (what a killed worker has produced)
 //	/spin         never answers: DEADLINE_EXCEEDED when the budget runs out
 //	/midfail/N    the head and N bytes, then the stream fails
 //	/drip/MS      the head, then a 1 KiB chunk every MS milliseconds until the budget ends or the caller goes away
@@ -51,6 +53,10 @@ type FakeIngress struct {
 	Seen     atomic.Int64
 	Sent     atomic.Int64                  // body bytes the fake has handed to the transport
 	Reqs     chan *ingressv1.InvokeRequest // if not nil, every request is offered here (non-blocking)
+	// Corrupt, if set, sees the body /echo is about to send (and the request id
+	// it answers) and returns what to send instead: a way to misdeliver on purpose,
+	// to test that verification catches it.
+	Corrupt func(reqID string, body []byte) []byte
 }
 
 func (f *FakeIngress) Describe(context.Context, *connect.Request[ingressv1.DescribeRequest]) (*connect.Response[ingressv1.DescribeResponse], error) {
@@ -115,6 +121,8 @@ func (f *FakeIngress) Invoke(ctx context.Context, req *connect.Request[ingressv1
 		}
 	case "nohead":
 		return nil // a stream that ends cleanly without a head
+	case "canceled":
+		return connect.NewError(connect.CodeCanceled, errors.New("request cancelled"))
 	case "trap":
 		return edgerun.NewError(commonv1.ErrorReason_ERROR_REASON_FUNCTION_TRAPPED, "guest exited 3")
 	case "spin":
@@ -154,12 +162,19 @@ func (f *FakeIngress) Invoke(ctx context.Context, req *connect.Request[ingressv1
 				return edgerun.NewError(commonv1.ErrorReason_ERROR_REASON_DEADLINE_EXCEEDED, "budget spent")
 			}
 		}
-	case "echo":
-		if err := head(200, "content-type", "application/octet-stream"); err != nil {
+	case "echo", "echo-with-id":
+		if err := head(200, "content-type", "application/octet-stream", "x-echo-request-id", req.Msg.GetRequestId()); err != nil {
 			return err
 		}
-		if len(r.GetBody()) > 0 {
-			return chunk(r.GetBody())
+		out := r.GetBody()
+		if parts[0] == "echo-with-id" {
+			out = append([]byte(req.Msg.GetRequestId()+"\n"), out...)
+		}
+		if f.Corrupt != nil {
+			out = f.Corrupt(req.Msg.GetRequestId(), out)
+		}
+		if len(out) > 0 {
+			return chunk(out)
 		}
 		return nil
 	}
