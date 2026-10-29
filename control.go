@@ -203,6 +203,14 @@ func (c *Control) Validate(ctx context.Context, req *controlv1.ValidateRequest) 
 	return call(ctx, c.plan.Validate, req)
 }
 
+// Apply makes the changes of a plan's steps, all or none: they run in one
+// transaction, each seeing the ones before it exactly as in Validate, and
+// nothing is changed if one fails (the response says which). A plan that is
+// refused is a response, not an error.
+func (c *Control) Apply(ctx context.Context, req *controlv1.ApplyRequest) (*controlv1.ApplyResponse, error) {
+	return call(ctx, c.plan.Apply, req)
+}
+
 // Inspection.
 
 func (c *Control) Describe(ctx context.Context, req *controlv1.DescribeRequest) (*controlv1.DescribeResponse, error) {

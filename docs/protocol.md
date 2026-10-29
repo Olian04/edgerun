@@ -257,6 +257,7 @@ for invocations):
 | `invalid_argument` | a field is malformed or out of range, or a page token is not one the server issued |
 | `not_found` | the function, version, route or environment variable does not exist. An id that is not a well-formed UUID names nothing, so it is `not_found` too, not `invalid_argument` |
 | `already_exists` | a function name, or a route's `(host_pattern, path_prefix)`, is taken |
+| `aborted` | the change conflicted with another one at the same moment and the database gave up on it; nothing was changed, ask again |
 
 **Names and values.**
 
@@ -404,7 +405,7 @@ It is a check against the state at that moment, not a reservation: the real call
 changed in between. A tool uses it for a dry run that cannot disagree with the apply, instead of re-implementing
 the server's rules.
 
-### Validating a plan
+### Plans: validating and applying
 
 `PlanService.Validate` is validate-only for a **sequence**: it runs `steps` in order against the real state, each as
 if the ones before it had been applied, and keeps nothing (they run in one transaction that is always rolled back).
@@ -428,8 +429,29 @@ deletion, variables deleted to make room for new ones under the limit of 64.
   of a validate-only create: nothing says an id that names nothing.
 - The request is bounded as an upload is (the modules of its version steps are in it).
 - It is a check against the state at that moment, as every validation is: a plan that validates is **not** thereby
-  applied, and applying it is its steps' own calls, one by one, none of which is atomic with the others. Another
-  writer can change what a step meant in between.
+  applied, and another writer can change what a step meant in between.
+
+`PlanService.Apply` takes the same steps and **makes** them, all or none. It is not a second implementation of the
+plan: `Validate` and `Apply` are one function that differs only in whether the transaction is rolled back or
+committed, so a plan that validates is applied exactly as it was validated, unless the state changed in between.
+
+- The steps run in order in one transaction, each seeing the ones before it, with the same checks in the same order,
+  `bind` and `$name` as above. If every step succeeds the transaction is committed; if one fails **nothing is
+  changed**, the response carries the `failure` (step, code, message, as in `Validate`) and no `results`. A plan
+  that is refused is an answer, not an error of the call; a failure of the platform is an error and changes
+  nothing either.
+- Nobody else sees the plan half done: the changes become visible together, when it commits. A concurrent plan or
+  call that conflicts with it (the same function name, the same route) waits for it and then fails as it would
+  after any other change. Two plans that touch the same things in opposite orders may instead fail with `aborted` (a
+  deadlock the database resolved by giving up on one of them): nothing was changed, and asking again is the answer.
+  Any change, a single call included, can answer `aborted` for the same reason.
+- Unlike a validation, what it created exists, so the `results` carry real ids.
+- As after any change that routing depends on, it returns when the change is visible to `Invoke` on this
+  orchestrator (see "Read your writes").
+- The limits are `Validate`'s: at most 128 steps, bounded as an upload is.
+- It does not make a deploy safe: it cannot know whether a new version works (activation is a pointer move, and
+  rolling back is another one), and a plan can be long, so a tool that wants to hold a plan back until its version
+  has proved itself applies the plan in stages.
 
 ## Fleet and artifact semantics
 

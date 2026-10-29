@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Olian04/edgerun"
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
@@ -37,13 +38,30 @@ type rig struct {
 	ctl   *edgerun.Control
 	pokes *atomic.Int32
 	srv   *httptest.Server
+	pool  *pgxpool.Pool
+}
+
+// breakTable makes every statement that touches table fail.
+func (r *rig) breakTable(t *testing.T, table string) {
+	t.Helper()
+	if _, err := r.pool.Exec(ctx, "ALTER TABLE "+table+" RENAME TO "+table+"_broken"); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func newRig(t *testing.T, tweak func(*control.Config)) *rig {
 	t.Helper()
 	pokes := &atomic.Int32{}
+	pool := testpg.New(t)
+	if _, err := migrate.Up(ctx, pool, migrations.FS); err != nil {
+		t.Fatal(err)
+	}
+	box, err := secrets.NewBox(orchtest.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
 	cfg := control.Config{
-		Store: orchtest.Store(t), Refresh: func(context.Context) { pokes.Add(1) }, MaxModuleBytes: 1 << 10,
+		Store: store.New(pool, box), Refresh: func(context.Context) { pokes.Add(1) }, MaxModuleBytes: 1 << 10,
 		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	if tweak != nil {
@@ -53,7 +71,7 @@ func newRig(t *testing.T, tweak func(*control.Config)) *rig {
 	control.New(cfg).Mount(mux, authn.Verifier{adminToken: control.AdminScope, workerToken: "worker"})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	return &rig{pokes: pokes, srv: srv,
+	return &rig{pokes: pokes, srv: srv, pool: pool,
 		ctl: edgerun.NewControl(srv.URL, adminToken, edgerun.WithHTTPClient(srv.Client())),
 	}
 }

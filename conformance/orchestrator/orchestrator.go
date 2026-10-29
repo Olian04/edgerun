@@ -120,6 +120,7 @@ func Run(t *testing.T, target Target) {
 	t.Run("ControlFilters", h.controlFilters)
 	t.Run("ValidateOnly", h.validateOnly)
 	t.Run("Plans", h.plans)
+	t.Run("PlansApply", h.plansApply)
 	t.Run("Artifacts", h.artifacts)
 	t.Run("FleetRegistration", h.fleetRegistration)
 	t.Run("FleetLiveness", h.fleetLiveness)

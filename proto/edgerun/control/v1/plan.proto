@@ -1,5 +1,5 @@
-// Control seam, validating a sequence of changes. Server: orchestrator.
-// Clients: CLIs and tools that apply a whole configuration.
+// Control seam, a sequence of changes. Server: orchestrator. Clients: CLIs and
+// tools that apply a whole configuration.
 syntax = "proto3";
 
 package edgerun.control.v1;
@@ -21,6 +21,16 @@ service PlanService {
   // state before the sequence is applied, and applying it is the steps' own
   // calls, one by one. See "Validate-only" in docs/protocol.md.
   rpc Validate(ValidateRequest) returns (ValidateResponse);
+
+  // Apply makes the changes of the steps, all or none: they run in order in one
+  // transaction, each seeing the ones before it, exactly as in Validate (the
+  // same code runs them), and the transaction is committed only if every step
+  // succeeds. If one fails nothing is changed, and the failure says which.
+  // Another writer cannot see the plan half done, and a plan that Validate
+  // accepted fails in Apply only because the state changed in between.
+  // Unlike Validate, what a step created exists afterwards, so the results
+  // carry real ids.
+  rpc Apply(ApplyRequest) returns (ApplyResponse);
 }
 
 message ValidateRequest {
@@ -30,11 +40,12 @@ message ValidateRequest {
 }
 
 // Step is one change, a request of the other control services. Its
-// validate_only field is ignored: every step of a Validate is.
+// validate_only field is ignored: every step of a Validate is a validation, and
+// every step of an Apply is a change.
 message Step {
   // Names what a create step creates, so that later steps can refer to it:
-  // the ids of validated creates are empty, and nothing created exists after
-  // the call. 1-32 characters: lower-case letters, digits and '_', starting
+  // the id of what a step creates is not known to whoever writes the plan (and
+  // in a Validate, nothing created exists after the call). 1-32 characters: lower-case letters, digits and '_', starting
   // with a letter, unique within the request. A later step uses "$name" in
   // place of the id (function_id, version_id or route_id), and the id is
   // replaced by the id the created thing has in the validation. Only the
@@ -64,6 +75,20 @@ message ValidateResponse {
   repeated StepResponse results = 1;
   // Set if a step failed; it is the step after the last of results. The
   // sequence is valid when this is unset.
+  StepFailure failure = 2;
+}
+
+message ApplyRequest {
+  // As in ValidateRequest: at most 128, bounded as an upload is, bind and
+  // "$name" as described at Step.
+  repeated Step steps = 1;
+}
+
+message ApplyResponse {
+  // What each step did, in order, as its own call would have answered; ids are
+  // real. Empty if a step failed: nothing was done.
+  repeated StepResponse results = 1;
+  // Set if a step failed. Nothing of the plan was applied.
   StepFailure failure = 2;
 }
 

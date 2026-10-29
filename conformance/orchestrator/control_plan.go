@@ -421,3 +421,198 @@ func (h *harness) invocationLookup(t *testing.T) {
 		}
 	})
 }
+
+// plansApply: the same plan, made, all or none.
+func (h *harness) plansApply(t *testing.T) {
+	ctx, cancel := ctxT(180 * 1e9)
+	defer cancel()
+	missing := "00000000-0000-0000-0000-000000000000"
+	w, fx := h.stack(t, respond("applied"))
+	_ = w
+	h.served(t, fx.host) // a worker that can run this ABI is schedulable now
+	abi := fx.abi
+
+	apply := func(steps ...*controlv1.Step) *controlv1.ApplyResponse {
+		t.Helper()
+		r, err := h.plan.Apply(ctx, connect.NewRequest(&controlv1.ApplyRequest{Steps: steps}))
+		if err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		return r.Msg
+	}
+	functionExists := func(name string) bool {
+		t.Helper()
+		r, err := h.fn.ListFunctions(ctx, connect.NewRequest(&controlv1.ListFunctionsRequest{Name: name}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(r.Msg.GetFunctions()) == 1
+	}
+
+	t.Run("a whole function is made, and served at once", func(t *testing.T) {
+		name, host := h.name("apply-new"), h.host()
+		r := apply(
+			stepCreateFunction("fn", name, lbls("owner", "plan")),
+			stepCreateVersion("v1", "$fn", h.module("apply-new"), abi, false),
+			&controlv1.Step{Request: &controlv1.Step_ActivateVersion{ActivateVersion: &controlv1.ActivateVersionRequest{FunctionId: "$fn", VersionId: "$v1"}}},
+			stepSetEnv("$fn", "GREETING", "hello"),
+			stepCreateRoute("rt", host, "/", "$fn"),
+			&controlv1.Step{Request: &controlv1.Step_SetRouteLabels{SetRouteLabels: &controlv1.SetRouteLabelsRequest{RouteId: "$rt", Labels: lbls("owner", "plan")}}},
+		)
+		if r.GetFailure() != nil || len(r.GetResults()) != 6 {
+			t.Fatalf("failure %v, %d results", r.GetFailure(), len(r.GetResults()))
+		}
+		fn := r.GetResults()[0].GetCreateFunction().GetFunction()
+		ver := r.GetResults()[1].GetCreateVersion().GetVersion()
+		rt := r.GetResults()[4].GetCreateRoute().GetRoute()
+		if fn.GetId() == "" || ver.GetId() == "" || rt.GetId() == "" || ver.GetFunctionId() != fn.GetId() || rt.GetFunctionId() != fn.GetId() {
+			t.Errorf("an apply names what it made, with real ids: %v %v %v", fn, ver, rt)
+		}
+		if act := r.GetResults()[2].GetActivateVersion().GetFunction(); act.GetActiveVersionId() != ver.GetId() {
+			t.Errorf("the activation names the version made by the step before it: %v", act)
+		}
+		g, err := h.fn.GetFunction(ctx, connect.NewRequest(&controlv1.GetFunctionRequest{FunctionId: fn.GetId()}))
+		if err != nil || g.Msg.GetFunction().GetName() != name || g.Msg.GetFunction().GetActiveVersionId() != ver.GetId() || g.Msg.GetFunction().GetLabels()["owner"] != "plan" {
+			t.Errorf("what was made: %v %v", g.Msg.GetFunction(), err)
+		}
+		// The very next request is served by it: the change is visible to Invoke when Apply returns.
+		if got := bodyOf(h.mustInvoke(t, call{host: host})); got != "applied" {
+			t.Errorf("the new function answered %q", got)
+		}
+		// And the ids it returned are the ones to use.
+		if _, err := h.rt.DeleteRoute(ctx, connect.NewRequest(&controlv1.DeleteRouteRequest{RouteId: rt.GetId()})); err != nil {
+			t.Errorf("DeleteRoute with the id the apply returned: %v", err)
+		}
+	})
+
+	t.Run("a retarget is one step in the life of the route", func(t *testing.T) {
+		a, b := h.createFunction(t, h.name("apply-a")), h.createFunction(t, h.name("apply-b"))
+		host := h.host()
+		old := h.createRoute(t, host, "/", a.GetId())
+		r := apply(stepDeleteRoute(old.GetId()), stepCreateRoute("", host, "/", b.GetId()))
+		if r.GetFailure() != nil {
+			t.Fatalf("%v", r.GetFailure())
+		}
+		rs, err := h.rt.ListRoutes(ctx, connect.NewRequest(&controlv1.ListRoutesRequest{FunctionId: b.GetId()}))
+		if err != nil || len(rs.Msg.GetRoutes()) != 1 || rs.Msg.GetRoutes()[0].GetHostPattern() != host {
+			t.Errorf("the route now goes to b: %v %v", rs.Msg, err)
+		}
+		if rs, _ := h.rt.ListRoutes(ctx, connect.NewRequest(&controlv1.ListRoutesRequest{FunctionId: a.GetId()})); len(rs.Msg.GetRoutes()) != 0 {
+			t.Errorf("and no longer to a: %v", rs.Msg.GetRoutes())
+		}
+	})
+
+	t.Run("a failing step undoes the steps before it", func(t *testing.T) {
+		keep := h.createFunction(t, h.name("apply-keep"))
+		host := h.host()
+		rt := h.createRoute(t, host, "/", keep.GetId())
+		h.setEnv(t, keep.GetId(), "KEEP", "me", false)
+		name := h.name("apply-undone")
+		r := apply(
+			stepCreateFunction("n", name, nil),
+			stepSetEnv("$n", "A", "1"),
+			stepDeleteRoute(rt.GetId()),
+			stepDeleteEnv(keep.GetId(), "KEEP"),
+			stepSetEnv(missing, "B", "1"), // fails
+			stepCreateFunction("", h.name("apply-never"), nil),
+		)
+		f := r.GetFailure()
+		if f == nil || f.GetStep() != 4 || f.GetCode() != connect.CodeNotFound.String() {
+			t.Fatalf("failure %v, want step 4 not_found", f)
+		}
+		if len(r.GetResults()) != 0 {
+			t.Errorf("%d results for a plan that did nothing", len(r.GetResults()))
+		}
+		if functionExists(name) {
+			t.Error("a function made by a step before the failing one exists")
+		}
+		if !h.hasRoute(t, rt.GetId()) {
+			t.Error("a route deleted by a step before the failing one is gone")
+		}
+		es, err := h.fn.ListEnv(ctx, connect.NewRequest(&controlv1.ListEnvRequest{FunctionId: keep.GetId()}))
+		if err != nil || len(es.Msg.GetEntries()) != 1 {
+			t.Errorf("a variable deleted by a step before the failing one is gone: %v %v", es.Msg, err)
+		}
+		// Nothing was reserved, either: the name is free.
+		if _, err := h.fn.CreateFunction(ctx, connect.NewRequest(&controlv1.CreateFunctionRequest{Name: name})); err != nil {
+			t.Errorf("the name of an undone function: %v", err)
+		}
+	})
+
+	t.Run("what Validate says, Apply does", func(t *testing.T) {
+		f := h.createFunction(t, h.name("apply-agree"))
+		h.setEnv(t, f.GetId(), "X", "1", false)
+		taken := h.host()
+		h.createRoute(t, taken, "/", f.GetId())
+		plans := map[string][]*controlv1.Step{
+			"valid":           {stepSetEnv(f.GetId(), "Y", "2"), stepDeleteEnv(f.GetId(), "X")},
+			"a conflict":      {stepSetEnv(f.GetId(), "Z", "3"), stepCreateRoute("", taken, "/", f.GetId())},
+			"a missing thing": {stepSetEnv(f.GetId(), "Z", "3"), stepSetEnv(f.GetId(), "W", "4"), stepDeleteRoute(missing)},
+			"a bad name":      {stepCreateFunction("", "Bad Name", nil)},
+			"a bad reference": {stepSetEnv("$nobody", "A", "1")},
+			"nothing at all":  {},
+		}
+		for what, steps := range plans {
+			v, err := h.plan.Validate(ctx, connect.NewRequest(&controlv1.ValidateRequest{Steps: steps}))
+			if err != nil {
+				t.Fatalf("%s: Validate: %v", what, err)
+			}
+			a := apply(steps...)
+			vf, af := v.Msg.GetFailure(), a.GetFailure()
+			if (vf == nil) != (af == nil) {
+				t.Errorf("%s: Validate says %v, Apply says %v", what, vf, af)
+				continue
+			}
+			if vf != nil && (vf.GetStep() != af.GetStep() || vf.GetCode() != af.GetCode() || vf.GetMessage() != af.GetMessage()) {
+				t.Errorf("%s: Validate failed with %v, Apply with %v", what, vf, af)
+			}
+			if vf == nil && len(v.Msg.GetResults()) != len(a.GetResults()) {
+				t.Errorf("%s: %d results from Validate, %d from Apply", what, len(v.Msg.GetResults()), len(a.GetResults()))
+			}
+		}
+	})
+
+	t.Run("no other writer sees half a plan", func(t *testing.T) {
+		// Many plans each make the one shared function and one of their own. Exactly one plan wins; the others
+		// fail on the shared name and leave their own function unmade.
+		shared := h.name("apply-shared")
+		const plans = 8
+		own := make([]string, plans)
+		for i := range own {
+			own[i] = h.name("apply-own")
+		}
+		type res struct{ ok bool }
+		out := make(chan res, plans)
+		for i := 0; i < plans; i++ {
+			go func() {
+				r, err := h.plan.Apply(ctx, connect.NewRequest(&controlv1.ApplyRequest{Steps: []*controlv1.Step{
+					stepCreateFunction("", shared, nil), stepCreateFunction("", own[i], nil)}}))
+				out <- res{err == nil && r.Msg.GetFailure() == nil}
+			}()
+		}
+		wins := 0
+		for i := 0; i < plans; i++ {
+			if (<-out).ok {
+				wins++
+			}
+		}
+		made := 0
+		for _, n := range own {
+			if functionExists(n) {
+				made++
+			}
+		}
+		if wins != 1 || made != 1 || !functionExists(shared) {
+			t.Errorf("%d plans succeeded and %d of their own functions exist (shared exists: %v): want exactly 1 and 1", wins, made, functionExists(shared))
+		}
+	})
+
+	t.Run("its size is bounded like a validation's", func(t *testing.T) {
+		steps := make([]*controlv1.Step, 129)
+		for i := range steps {
+			steps[i] = stepSetEnv(missing, "A", "1")
+		}
+		_, err := h.plan.Apply(ctx, connect.NewRequest(&controlv1.ApplyRequest{Steps: steps}))
+		checkCode(t, err, connect.CodeInvalidArgument, "129 steps")
+	})
+}

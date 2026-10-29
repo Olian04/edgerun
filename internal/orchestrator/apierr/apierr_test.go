@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/Olian04/edgerun/internal/orchestrator/store"
 )
@@ -23,6 +24,9 @@ func TestFromStore(t *testing.T) {
 		{fmt.Errorf("%w: route y", store.ErrAlreadyExists), connect.CodeAlreadyExists},
 		{fmt.Errorf("%w: bad name", store.ErrInvalid), connect.CodeInvalidArgument},
 		{errors.New("pq: connection refused to 10.1.2.3:5432"), connect.CodeInternal},
+		{fmt.Errorf("tx: %w", &pgconn.PgError{Code: "40P01", Message: "deadlock detected: relation env_vars"}), connect.CodeAborted},
+		{&pgconn.PgError{Code: "40001"}, connect.CodeAborted},
+		{&pgconn.PgError{Code: "23505"}, connect.CodeInternal}, // anything else the store did not classify
 	} {
 		got := FromStore(log, tc.err)
 		if connect.CodeOf(got) != tc.want {

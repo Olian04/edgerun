@@ -67,15 +67,15 @@ Three things of `control.v1` exist for tools that manage edgerun from a descript
   Remember the revision your last write returned; a different one later means someone else changed the value.
 - **`validate_only`** on every change: all the checks against the real state, nothing kept. A dry run built on it
   cannot disagree with the apply. **`Validate`** does the same for a whole sequence of changes, each step seeing the
-  ones before it.
+  ones before it, and **`Apply`** makes that sequence, all or none, by the very code that validated it.
 
 Things a tool learns the hard way (the rules are in `protocol.md`, "Control semantics"):
 
 - A validate-only call is judged against the stored state only, never against the validate-only calls before it.
   A plan is validated with `Validate`: steps that create something `bind` a name and later steps refer to it as
   `$name`; the response says which step failed, with the code and message its own call would have given. A plan that
-  is not valid is a response, not an error. It is a check, not a reservation, and applying the plan is still its
-  steps' own calls, none of them atomic with the others.
+  is not valid is a response, not an error. It is a check, not a reservation. `Apply` runs the plan in one
+  transaction: if a step fails nothing is changed, and the response says which; no other writer sees it half done.
 - The revision a candidate secret would have is what a validate-only `SetEnv` returns. Compare it with the one
   `ListEnv` shows to ask "is the stored secret what I want?". Revisions differ per function, and all change if the
   orchestrator's key rotates.

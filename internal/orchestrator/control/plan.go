@@ -20,21 +20,53 @@ var bindName = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
 
 type plans struct{ s *Service }
 
+// outcome is what running a plan came to: the results of the steps that
+// succeeded and, if one failed, which.
+type outcome struct {
+	results []*controlv1.StepResponse
+	failure *controlv1.StepFailure
+}
+
+// errPlanFailed ends a plan's transaction at a step that failed on its merits:
+// the transaction is rolled back, and the failure is an answer, not an error.
+var errPlanFailed = errors.New("a step of the plan failed")
+
 // Validate runs the steps in one dry run, so each sees what the ones before it
 // did, and stops at the first that fails.
 func (p plans) Validate(ctx context.Context, r *connect.Request[controlv1.ValidateRequest]) (*connect.Response[controlv1.ValidateResponse], error) {
-	steps := r.Msg.GetSteps()
+	out, err := p.s.runPlan(ctx, r.Msg.GetSteps(), false)
+	if err != nil {
+		return nil, err
+	}
+	return connect.NewResponse(&controlv1.ValidateResponse{Results: out.results, Failure: out.failure}), nil
+}
+
+// Apply runs the same steps in one transaction that is committed if they all
+// succeed.
+func (p plans) Apply(ctx context.Context, r *connect.Request[controlv1.ApplyRequest]) (*connect.Response[controlv1.ApplyResponse], error) {
+	out, err := p.s.runPlan(ctx, r.Msg.GetSteps(), true)
+	if err != nil {
+		return nil, err
+	}
+	return connect.NewResponse(&controlv1.ApplyResponse{Results: out.results, Failure: out.failure}), nil
+}
+
+// runPlan is Validate and Apply: one function, so that a plan that validates
+// cannot be applied differently. With commit the steps' changes are kept if
+// every step succeeds, and the cache the invoke path reads is brought up to
+// date before returning, as after any single change; without it they never are.
+func (s *Service) runPlan(ctx context.Context, steps []*controlv1.Step, commit bool) (*outcome, error) {
 	if len(steps) > maxPlanSteps {
 		return nil, errs.Invalid("a plan has at most %d steps, got %d", maxPlanSteps, len(steps))
 	}
-	out := &controlv1.ValidateResponse{}
-	err := p.s.cfg.Store.DryRun(ctx, func(ctx context.Context) error {
-		binds := map[string]string{} // name -> the id the created thing has in this dry run
-		phantom := map[string]bool{} // those ids: they exist nowhere once the call is over
+	out := &outcome{}
+	body := func(ctx context.Context) error {
+		binds := map[string]string{} // name -> the id of what the step created
+		phantom := map[string]bool{} // in a validation, those ids: they name nothing once the call is over
 		for i, st := range steps {
-			resp, err := p.s.step(ctx, st, binds, phantom)
+			resp, err := s.step(ctx, st, binds, phantom)
 			if err != nil {
-				code := connect.CodeOf(p.s.fail(err))
+				code := connect.CodeOf(s.fail(err))
 				switch code {
 				case connect.CodeInvalidArgument, connect.CodeNotFound, connect.CodeAlreadyExists:
 					var ce *connect.Error
@@ -42,20 +74,35 @@ func (p plans) Validate(ctx context.Context, r *connect.Request[controlv1.Valida
 					if errors.As(err, &ce) {
 						msg = ce.Message()
 					}
-					out.Failure = &controlv1.StepFailure{Step: uint32(i), Code: code.String(), Message: msg}
-					return nil
+					out.failure = &controlv1.StepFailure{Step: uint32(i), Code: code.String(), Message: msg}
+					return errPlanFailed
 				}
 				return err // the platform failed, not the plan
 			}
-			scrub(resp.ProtoReflect(), phantom)
-			out.Results = append(out.Results, resp)
+			if !commit {
+				scrub(resp.ProtoReflect(), phantom)
+			}
+			out.results = append(out.results, resp)
 		}
 		return nil
-	})
-	if err != nil {
-		return nil, p.s.fail(err)
 	}
-	return connect.NewResponse(out), nil
+	var err error
+	if commit {
+		err = s.cfg.Store.Atomic(ctx, body)
+	} else {
+		err = s.cfg.Store.DryRun(ctx, body)
+	}
+	switch {
+	case errors.Is(err, errPlanFailed):
+		if commit {
+			out.results = nil // nothing was done
+		}
+	case err != nil:
+		return nil, s.fail(err)
+	case commit && len(steps) > 0:
+		s.cfg.Refresh(ctx)
+	}
+	return out, nil
 }
 
 // step runs one step: binds the references in it, runs the operation of its own
