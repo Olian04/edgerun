@@ -20,8 +20,9 @@ import (
 
 // Reconciler brings an orchestrator to the state a Spec describes. It works in
 // three steps, like terraform: Plan reads, Validate asks the orchestrator
-// whether it would accept every step of the plan (validate_only, nothing is
-// kept), and Apply executes the plan. Each run starts from a fresh read of the
+// whether it would accept the plan (PlanService.Validate: the steps, in the order
+// the apply will run them, each seeing the ones before it; nothing is kept), and
+// Apply executes the plan. Each run starts from a fresh read of the
 // orchestrator, so a run that failed half way needs no recovery logic: the next
 // plan is simply smaller.
 type Reconciler struct {
@@ -58,23 +59,27 @@ const (
 	phPrune
 )
 
-// nilUUID stands in for the id of a function that does not exist yet when a step
-// of its plan is validated: a well-formed id that names nothing.
-const nilUUID = "00000000-0000-0000-0000-000000000000"
-
+// Item is one step of a plan: exactly one control request. Validate sends the
+// requests as one sequence and Apply sends them one by one, so what was
+// validated is what is applied.
 type Item struct {
 	Fn    string // function this belongs to; a failure skips the rest of its items
 	Phase int
 	Sign  string // "+" create, "~" change, "-" delete
 	Text  string
-	// Run performs the step, or, when x.vo is set, asks the orchestrator to
-	// validate it without doing it.
-	Run func(ctx context.Context, x *Exec) error
-	// Blind is why this step cannot be validated on its own, if so. validate_only
-	// judges one request against the stored state, not against the steps before it.
+	// Req builds the request. It is called for a validation and again for the apply:
+	// the ids it needs are the real ones (x.fid) or, in a validation, a reference to
+	// what an earlier step creates.
+	Req func(x *Exec) any
+	// IgnoreNotFound: on apply, "not found" means it is already gone, which is the goal.
+	IgnoreNotFound bool
+	Bytes          int // size of the module this carries, for packing validations
+
+	// Blind is why this step was not validated, if so: only the first 128 steps of a
+	// function go into one Validate.
 	Blind string
 
-	Rejected error // the orchestrator's answer to the validate-only call
+	Rejected error // the orchestrator's answer to the validation of the plan
 	Err      error
 	Done     bool
 	Skipped  bool
@@ -91,6 +96,7 @@ type Problem struct {
 
 type Plan struct {
 	ids      map[string]string // function name -> id, of the functions that exist now
+	binds    map[string]string // function name -> the name its create step binds, for the functions this plan creates
 	Items    []*Item
 	Problems []Problem
 	Notes    []string
@@ -99,8 +105,8 @@ type Plan struct {
 
 func (p *Plan) Empty() bool { return len(p.Items) == 0 }
 
-func (p *Plan) add(fn string, phase int, sign, text string, run func(context.Context, *Exec) error) *Item {
-	it := &Item{Fn: fn, Phase: phase, Sign: sign, Text: text, Run: run}
+func (p *Plan) add(fn string, phase int, sign, text string, req func(*Exec) any) *Item {
+	it := &Item{Fn: fn, Phase: phase, Sign: sign, Text: text, Req: req}
 	p.Items = append(p.Items, it)
 	return it
 }
@@ -146,19 +152,19 @@ type planner struct {
 	ownedByID   map[string]*controlv1.Function
 	ownedRoutes []*controlv1.Route // routes that carry our owner label
 
-	// Read only when something needs them: a name or route the owner filter did not
-	// return may still exist, held by somebody else.
-	all        map[string]*controlv1.Function // by name
-	allByID    map[string]*controlv1.Function
-	allRoutes  []*controlv1.Route
-	haveAll    bool
-	haveRoutes bool
+	// Read only when something needs them, and never everything: a function by name
+	// or by id, the routes nobody owns.
+	byID          map[string]*controlv1.Function // functions looked up by id (nil: there is none)
+	unowned       map[string]*controlv1.Route    // routes with no owner label, by route key
+	haveUnowned   bool
+	adoptedRoutes map[string][]*controlv1.Route // adopted function name -> all its routes
 
-	managed  map[string]bool                // desired functions this instance owns (or is about to)
-	existing map[string]*controlv1.Function // managed functions that exist now
-	adopted  map[string]bool
-	envs     map[string]*envInfo // function id -> env
-	err      error               // the orchestrator could not be read
+	managed   map[string]bool                // desired functions this instance owns (or is about to)
+	existing  map[string]*controlv1.Function // managed functions that exist now
+	adopted   map[string]bool
+	adoptedID map[string]bool
+	envs      map[string]*envInfo // function id -> env
+	err       error               // the orchestrator could not be read
 }
 
 type envInfo struct {
@@ -183,62 +189,72 @@ func (pl *planner) env(ctx context.Context, fn *controlv1.Function) (*envInfo, e
 	return e, nil
 }
 
-// loadAll reads every function. There is no GetFunctionByName and no name
-// filter, so finding out whether a name is taken is a scan; it is only done when
-// a declared function is not one of ours.
-func (pl *planner) loadAll(ctx context.Context) error {
-	if pl.haveAll {
-		return pl.err
-	}
-	pl.haveAll = true
-	pl.all, pl.allByID = map[string]*controlv1.Function{}, map[string]*controlv1.Function{}
-	cctx, cancel := context.WithTimeout(ctx, 2*pl.r.Timeout)
+// functionNamed asks for the one function with this name (ListFunctionsRequest.name):
+// whether a name is taken is a lookup, not a scan.
+func (pl *planner) functionNamed(ctx context.Context, name string) (*controlv1.Function, error) {
+	ctx, cancel := context.WithTimeout(ctx, pl.r.Timeout)
 	defer cancel()
-	for fn, err := range pl.r.Ctl.AllFunctions(cctx) {
-		if err != nil {
-			pl.err = fmt.Errorf("list functions: %w", err)
-			return pl.err
-		}
-		pl.all[fn.Name], pl.allByID[fn.Id] = fn, fn
+	res, err := pl.r.Ctl.ListFunctions(ctx, &controlv1.ListFunctionsRequest{Name: name})
+	if err != nil {
+		return nil, fmt.Errorf("look up function %s: %w", name, err)
 	}
-	return nil
+	if len(res.Functions) == 0 {
+		return nil, nil
+	}
+	return res.Functions[0], nil
 }
 
-// loadRoutes reads every route, for the same reason.
-func (pl *planner) loadRoutes(ctx context.Context) error {
-	if pl.haveRoutes {
+// functionByID is GetFunction, remembered; nil if there is none.
+func (pl *planner) functionByID(ctx context.Context, id string) *controlv1.Function {
+	if f := pl.ownedByID[id]; f != nil {
+		return f
+	}
+	if f, ok := pl.byID[id]; ok {
+		return f
+	}
+	ctx, cancel := context.WithTimeout(ctx, pl.r.Timeout)
+	defer cancel()
+	res, err := pl.r.Ctl.GetFunction(ctx, &controlv1.GetFunctionRequest{FunctionId: id})
+	var f *controlv1.Function
+	switch {
+	case err == nil:
+		f = res.Function
+	case connect.CodeOf(err) != connect.CodeNotFound:
+		pl.err = fmt.Errorf("get function %s: %w", id, err)
+	}
+	pl.byID[id] = f
+	return f
+}
+
+// loadUnowned reads the routes nobody owns (no owner label at all): has_label_keys
+// and lacks_label_keys make "everything nobody owns" one filtered list. They are
+// the only routes this service may take over; a route with another owner's label
+// is not read, and the orchestrator's refusal to create over it is the report.
+func (pl *planner) loadUnowned(ctx context.Context) error {
+	if pl.haveUnowned {
 		return pl.err
 	}
-	pl.haveRoutes = true
+	pl.haveUnowned = true
 	cctx, cancel := context.WithTimeout(ctx, 2*pl.r.Timeout)
 	defer cancel()
-	for rt, err := range pl.r.Ctl.AllRoutes(cctx) {
+	for rt, err := range pl.r.Ctl.AllRoutesWhere(cctx, &controlv1.ListRoutesRequest{LacksLabelKeys: []string{labelOwner}}) {
 		if err != nil {
-			pl.err = fmt.Errorf("list routes: %w", err)
+			pl.err = fmt.Errorf("list routes nobody owns: %w", err)
 			return pl.err
 		}
-		pl.allRoutes = append(pl.allRoutes, rt)
+		pl.unowned[routeKey(rt.HostPattern, rt.PathPrefix)] = rt
 	}
 	return nil
 }
 
 // ownsFunction: carries our label, or is being adopted in this run.
 func (pl *planner) ownsFunction(id string) bool {
-	if pl.ownedByID[id] != nil {
-		return true
-	}
-	f := pl.allByID[id]
-	return f != nil && pl.adopted[f.Name]
+	return pl.ownedByID[id] != nil || pl.adoptedID[id]
 }
 
 func (pl *planner) fnName(ctx context.Context, id string) string {
-	if f := pl.ownedByID[id]; f != nil {
+	if f := pl.functionByID(ctx, id); f != nil {
 		return f.Name
-	}
-	if pl.loadAll(ctx) == nil {
-		if f := pl.allByID[id]; f != nil {
-			return f.Name
-		}
 	}
 	return "?"
 }
@@ -254,9 +270,11 @@ func (r *Reconciler) Plan(ctx context.Context, spec *Spec, mods map[string]*Modu
 	if r.Prune && len(spec.Functions) == 0 && !r.AllowEmpty {
 		return nil, errors.New("refusing to prune: the file declares no functions (pass --allow-empty if that is intended)")
 	}
-	pl := &planner{r: r, plan: &Plan{ids: map[string]string{}, rejected: map[string]bool{}}, spec: spec, mods: mods, modErr: modErr, rev: rev,
-		owned: map[string]*controlv1.Function{}, ownedByID: map[string]*controlv1.Function{},
-		managed: map[string]bool{}, existing: map[string]*controlv1.Function{}, adopted: map[string]bool{}, envs: map[string]*envInfo{}}
+	pl := &planner{r: r, plan: &Plan{ids: map[string]string{}, binds: map[string]string{}, rejected: map[string]bool{}}, spec: spec, mods: mods, modErr: modErr, rev: rev,
+		owned: map[string]*controlv1.Function{}, ownedByID: map[string]*controlv1.Function{}, byID: map[string]*controlv1.Function{},
+		unowned: map[string]*controlv1.Route{}, adoptedRoutes: map[string][]*controlv1.Route{},
+		managed: map[string]bool{}, existing: map[string]*controlv1.Function{}, adopted: map[string]bool{}, adoptedID: map[string]bool{},
+		envs: map[string]*envInfo{}}
 
 	// What this instance owns is what carries its label: one filtered list each.
 	cctx, cancel := context.WithTimeout(ctx, 2*r.Timeout)
@@ -314,15 +332,16 @@ func (pl *planner) function(ctx context.Context, d FunctionSpec) {
 	}
 
 	// Ownership is the owner label, found by the filtered list; a function the
-	// filter did not return is looked for among all of them.
+	// filter did not return is looked up by its name.
 	fn := pl.owned[d.Name]
 	adopting := false
 	if fn == nil {
-		if err := pl.loadAll(ctx); err != nil {
+		found, err := pl.functionNamed(ctx, d.Name)
+		if err != nil {
 			p.problem(d.Name, "%v", err)
 			return
 		}
-		if fn = pl.all[d.Name]; fn != nil {
+		if fn = found; fn != nil {
 			if o := fn.Labels[labelOwner]; o != "" {
 				p.problem(d.Name, "exists and belongs to another owner (%q); not touching it", o)
 				return
@@ -337,20 +356,13 @@ func (pl *planner) function(ctx context.Context, d FunctionSpec) {
 
 	var env *envInfo
 	var versions []*controlv1.FunctionVersion
-	base := map[string]string{} // labels of the function that are not ours
 	if fn == nil {
 		env = &envInfo{entries: map[string]*controlv1.EnvEntry{}}
-		p.add(d.Name, phCreate, "+", "create function", func(ctx context.Context, x *Exec) error {
+		p.binds[d.Name] = fmt.Sprintf("f%d", len(p.binds))
+		p.add(d.Name, phCreate, "+", "create function", func(x *Exec) any {
 			// One RPC, and the owner label is part of it: there is no moment at which
 			// the function exists and is not ours.
-			res, err := x.ctl.CreateFunction(ctx, &controlv1.CreateFunctionRequest{Name: d.Name, Labels: ownerLabels(r.Owner), ValidateOnly: x.vo})
-			if err != nil {
-				return err
-			}
-			if !x.vo {
-				x.ids[d.Name] = res.Function.Id
-			}
-			return nil
+			return &controlv1.CreateFunctionRequest{Name: d.Name, Labels: ownerLabels(r.Owner)}
 		})
 		pl.managed[d.Name] = true
 	} else {
@@ -369,29 +381,33 @@ func (pl *planner) function(ctx context.Context, d FunctionSpec) {
 			versions = append(versions, v)
 		}
 		cancel()
-		base = foreignLabels(fn.Labels)
 		p.ids[d.Name] = fn.Id
 		pl.existing[d.Name] = fn
 		pl.managed[d.Name] = true
 		if adopting {
 			pl.adopted[d.Name] = true
-			nroutes := 0
-			if err := pl.loadRoutes(ctx); err == nil {
-				for _, rt := range pl.allRoutes {
-					if rt.FunctionId == fn.Id {
-						nroutes++
-					}
+			pl.adoptedID[fn.Id] = true
+			// Its routes, by function (ListRoutesRequest.function_id), not out of all of them.
+			cctx, cancel := context.WithTimeout(ctx, 2*r.Timeout)
+			for rt, err := range r.Ctl.AllRoutesWhere(cctx, &controlv1.ListRoutesRequest{FunctionId: fn.Id}) {
+				if err != nil {
+					cancel()
+					p.problem(d.Name, "list routes: %v", err)
+					return
 				}
+				pl.adoptedRoutes[d.Name] = append(pl.adoptedRoutes[d.Name], rt)
 			}
-			text := fmt.Sprintf("ADOPT existing function it did not create (%d version(s), %d env var(s), %d route(s)); env vars and routes not in the file will be removed", len(versions), len(env.entries), nroutes)
-			p.add(d.Name, phCreate, "~", text, func(ctx context.Context, x *Exec) error {
-				_, err := x.ctl.SetLabels(ctx, &controlv1.SetLabelsRequest{FunctionId: x.ids[d.Name], Labels: functionLabels(fn.Labels, r.Owner, nil), ValidateOnly: x.vo})
-				return err
+			cancel()
+			text := fmt.Sprintf("ADOPT existing function it did not create (%d version(s), %d env var(s), %d route(s)); env vars and routes not in the file will be removed", len(versions), len(env.entries), len(pl.adoptedRoutes[d.Name]))
+			p.add(d.Name, phCreate, "~", text, func(x *Exec) any {
+				// Only our own key: the labels other tools put on the function stay, and
+				// are not read.
+				return &controlv1.PatchLabelsRequest{FunctionId: x.fid(d.Name), Set: ownerLabels(r.Owner)}
 			})
 		}
 	}
 
-	pl.planEnv(ctx, d, fn, env, secrets, adopting, base)
+	pl.planEnv(ctx, d, fn, env, secrets)
 
 	// Version.
 	want := toLimits(d.Limits)
@@ -414,21 +430,18 @@ func (pl *planner) function(ctx context.Context, d FunctionSpec) {
 		} else {
 			cur = "unknown version active"
 		}
-		p.add(d.Name, phVersion, "~", fmt.Sprintf("activate existing v%d (%s, %s) instead of %s", match.Number, short(match.ArtifactDigest), match.Abi, cur), func(ctx context.Context, x *Exec) error {
-			_, err := x.ctl.ActivateVersion(ctx, &controlv1.ActivateVersionRequest{FunctionId: x.ids[d.Name], VersionId: match.Id, ValidateOnly: x.vo})
-			return err
+		p.add(d.Name, phVersion, "~", fmt.Sprintf("activate existing v%d (%s, %s) instead of %s", match.Number, short(match.ArtifactDigest), match.Abi, cur), func(x *Exec) any {
+			return &controlv1.ActivateVersionRequest{FunctionId: x.fid(d.Name), VersionId: match.Id}
 		})
 	default:
-		p.add(d.Name, phVersion, "+", fmt.Sprintf("upload new version (%s, %d bytes, abi %s) and activate", short(mod.Digest), len(mod.Data), d.ABI), func(ctx context.Context, x *Exec) error {
-			// Activate is part of the same RPC. If it is lost on the way back, the next
-			// run finds this version by digest and only activates it.
-			id, syn := x.fid(d.Name)
-			_, err := x.ctl.CreateVersion(ctx, &controlv1.CreateVersionRequest{
-				FunctionId: id, Module: mod.Data, Abi: d.ABI, Limits: want, Activate: true,
-				Labels:       map[string]string{labelOwner: r.Owner, labelCommit: pl.rev},
-				ValidateOnly: x.vo})
-			return x.tol(d.Name, err, syn)
+		// Activate is part of the same RPC. If it is lost on the way back, the next
+		// run finds this version by digest and only activates it.
+		it := p.add(d.Name, phVersion, "+", fmt.Sprintf("upload new version (%s, %d bytes, abi %s) and activate", short(mod.Digest), len(mod.Data), d.ABI), func(x *Exec) any {
+			return &controlv1.CreateVersionRequest{
+				FunctionId: x.fid(d.Name), Module: mod.Data, Abi: d.ABI, Limits: want, Activate: true,
+				Labels: map[string]string{labelOwner: r.Owner, labelCommit: pl.rev}}
 		})
+		it.Bytes = len(mod.Data)
 	}
 
 	// Egress.
@@ -437,18 +450,16 @@ func (pl *planner) function(ctx context.Context, d FunctionSpec) {
 		have = fn.EgressAllow
 	}
 	if !slices.Equal(have, d.Egress) && !(len(have) == 0 && len(d.Egress) == 0) {
-		p.add(d.Name, phEgress, "~", fmt.Sprintf("egress %v -> %v", have, d.Egress), func(ctx context.Context, x *Exec) error {
-			id, syn := x.fid(d.Name)
-			_, err := x.ctl.SetEgress(ctx, &controlv1.SetEgressRequest{FunctionId: id, Allow: d.Egress, ValidateOnly: x.vo})
-			return x.tol(d.Name, err, syn)
+		p.add(d.Name, phEgress, "~", fmt.Sprintf("egress %v -> %v", have, d.Egress), func(x *Exec) any {
+			return &controlv1.SetEgressRequest{FunctionId: x.fid(d.Name), Allow: d.Egress}
 		})
 	}
 }
 
 // planEnv plans the plain variables, the secrets and the label record of the
 // secrets' revisions.
-func (pl *planner) planEnv(ctx context.Context, d FunctionSpec, fn *controlv1.Function, env *envInfo, secrets map[string]string, adopting bool, base map[string]string) {
-	p, r := pl.plan, pl.r
+func (pl *planner) planEnv(ctx context.Context, d FunctionSpec, fn *controlv1.Function, env *envInfo, secrets map[string]string) {
+	p := pl.plan
 	var plain, secret []string
 	for n := range d.Env {
 		plain = append(plain, n)
@@ -472,9 +483,9 @@ func (pl *planner) planEnv(ctx context.Context, d FunctionSpec, fn *controlv1.Fu
 	sort.Strings(stale)
 
 	// A function holds at most 64 variables. If the new ones do not fit beside the
-	// stale ones, the stale ones go first, and the new ones cannot be validated
-	// ahead (each validate-only call sees the stored state, where the slots are
-	// still taken).
+	// stale ones, the stale ones go first. That is only a choice of order, and the
+	// choice is a copy of the limit; whether the order works is Validate's to say:
+	// it runs the deletions before the writes, so the slots they free are free.
 	fresh := 0
 	for _, n := range append(slices.Clone(plain), secret...) {
 		if env.entries[n] == nil {
@@ -482,25 +493,16 @@ func (pl *planner) planEnv(ctx context.Context, d FunctionSpec, fn *controlv1.Fu
 		}
 	}
 	early := len(stale) > 0 && len(env.entries)+fresh > maxEnvVars
-	blind := func(it *Item, a *controlv1.EnvEntry) {
-		if early && a == nil {
-			it.Blind = "it needs the deletions before it, for the 64-variable limit"
-		}
-	}
 
 	for _, n := range plain {
 		a := env.entries[n]
-		var it *Item
 		switch {
 		case a == nil:
-			it = p.add(d.Name, phEnvSet, "+", fmt.Sprintf("env %s=%s", n, show(d.Env[n])), pl.setEnvRun(d.Name, n, d.Env[n], false))
+			p.add(d.Name, phEnvSet, "+", fmt.Sprintf("env %s=%s", n, show(d.Env[n])), setEnv(d.Name, n, d.Env[n], false))
 		case a.Secret:
-			it = p.add(d.Name, phEnvSet, "~", fmt.Sprintf("env %s: was a secret, now plain %s", n, show(d.Env[n])), pl.setEnvRun(d.Name, n, d.Env[n], false))
+			p.add(d.Name, phEnvSet, "~", fmt.Sprintf("env %s: was a secret, now plain %s", n, show(d.Env[n])), setEnv(d.Name, n, d.Env[n], false))
 		case a.Value != d.Env[n]:
-			it = p.add(d.Name, phEnvSet, "~", fmt.Sprintf("env %s: %s -> %s", n, show(a.Value), show(d.Env[n])), pl.setEnvRun(d.Name, n, d.Env[n], false))
-		}
-		if it != nil {
-			blind(it, a)
+			p.add(d.Name, phEnvSet, "~", fmt.Sprintf("env %s: %s -> %s", n, show(a.Value), show(d.Env[n])), setEnv(d.Name, n, d.Env[n], false))
 		}
 	}
 
@@ -509,21 +511,28 @@ func (pl *planner) planEnv(ctx context.Context, d FunctionSpec, fn *controlv1.Fu
 	// the only way to learn it: the key is the server's), and the one this service
 	// recorded when it last wrote the secret (a label of the function).
 	recorded := map[string]string{}
+	var desired map[string]string
 	if fn != nil {
 		recorded = decodeSecrets(fn.Labels)
+		var ask []string
+		for _, n := range secret {
+			if a := env.entries[n]; a != nil && a.Secret {
+				ask = append(ask, n)
+			}
+		}
+		desired = pl.revisionsOf(ctx, fn.Id, ask, secrets)
 	}
 	known := map[string]string{} // secrets that stay as they are: name -> current revision
 	willWrite := false
 	for _, n := range secret {
 		a := env.entries[n]
-		var it *Item
 		switch {
 		case a == nil:
-			it = p.add(d.Name, phEnvSet, "+", fmt.Sprintf("secret %s (value not shown)", n), pl.setEnvRun(d.Name, n, secrets[n], true))
+			p.add(d.Name, phEnvSet, "+", fmt.Sprintf("secret %s (value not shown)", n), setEnv(d.Name, n, secrets[n], true))
 		case !a.Secret:
-			it = p.add(d.Name, phEnvSet, "~", fmt.Sprintf("env %s: was plain, now secret", n), pl.setEnvRun(d.Name, n, secrets[n], true))
+			p.add(d.Name, phEnvSet, "~", fmt.Sprintf("env %s: was plain, now secret", n), setEnv(d.Name, n, secrets[n], true))
 		default:
-			if des := pl.revisionOf(ctx, fn.Id, n, secrets[n]); des != "" && des == a.Revision {
+			if des := desired[n]; des != "" && des == a.Revision {
 				known[n] = a.Revision
 				continue
 			}
@@ -535,9 +544,8 @@ func (pl *planner) planEnv(ctx context.Context, d FunctionSpec, fn *controlv1.Fu
 					text = fmt.Sprintf("secret %s changed in the process environment (value not shown)", n)
 				}
 			}
-			it = p.add(d.Name, phEnvSet, "~", text, pl.setEnvRun(d.Name, n, secrets[n], true))
+			p.add(d.Name, phEnvSet, "~", text, setEnv(d.Name, n, secrets[n], true))
 		}
-		blind(it, a)
 		willWrite = true
 	}
 
@@ -546,26 +554,16 @@ func (pl *planner) planEnv(ctx context.Context, d FunctionSpec, fn *controlv1.Fu
 		delPhase = phEnvDelEarly
 	}
 	for _, n := range stale {
-		p.add(d.Name, delPhase, "-", "env "+n+" (not in the file)", func(ctx context.Context, x *Exec) error {
-			id, syn := x.fid(d.Name)
-			_, err := x.ctl.DeleteEnv(ctx, &controlv1.DeleteEnvRequest{FunctionId: id, Name: n, ValidateOnly: x.vo})
-			if connect.CodeOf(err) == connect.CodeNotFound && !x.vo {
-				return nil // already gone: the goal state
-			}
-			return x.tol(d.Name, err, syn)
+		it := p.add(d.Name, delPhase, "-", "env "+n+" (not in the file)", func(x *Exec) any {
+			return &controlv1.DeleteEnvRequest{FunctionId: x.fid(d.Name), Name: n}
 		})
+		it.IgnoreNotFound = true
 	}
 
 	// The record of the revisions is written after the secrets, so that it is only
 	// ever behind reality: after a crash in between, the next run finds the stored
-	// revision equal to the desired one and merely updates the record.
-	cur := maps.Clone(fn.GetLabels())
-	if cur == nil {
-		cur = map[string]string{}
-	}
-	if adopting {
-		cur[labelOwner] = r.Owner
-	}
+	// revision equal to the desired one and merely updates the record. It is a
+	// PatchLabels of this service's own keys.
 	var needed bool
 	switch {
 	case willWrite:
@@ -573,65 +571,67 @@ func (pl *planner) planEnv(ctx context.Context, d FunctionSpec, fn *controlv1.Fu
 	case fn == nil:
 		needed = false // nothing to record for a function without secrets
 	default:
-		revs := map[string]string{}
-		for n, rev := range known {
-			revs[n] = rev
-		}
-		needed = !maps.Equal(functionLabels(cur, r.Owner, revs), cur)
+		want := encodeSecrets(known)
+		needed = !maps.Equal(recordLabels(fn.Labels), want)
 	}
 	if needed {
 		text := fmt.Sprintf("labels: record the revisions of %d secret(s)", len(secret))
 		if len(secret) == 0 {
 			text = "labels: drop the record of secrets that are no longer declared"
 		}
-		p.add(d.Name, phLabels, "~", text, func(ctx context.Context, x *Exec) error {
+		p.add(d.Name, phLabels, "~", text, func(x *Exec) any {
 			revs := map[string]string{}
 			for _, n := range secret {
 				revs[n] = x.revision(d.Name, n, known[n])
 			}
-			id, syn := x.fid(d.Name)
-			_, err := x.ctl.SetLabels(ctx, &controlv1.SetLabelsRequest{FunctionId: id, Labels: functionLabels(base, r.Owner, revs), ValidateOnly: x.vo})
-			return x.tol(d.Name, err, syn)
+			set, remove := recordPatch(revs)
+			return &controlv1.PatchLabelsRequest{FunctionId: x.fid(d.Name), Set: set, Remove: remove}
 		})
 	}
 }
 
-// revisionOf asks the orchestrator which revision the value would have, by
-// validating a write of it (nothing is written). "" if it cannot say; the
-// write is then planned and the validation of the plan reports why.
-func (pl *planner) revisionOf(ctx context.Context, fnID, name, value string) string {
+// revisionsOf asks the orchestrator which revisions the values would have, by
+// validating a write of each (nothing is written): one Validate with a SetEnv step
+// per secret, instead of one call per secret. The answer is name -> revision for
+// the steps that were accepted; a step that was not (the sequence stops there)
+// leaves it and the ones after it out, and the write is then planned, and the
+// validation of the plan reports why.
+func (pl *planner) revisionsOf(ctx context.Context, fnID string, names []string, values map[string]string) map[string]string {
+	out := map[string]string{}
+	if len(names) == 0 {
+		return out
+	}
+	steps := make([]*controlv1.Step, len(names))
+	for i, n := range names {
+		steps[i] = &controlv1.Step{Request: &controlv1.Step_SetEnv{SetEnv: &controlv1.SetEnvRequest{FunctionId: fnID,
+			Entry: &controlv1.EnvEntry{Name: n, Value: values[n], Secret: true}}}}
+	}
 	ctx, cancel := context.WithTimeout(ctx, pl.r.Timeout)
 	defer cancel()
-	res, err := pl.r.Ctl.SetEnv(ctx, &controlv1.SetEnvRequest{FunctionId: fnID, ValidateOnly: true,
-		Entry: &controlv1.EnvEntry{Name: name, Value: value, Secret: true}})
+	res, err := pl.r.Ctl.Validate(ctx, &controlv1.ValidateRequest{Steps: steps})
 	if err != nil {
-		return ""
+		return out
 	}
-	return res.GetEntry().GetRevision()
+	for i, sr := range res.Results {
+		if i < len(names) {
+			out[names[i]] = sr.GetSetEnv().GetEntry().GetRevision()
+		}
+	}
+	return out
 }
 
-func (pl *planner) setEnvRun(fn, name, value string, secret bool) func(context.Context, *Exec) error {
-	return func(ctx context.Context, x *Exec) error {
-		id, syn := x.fid(fn)
-		res, err := x.ctl.SetEnv(ctx, &controlv1.SetEnvRequest{FunctionId: id, ValidateOnly: x.vo,
-			Entry: &controlv1.EnvEntry{Name: name, Value: value, Secret: secret}})
-		if err != nil {
-			return x.tol(fn, err, syn)
-		}
-		if secret && res.GetEntry().GetRevision() != "" {
-			if x.revs[fn] == nil {
-				x.revs[fn] = map[string]string{}
-			}
-			x.revs[fn][name] = res.Entry.Revision
-		}
-		return nil
+func setEnv(fn, name, value string, secret bool) func(*Exec) any {
+	return func(x *Exec) any {
+		return &controlv1.SetEnvRequest{FunctionId: x.fid(fn), Entry: &controlv1.EnvEntry{Name: name, Value: value, Secret: secret}}
 	}
 }
 
-// planRoutes. A route is ours when it carries our owner label. Labels cannot be
-// edited on a route, so a route that exists without one (made by hand) is not
-// ours: if the file wants exactly that route it is replaced by a labelled one,
-// otherwise it is somebody else's and a conflict.
+// planRoutes. A route is ours when it carries our owner label. A route that exists
+// without one (made by hand) is not ours: if it points at one of our functions
+// and the file declares its key, the file wins, and the route is labelled with
+// PatchRouteLabels if it already points where the file says (it is never
+// unrouted), or replaced if it has to be retargeted (there is no UpdateRoute);
+// anything else is somebody else's and a conflict.
 func (pl *planner) planRoutes(ctx context.Context) {
 	p := pl.plan
 	owned := map[string]*controlv1.Route{}
@@ -646,22 +646,18 @@ func (pl *planner) planRoutes(ctx context.Context) {
 			continue // the function is in conflict or failed to plan: leave its routes alone
 		}
 		target := pl.existing[d.Function] // nil when this run creates it
-		add := func(blind string) {
-			it := p.add(d.Function, phRouteAdd, "+", fmt.Sprintf("route %s%s", d.Host, d.Path), func(ctx context.Context, x *Exec) error {
-				id, syn := x.fid(d.Function)
-				_, err := x.ctl.CreateRoute(ctx, &controlv1.CreateRouteRequest{HostPattern: d.Host, PathPrefix: d.Path, FunctionId: id,
-					Labels: ownerLabels(pl.r.Owner), ValidateOnly: x.vo})
-				return x.tol(d.Function, err, syn)
+		add := func() {
+			p.add(d.Function, phRouteAdd, "+", fmt.Sprintf("route %s%s", d.Host, d.Path), func(x *Exec) any {
+				return &controlv1.CreateRouteRequest{HostPattern: d.Host, PathPrefix: d.Path, FunctionId: x.fid(d.Function), Labels: ownerLabels(pl.r.Owner)}
 			})
-			it.Blind = blind
 		}
 		del := func(rt *controlv1.Route, why string) {
 			rid := rt.Id
-			p.add(d.Function, phRouteDel, "-", fmt.Sprintf("route %s%s (%s)", d.Host, d.Path, why), func(ctx context.Context, x *Exec) error {
-				return x.deleteRoute(ctx, rid)
+			it := p.add(d.Function, phRouteDel, "-", fmt.Sprintf("route %s%s (%s)", d.Host, d.Path, why), func(x *Exec) any {
+				return &controlv1.DeleteRouteRequest{RouteId: rid}
 			})
+			it.IgnoreNotFound = true
 		}
-		const replaced = "the route it replaces is deleted first"
 		if a := owned[key]; a != nil {
 			if target != nil && a.FunctionId == target.Id {
 				continue // current
@@ -669,35 +665,33 @@ func (pl *planner) planRoutes(ctx context.Context) {
 			// There is no UpdateRoute: retargeting is delete then create, and in
 			// between the route does not exist.
 			del(a, "pointed at "+pl.fnName(ctx, a.FunctionId)+"; retargeting")
-			add(replaced)
+			add()
 			continue
 		}
-		// Not one of ours. Is the key taken by somebody else's route?
-		if err := pl.loadRoutes(ctx); err != nil {
+		// Not one of ours. Is the key taken by a route nobody owns?
+		if err := pl.loadUnowned(ctx); err != nil {
 			p.problem(d.Function, "%v", err)
 			continue
 		}
-		var a *controlv1.Route
-		for _, rt := range pl.allRoutes {
-			if routeKey(rt.HostPattern, rt.PathPrefix) == key {
-				a = rt
-			}
-		}
+		a := pl.unowned[key]
 		switch {
 		case a == nil:
-			add("")
-		case a.Labels[labelOwner] == "" && pl.ownsFunction(a.FunctionId):
-			// Made by hand, onto a function this service owns, at a key the file
-			// declares: the file wins. Labels cannot be edited, so the route is
-			// replaced by a labelled one (the key is unrouted for an instant).
-			del(a, "it has no owner label and labels cannot be edited; replacing it with a labelled one")
-			add(replaced)
+			add() // free, or held by another owner's route, which the validation reports
+		case pl.ownsFunction(a.FunctionId) && target != nil && a.FunctionId == target.Id:
+			// Made by hand, onto the function the file wants: it already routes as the
+			// file says, so it only needs our label. Nothing is deleted.
+			rid := a.Id
+			p.add(d.Function, phRouteAdd, "~", fmt.Sprintf("route %s%s (made by hand, already points at %s: labelling it as ours, not recreating it)", d.Host, d.Path, d.Function), func(x *Exec) any {
+				return &controlv1.PatchRouteLabelsRequest{RouteId: rid, Set: ownerLabels(pl.r.Owner)}
+			})
+		case pl.ownsFunction(a.FunctionId):
+			// Made by hand, onto another function of ours, at a key the file declares:
+			// the file wins. A route cannot be retargeted, so it is replaced by a
+			// labelled one (the key is unrouted for an instant).
+			del(a, "it has no owner label and points at "+pl.fnName(ctx, a.FunctionId)+", not "+d.Function+"; replacing it with a labelled one")
+			add()
 		default:
-			who := "it has no " + labelOwner + " label"
-			if o := a.Labels[labelOwner]; o != "" {
-				who = "it belongs to owner " + fmt.Sprintf("%q", o)
-			}
-			p.problem(d.Function, "route %s%s is taken by a route to function %q that this service does not own (%s)", d.Host, d.Path, pl.fnName(ctx, a.FunctionId), who)
+			p.problem(d.Function, "route %s%s is taken by a route to function %q that this service does not own (it has no %s label)", d.Host, d.Path, pl.fnName(ctx, a.FunctionId), labelOwner)
 		}
 	}
 	// Our routes that the file no longer has. Only for functions managed in this
@@ -714,22 +708,22 @@ func (pl *planner) planRoutes(ctx context.Context) {
 	}
 	// An adopted function takes its unlabelled routes with it into the file's
 	// description: the adoption was announced as removing what the file lacks.
-	if len(pl.adopted) > 0 && pl.loadRoutes(ctx) == nil {
-		for _, rt := range pl.allRoutes {
-			fn := pl.allByID[rt.FunctionId]
-			if fn == nil || !pl.adopted[fn.Name] || rt.Labels[labelOwner] != "" || desired[routeKey(rt.HostPattern, rt.PathPrefix)] {
+	for name, rts := range pl.adoptedRoutes {
+		for _, rt := range rts {
+			if rt.Labels[labelOwner] != "" || desired[routeKey(rt.HostPattern, rt.PathPrefix)] {
 				continue
 			}
-			pl.deleteStray(fn.Name, rt, "unlabelled route of an adopted function, not in the file")
+			pl.deleteStray(name, rt, "unlabelled route of an adopted function, not in the file")
 		}
 	}
 }
 
 func (pl *planner) deleteStray(fn string, rt *controlv1.Route, why string) {
 	rid := rt.Id
-	pl.plan.add(fn, phRouteDel, "-", fmt.Sprintf("route %s%s (%s)", rt.HostPattern, rt.PathPrefix, why), func(ctx context.Context, x *Exec) error {
-		return x.deleteRoute(ctx, rid)
+	it := pl.plan.add(fn, phRouteDel, "-", fmt.Sprintf("route %s%s (%s)", rt.HostPattern, rt.PathPrefix, why), func(x *Exec) any {
+		return &controlv1.DeleteRouteRequest{RouteId: rid}
 	})
+	it.IgnoreNotFound = true
 }
 
 // planPrune deletes the functions this instance created that the file dropped.
@@ -748,143 +742,11 @@ func (pl *planner) planPrune() {
 	sort.Strings(names)
 	for _, n := range names {
 		id := pl.owned[n].Id
-		pl.plan.add(n, phPrune, "-", "delete function (created by this service, no longer in the file; removes its versions, routes and env)", func(ctx context.Context, x *Exec) error {
-			_, err := x.ctl.DeleteFunction(ctx, &controlv1.DeleteFunctionRequest{FunctionId: id, ValidateOnly: x.vo})
-			if connect.CodeOf(err) == connect.CodeNotFound && !x.vo {
-				return nil
-			}
-			return err
+		it := pl.plan.add(n, phPrune, "-", "delete function (created by this service, no longer in the file; removes its versions, routes and env)", func(x *Exec) any {
+			return &controlv1.DeleteFunctionRequest{FunctionId: id}
 		})
+		it.IgnoreNotFound = true
 	}
-}
-
-// Exec is the state of one Validate or Apply.
-type Exec struct {
-	ctl  *edgerun.Control
-	ids  map[string]string // function name -> id (filled in as functions are created)
-	vo   bool              // validate only: every request is sent with validate_only
-	revs map[string]map[string]string
-	// partial: functions whose later steps were validated without the function.
-	partial map[string]bool
-}
-
-func newExec(ctl *edgerun.Control, ids map[string]string, vo bool) *Exec {
-	return &Exec{ctl: ctl, ids: maps.Clone(ids), vo: vo, revs: map[string]map[string]string{}, partial: map[string]bool{}}
-}
-
-// fid is the id to send for a function. A validate-only create has no id to
-// give, so a step that follows it in the plan is validated against nilUUID, the
-// id of nothing; syn says it is that.
-func (x *Exec) fid(fn string) (id string, syn bool) {
-	if id := x.ids[fn]; id != "" {
-		return id, false
-	}
-	if x.vo {
-		return nilUUID, true
-	}
-	return "", false
-}
-
-// tol accepts not_found for a step validated against nilUUID. The server checks
-// the form of a request before it looks the function up, so reaching not_found
-// means every check that does not need the function passed. It is the most that
-// can be asked of a function that does not exist.
-func (x *Exec) tol(fn string, err error, syn bool) error {
-	if syn && connect.CodeOf(err) == connect.CodeNotFound {
-		x.partial[fn] = true
-		return nil
-	}
-	return err
-}
-
-// revision is the revision to record for a secret: the one its write returned,
-// or, for a secret that stays as it is, the one it has. A validation that has
-// seen neither records a stand-in of the right form.
-func (x *Exec) revision(fn, name, current string) string {
-	if r := x.revs[fn][name]; r != "" {
-		return r
-	}
-	if current != "" {
-		return current
-	}
-	return "pending-" + name
-}
-
-func (x *Exec) deleteRoute(ctx context.Context, id string) error {
-	_, err := x.ctl.DeleteRoute(ctx, &controlv1.DeleteRouteRequest{RouteId: id, ValidateOnly: x.vo})
-	if connect.CodeOf(err) == connect.CodeNotFound && !x.vo {
-		return nil
-	}
-	return err
-}
-
-// Validate asks the orchestrator, for every step of the plan, whether it would
-// accept it (validate_only: the real checks against the real state, nothing
-// kept). A function with a rejected step is dropped from the apply as a whole, so
-// that a rule the orchestrator enforces never leaves a function half deployed.
-//
-// Each call is judged alone against the stored state: a step cannot see the ones
-// before it. For a function that does not exist yet that means the steps after
-// its creation are validated as far as the server can without it (see Exec.tol),
-// and a few steps cannot be validated at all (Item.Blind).
-func (p *Plan) Validate(ctx context.Context, r *Reconciler) {
-	x := newExec(r.Ctl, p.ids, true)
-	for _, it := range p.Items {
-		if it.Blind != "" {
-			continue
-		}
-		cctx, cancel := context.WithTimeout(ctx, r.Timeout)
-		err := it.Run(cctx, x)
-		cancel()
-		if err != nil {
-			it.Rejected = err
-			p.rejected[it.Fn] = true
-			p.problem(it.Fn, "rejected by the orchestrator (validate_only): %s: %v", it.Text, err)
-		}
-	}
-	for _, it := range p.Items {
-		if x.partial[it.Fn] {
-			p.Notes = append(p.Notes, fmt.Sprintf("%s does not exist yet: its steps after the creation were validated as far as the orchestrator can without it", it.Fn))
-			delete(x.partial, it.Fn)
-		}
-	}
-}
-
-// Apply executes the plan in phase order. A failed item skips the remaining
-// items of the same function (never apply a route or a deletion on top of a
-// deploy that did not happen) and the run continues with the others. A function
-// with a step that validation rejected is not touched at all.
-func (p *Plan) Apply(ctx context.Context, r *Reconciler, w io.Writer) error {
-	x := newExec(r.Ctl, p.ids, false)
-	failed := map[string]bool{}
-	var errs []error
-	for _, pr := range p.Problems {
-		errs = append(errs, fmt.Errorf("%s: %w", label(pr.Fn), pr.Err))
-	}
-	for _, it := range p.Items {
-		if it.Fn != "" && p.rejected[it.Fn] {
-			it.Skipped = true
-			fmt.Fprintf(w, "  skipped %s: %s (the orchestrator rejected a step of %s; none of it is applied)\n", label(it.Fn), it.Text, it.Fn)
-			continue
-		}
-		if it.Fn != "" && failed[it.Fn] {
-			it.Skipped = true
-			fmt.Fprintf(w, "  skipped %s: %s (an earlier step for %s failed)\n", label(it.Fn), it.Text, it.Fn)
-			continue
-		}
-		cctx, cancel := context.WithTimeout(ctx, r.Timeout)
-		it.Err = it.Run(cctx, x)
-		cancel()
-		if it.Err != nil {
-			failed[it.Fn] = true
-			errs = append(errs, fmt.Errorf("%s: %s: %w", label(it.Fn), it.Text, it.Err))
-			fmt.Fprintf(w, "! %s: %s: FAILED: %v\n", label(it.Fn), it.Text, it.Err)
-			continue
-		}
-		it.Done = true
-		fmt.Fprintf(w, "%s %s: %s\n", it.Sign, label(it.Fn), it.Text)
-	}
-	return errors.Join(errs...)
 }
 
 // Helpers.

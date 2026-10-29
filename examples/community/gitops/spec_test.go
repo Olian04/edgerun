@@ -91,12 +91,9 @@ func TestSecretRecordFitsLabels(t *testing.T) {
 	for i := 0; i < maxEnvVars; i++ {
 		revs[fmt.Sprintf("SECRET_%d", i)] = fmt.Sprintf("%032x", i)
 	}
-	labels := functionLabels(map[string]string{"team": "x", labelSecret + "9": "stale"}, "o", revs)
-	if labels["team"] != "x" || labels[labelOwner] != "o" {
-		t.Fatalf("foreign label or owner lost: %v", labels)
-	}
-	if _, ok := labels[labelSecret+"9"]; ok {
-		t.Fatal("a stale record label survived")
+	labels, unused := recordPatch(revs)
+	if len(unused) != 0 {
+		t.Fatalf("a full record uses every slot, yet removes %v", unused)
 	}
 	if len(labels) > 32 {
 		t.Fatalf("%d labels, the limit is 32", len(labels))
@@ -121,5 +118,23 @@ func TestSecretRecordFitsLabels(t *testing.T) {
 	}
 	if len(encodeSecrets(nil)) != 0 {
 		t.Fatal("no secrets must record nothing")
+	}
+	// A smaller record sets what it needs and removes the slots it does not use,
+	// and names no key outside the service's namespace.
+	set, unused := recordPatch(map[string]string{"A": "1", "B": "2"})
+	if len(set) != 1 || len(unused) != recordSlots-1 {
+		t.Fatalf("set %v, remove %v", set, unused)
+	}
+	keys := unused
+	for k := range set {
+		keys = append(keys, k)
+	}
+	for _, k := range keys {
+		if !strings.HasPrefix(k, labelSecret) {
+			t.Fatalf("the patch names %q, which is not this service's", k)
+		}
+	}
+	if set, unused = recordPatch(nil); len(set) != 0 || len(unused) != recordSlots {
+		t.Fatalf("empty record: set %v, remove %v", set, unused)
 	}
 }

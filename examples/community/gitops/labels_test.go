@@ -89,7 +89,7 @@ func TestNoWindowBetweenCreateAndClaim(t *testing.T) {
 	crashAfter := -1
 	writes := 0
 	l.Fail = func(proc string, vo bool) error {
-		if vo || strings.HasPrefix(proc, "List") || proc == "Describe" || strings.HasPrefix(proc, "Get") {
+		if vo || strings.HasPrefix(proc, "List") || proc == "Describe" || proc == "Validate" || strings.HasPrefix(proc, "Get") {
 			return nil
 		}
 		if crashAfter >= 0 && writes >= crashAfter {

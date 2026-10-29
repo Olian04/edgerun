@@ -51,12 +51,16 @@ type RouteSpec struct {
 }
 
 // maxEnvVars is the one server rule this program still carries: a function
-// holds at most 64 variables. validate_only judges each request alone against
-// the stored state, so it cannot see that a file declares 70 variables for a
-// function that does not exist yet (or for one that has 60), and the 65th write
-// would fail in the middle of an apply. Everything else the server checks
+// holds at most 64 variables. It no longer decides anything: whether a plan fits
+// under it, stale variables deleted first, is answered by PlanService.Validate,
+// which runs the deletions before the writes. What is left is a copy kept for three
+// reasons the protocol gives no way around (Describe reports no limits): a file
+// that declares more than 64 is refused before any network call, the planner
+// puts the deletions first when the new variables would not fit beside the
+// stale ones (an ordering choice, which Validate then checks), and the record of
+// secret revisions is sized for 64 secrets. Everything else the server checks
 // (names, reserved variables, sizes, egress syntax, label syntax...) is left to
-// the server, through validate_only.
+// the server, through Validate.
 const (
 	maxEnvVars = 64
 	defaultABI = "wagi-1"

@@ -644,8 +644,13 @@ routes:
 	if w := l.Writes(); len(w) != 0 {
 		t.Fatalf("second run wrote: %v", w)
 	}
-	if l.Count("SetEnv") != 2 {
-		t.Fatalf("expected one validate-only SetEnv per secret to learn the desired revisions, got %d", l.Count("SetEnv"))
+	// The desired revisions of both secrets are learned by ONE Validate (a SetEnv step
+	// per secret; its results carry the revisions), not one validate-only SetEnv each.
+	if l.Count("SetEnv") != 0 || l.Count("Validate") != 1 {
+		t.Fatalf("expected one Validate for the revisions of both secrets, got %d Validate and %d SetEnv", l.Count("Validate"), l.Count("SetEnv"))
+	}
+	if v := l.Request("Validate", 0).(*controlv1.ValidateRequest); len(v.Steps) != 2 {
+		t.Fatalf("the Validate should carry one step per secret: %v", v.Steps)
 	}
 
 	// Tampering: API_KEY is overwritten out of band.
@@ -676,7 +681,7 @@ routes:
 	if got := h.S.mustInvoke(t, "echo.test", "/"); !strings.Contains(got, "secret=good") {
 		t.Fatalf("not corrected: %s", got)
 	}
-	if n := l.Count("SetEnv"); n < 1 || strings.Join(l.Writes(), ",") != "SetEnv,SetLabels" {
+	if n := l.Count("SetEnv"); n < 1 || strings.Join(l.Writes(), ",") != "SetEnv,PatchLabels" {
 		t.Fatalf("only the drifted secret and the record should have been written: %v", l.Writes())
 	}
 	mustBeInSync(t, h)
@@ -703,7 +708,7 @@ routes:
 	ctl.SetEnv(ctx, &controlv1.SetEnvRequest{FunctionId: fn.Id, Entry: &controlv1.EnvEntry{Name: "API_KEY", Value: "good-3", Secret: true}})
 	l.Reset()
 	_, out = mustRun(t, h)
-	if strings.Join(l.Writes(), ",") != "SetLabels" || strings.Contains(out, "secret API_KEY") {
+	if strings.Join(l.Writes(), ",") != "PatchLabels" || strings.Contains(out, "secret API_KEY") {
 		t.Fatalf("only the record should change: %v\n%s", l.Writes(), out)
 	}
 	mustBeInSync(t, h)

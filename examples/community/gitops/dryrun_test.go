@@ -12,7 +12,7 @@ import (
 )
 
 // A dry run and an apply agree: whatever the orchestrator would refuse is
-// reported by the dry run (it calls the real RPCs with validate_only), nothing
+// reported by the dry run (PlanService.Validate of the plan the apply runs), nothing
 // the dry run validates is applied, and an apply that the orchestrator would
 // refuse leaves nothing of the function behind.
 func TestDryRunAgreesWithApply(t *testing.T) {
@@ -69,7 +69,7 @@ func TestDryRunAgreesWithApply(t *testing.T) {
 			mustBeInSync(t, h)
 			continue
 		}
-		if !strings.Contains(dryOut, "rejected by the orchestrator (validate_only)") || !strings.Contains(dryOut, c.reject) {
+		if !strings.Contains(dryOut, "rejected by the orchestrator (Validate)") || !strings.Contains(dryOut, c.reject) {
 			t.Fatalf("%s: the dry run does not report the rejection (%q):\n%s", c.name, c.reject, dryOut)
 		}
 		if _, ok := h.S.functions(t)[name]; ok {
@@ -144,10 +144,12 @@ routes:
 	}
 }
 
-// A retarget is a delete and a create of the same (host, path); the create cannot
-// be validated while the route is still there. The dry run says so rather than
-// pretending, and the apply works.
-func TestRetargetIsNotValidatedAhead(t *testing.T) {
+// A retarget is a delete and a create of the same (host, path). Validated one call
+// at a time the create is already_exists while the route is still there, which is
+// why this used to be reported as "not validated ahead". PlanService.Validate runs
+// the sequence as if the delete had happened, so the dry run validates it, and
+// it is the same sequence the apply runs.
+func TestRetargetIsValidatedAheadAndApplied(t *testing.T) {
 	h := newHarness(t)
 	two := func(target string) map[string][]byte {
 		return files("edgerun.yaml", "functions:\n  - {name: a, module: m.wasm}\n  - {name: b, module: m.wasm, env: {GREETING: bee}}\nroutes:\n  - {host: r.test, path: /, function: "+target+"}\n")
@@ -156,15 +158,60 @@ func TestRetargetIsNotValidatedAhead(t *testing.T) {
 	h.R.Commit("a", two("a"))
 	mustRun(t, h)
 	h.R.Commit("b", two("b"))
+
+	// What a single validate-only call says, and what a validation of the sequence says.
+	ctx := context.Background()
+	fns := h.S.functions(t)
+	old := h.S.routes(t)["r.test/"]
+	_, err := h.S.Ctl.CreateRoute(ctx, &controlv1.CreateRouteRequest{HostPattern: "r.test", PathPrefix: "/", FunctionId: fns["b"].Id, ValidateOnly: true})
+	if connect.CodeOf(err) != connect.CodeAlreadyExists {
+		t.Fatalf("a lone validate-only create at a taken key must be already_exists: %v", err)
+	}
+	res, err := h.S.Ctl.Validate(ctx, &controlv1.ValidateRequest{Steps: []*controlv1.Step{
+		{Request: &controlv1.Step_DeleteRoute{DeleteRoute: &controlv1.DeleteRouteRequest{RouteId: old.Id}}},
+		{Request: &controlv1.Step_CreateRoute{CreateRoute: &controlv1.CreateRouteRequest{HostPattern: "r.test", PathPrefix: "/", FunctionId: fns["b"].Id}}},
+	}})
+	if err != nil || res.Failure != nil || len(res.Results) != 2 {
+		t.Fatalf("the sequence delete + create must validate: %v %v", err, res)
+	}
+
+	l := h.LogRPC()
 	_, err, out := h.Run(true)
-	if err != nil || !strings.Contains(out, "(not validated ahead: the route it replaces is deleted first)") {
+	if err != nil || strings.Contains(out, "not validated ahead") {
 		t.Fatalf("%v\n%s", err, out)
+	}
+	// One Validate, with the delete directly before the create, and no call that is
+	// itself validate_only: the per-call dry run is gone.
+	if l.Count("Validate") != 1 || l.ValidateOnlyCalls() != 0 {
+		t.Fatalf("%d Validate, %d validate-only calls", l.Count("Validate"), l.ValidateOnlyCalls())
+	}
+	steps := l.Request("Validate", 0).(*controlv1.ValidateRequest).Steps
+	pos := -1
+	for i, st := range steps {
+		if st.GetDeleteRoute() != nil {
+			pos = i
+		}
+	}
+	if pos < 0 || pos+1 >= len(steps) || steps[pos+1].GetCreateRoute() == nil {
+		t.Fatalf("the retarget is not a delete followed by a create in the validated sequence: %v", steps)
 	}
 	mustRun(t, h)
 	if got := h.S.mustInvoke(t, "r.test", "/"); !strings.Contains(got, "greeting=bee") {
 		t.Fatal(got)
 	}
 	mustBeInSync(t, h)
+
+	// A retarget whose new target cannot be deployed is rejected as a whole (a is
+	// the target again, and its egress list is refused): the route stays where it is
+	// and keeps serving, nothing was deleted on the way.
+	h.R.Commit("bad b", files("edgerun.yaml", "functions:\n  - {name: a, module: m.wasm, egress: ['x.example.com:0']}\n  - {name: b, module: m.wasm, env: {GREETING: bee}}\nroutes:\n  - {host: r.test, path: /, function: a}\n"))
+	_, err, out = h.Run(false)
+	if err == nil || !strings.Contains(out, "x.example.com:0") {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got := h.S.mustInvoke(t, "r.test", "/"); !strings.Contains(got, "greeting=bee") {
+		t.Fatalf("a rejected function's route was touched: %s", got)
+	}
 }
 
 // validate_only answers with the error the call itself gives: same code, same

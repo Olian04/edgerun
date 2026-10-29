@@ -63,7 +63,7 @@ functions:
 routes:
   - {host: hello.test, path: /, function: hello}
 `))
-	if code, out := run("--dry-run", "--detailed-exitcode"); code != 1 || !strings.Contains(out, "rejected by the orchestrator (validate_only)") || !strings.Contains(out, "99999") {
+	if code, out := run("--dry-run", "--detailed-exitcode"); code != 1 || !strings.Contains(out, "rejected by the orchestrator (Validate)") || !strings.Contains(out, "99999") {
 		t.Fatalf("dry run of a rejected change: %d\n%s", code, out)
 	}
 	if code, out := run("--once"); code != 1 || !strings.Contains(out, "99999") {

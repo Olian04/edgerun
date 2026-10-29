@@ -1,7 +1,6 @@
 package main
 
 import (
-	"maps"
 	"sort"
 	"strconv"
 	"strings"
@@ -10,9 +9,10 @@ import (
 )
 
 // Everything this service writes into edgerun's labels lives under one
-// namespace; a label outside it belongs to someone else and is carried over
-// untouched whenever the service has to replace a function's label set
-// (SetLabels replaces the whole map).
+// namespace; a label outside it belongs to someone else. The service never
+// replaces a label set (SetLabels): it patches its own keys (PatchLabels,
+// PatchRouteLabels), so what other tools wrote stays and nothing is read back
+// first.
 //
 //	function  gitops.example.com/owner=<--owner>
 //	          gitops.example.com/secrets.0 .. .N   revisions of the secrets last written (below)
@@ -90,26 +90,31 @@ func decodeSecrets(labels map[string]string) map[string]string {
 	return out
 }
 
-// foreignLabels is a label set without anything this service writes for the
-// secrets: the part of a function's labels it must preserve.
-func foreignLabels(labels map[string]string) map[string]string {
-	out := maps.Clone(labels)
-	if out == nil {
-		out = map[string]string{}
-	}
-	for k := range out {
-		if strings.HasPrefix(k, labelSecret) {
-			delete(out, k)
+// recordSlots is how many labels the record can take: 64 secrets, ten to a label.
+const recordSlots = (maxEnvVars + perLabel - 1) / perLabel
+
+// recordPatch is the PatchLabels that makes the record say revs: the labels to
+// set and the keys of the unused slots to remove. Only keys of this service's
+// namespace are named, so whatever other tools put on the function is not touched
+// and not read: no read-modify-write of the whole map. Removing a key that is not
+// there is not an error, so the unused slots are removed without looking.
+func recordPatch(revs map[string]string) (set map[string]string, remove []string) {
+	set = encodeSecrets(revs)
+	for i := range recordSlots {
+		if _, used := set[labelSecret+strconv.Itoa(i)]; !used {
+			remove = append(remove, labelSecret+strconv.Itoa(i))
 		}
 	}
-	return out
+	return set, remove
 }
 
-// functionLabels is the label set of a function this service manages: whatever
-// others put there, our owner, and the record of the secrets' revisions.
-func functionLabels(base map[string]string, owner string, revs map[string]string) map[string]string {
-	out := foreignLabels(base)
-	out[labelOwner] = owner
-	maps.Copy(out, encodeSecrets(revs))
+// recordLabels is the part of a function's labels that is this service's record.
+func recordLabels(labels map[string]string) map[string]string {
+	out := map[string]string{}
+	for k, v := range labels {
+		if strings.HasPrefix(k, labelSecret) {
+			out[k] = v
+		}
+	}
 	return out
 }

@@ -9,8 +9,8 @@
 //
 // Everything the service creates is labelled gitops.example.com/owner=<--owner>
 // (functions, versions, routes); that label is how it finds what is its own.
-// --dry-run asks the orchestrator to validate every step (validate_only) and
-// changes nothing.
+// --dry-run sends the plan the apply would run to the orchestrator as one
+// PlanService.Validate (each step seeing the ones before it) and changes nothing.
 package main
 
 import (
@@ -169,8 +169,8 @@ func (g *GitOps) Reconcile(ctx context.Context) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	// The same check for a dry run and for an apply: every step goes to the
-	// orchestrator with validate_only before anything is changed.
+	// The same check for a dry run and for an apply: the whole plan goes to the
+	// orchestrator as one sequence (PlanService.Validate) before anything is changed.
 	plan.Validate(ctx, g.rec)
 	res := &Result{Rev: snap.Rev, Plan: plan, Clean: plan.Empty() && len(plan.Problems) == 0}
 

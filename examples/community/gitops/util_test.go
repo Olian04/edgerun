@@ -82,7 +82,7 @@ func (l *rpcLog) Writes() []string {
 	defer l.mu.Unlock()
 	var out []string
 	for _, c := range l.calls {
-		if !c.Validate && !strings.HasPrefix(c.Proc, "List") && !strings.HasPrefix(c.Proc, "Get") && c.Proc != "Describe" {
+		if !c.Validate && !strings.HasPrefix(c.Proc, "List") && !strings.HasPrefix(c.Proc, "Get") && c.Proc != "Describe" && c.Proc != "Validate" {
 			out = append(out, c.Proc)
 		}
 	}
@@ -95,6 +95,35 @@ func (l *rpcLog) Count(proc string) int {
 	n := 0
 	for _, c := range l.calls {
 		if c.Proc == proc {
+			n++
+		}
+	}
+	return n
+}
+
+// Request is the request of the n-th call of a procedure (from 0), nil if none.
+func (l *rpcLog) Request(proc string, n int) any {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, c := range l.calls {
+		if c.Proc == proc {
+			if n == 0 {
+				return c.Req
+			}
+			n--
+		}
+	}
+	return nil
+}
+
+// ValidateOnlyCalls counts the calls that were themselves validate_only (not
+// Validate, which is a call of its own).
+func (l *rpcLog) ValidateOnlyCalls() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	n := 0
+	for _, c := range l.calls {
+		if c.Validate {
 			n++
 		}
 	}
