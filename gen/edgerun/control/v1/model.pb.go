@@ -250,7 +250,8 @@ type Route struct {
 	PathPrefix string                 `protobuf:"bytes,3,opt,name=path_prefix,json=pathPrefix,proto3" json:"path_prefix,omitempty"`
 	FunctionId string                 `protobuf:"bytes,4,opt,name=function_id,json=functionId,proto3" json:"function_id,omitempty"`
 	CreateTime *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=create_time,json=createTime,proto3" json:"create_time,omitempty"`
-	// Set when the route is created. A route cannot be edited: replacing one is
+	// Set when the route is created and changed by SetRouteLabels and
+	// PatchRouteLabels. Nothing else of a route can be edited: retargeting one is
 	// deleting it and creating another.
 	Labels        map[string]string `protobuf:"bytes,6,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"time"
 
@@ -60,9 +61,37 @@ func (s *Store) InsertInvocations(ctx context.Context, invs []*controlv1.Invocat
 const invocationCols = `id::text, request_id, coalesce(function_id::text, ''), coalesce(version_id::text, ''),
 	coalesce(worker_id::text, ''), method, path, status, error_reason, duration_micros, peak_memory_bytes, stderr, start_time, trace_id`
 
+func scanInvocation(row pgx.Row) (*controlv1.Invocation, error) {
+	var v controlv1.Invocation
+	var status, reason int32
+	var dur, peak int64
+	var start time.Time
+	if err := row.Scan(&v.Id, &v.RequestId, &v.FunctionId, &v.VersionId, &v.WorkerId, &v.Method, &v.Path,
+		&status, &reason, &dur, &peak, &v.Stderr, &start, &v.TraceId); err != nil {
+		return nil, err
+	}
+	v.Status, v.ErrorReason = uint32(status), commonv1.ErrorReason(reason)
+	v.DurationMicros, v.PeakMemoryBytes = uint64(dur), uint64(peak)
+	v.StartTime = timestamppb.New(start)
+	return &v, nil
+}
+
+// GetInvocation returns one record.
+func (s *Store) GetInvocation(ctx context.Context, id string) (*controlv1.Invocation, error) {
+	id, err := parseID("invocation", id)
+	if err != nil {
+		return nil, err
+	}
+	v, err := scanInvocation(s.q(ctx).QueryRow(ctx, `SELECT `+invocationCols+` FROM invocations WHERE id = $1`, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, notFound("invocation %s", id)
+	}
+	return v, err
+}
+
 // ListInvocations pages through records, newest first, optionally for one
-// function.
-func (s *Store) ListInvocations(ctx context.Context, functionID string, size uint32, token string) ([]*controlv1.Invocation, string, error) {
+// function and one request id.
+func (s *Store) ListInvocations(ctx context.Context, functionID, requestID string, size uint32, token string) ([]*controlv1.Invocation, string, error) {
 	after, err := decodeToken(token, 2)
 	if err != nil {
 		return nil, "", err
@@ -77,6 +106,10 @@ func (s *Store) ListInvocations(ctx context.Context, functionID string, size uin
 		}
 		args = append(args, fid)
 		where = "function_id = $" + strconv.Itoa(len(args))
+	}
+	if requestID != "" {
+		args = append(args, requestID)
+		where += " AND request_id = $" + strconv.Itoa(len(args))
 	}
 	if after != nil {
 		micros, err := strconv.ParseInt(after[0], 10, 64)
@@ -98,18 +131,11 @@ func (s *Store) ListInvocations(ctx context.Context, functionID string, size uin
 	defer rows.Close()
 	var out []*controlv1.Invocation
 	for rows.Next() {
-		var v controlv1.Invocation
-		var status, reason int32
-		var dur, peak int64
-		var start time.Time
-		if err := rows.Scan(&v.Id, &v.RequestId, &v.FunctionId, &v.VersionId, &v.WorkerId, &v.Method, &v.Path,
-			&status, &reason, &dur, &peak, &v.Stderr, &start, &v.TraceId); err != nil {
+		v, err := scanInvocation(rows)
+		if err != nil {
 			return nil, "", err
 		}
-		v.Status, v.ErrorReason = uint32(status), commonv1.ErrorReason(reason)
-		v.DurationMicros, v.PeakMemoryBytes = uint64(dur), uint64(peak)
-		v.StartTime = timestamppb.New(start)
-		out = append(out, &v)
+		out = append(out, v)
 	}
 	if err := rows.Err(); err != nil {
 		if pgCode(err) == "22P02" {

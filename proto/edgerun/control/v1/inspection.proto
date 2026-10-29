@@ -12,6 +12,10 @@ service InspectionService {
   rpc ListWorkers(ListWorkersRequest) returns (ListWorkersResponse);
   // ListInvocations pages through invocation records, newest first.
   rpc ListInvocations(ListInvocationsRequest) returns (ListInvocationsResponse);
+  // GetInvocation returns one invocation record by its id: NOT_FOUND if there
+  // is none (yet: records are written shortly after a call ends, and removed
+  // after the retention period).
+  rpc GetInvocation(GetInvocationRequest) returns (GetInvocationResponse);
   // ListNetworkServices returns the network services that have registered.
   rpc ListNetworkServices(ListNetworkServicesRequest) returns (ListNetworkServicesResponse);
 }
@@ -41,6 +45,20 @@ message ListInvocationsRequest {
   string function_id = 1;
   uint32 page_size = 2;
   string page_token = 3;
+  // Restrict to the invocations of one request id (the X-Request-Id the
+  // frontend answered with; unique only as far as the caller makes it so);
+  // empty for all. Combined with function_id, both must hold.
+  string request_id = 4;
+}
+
+message GetInvocationRequest {
+  // The id a response carries (X-Edgerun-Invocation-Id; InvokeHead.invocation_id)
+  // or an Invoke error does (ErrorInfo.invocation_id).
+  string invocation_id = 1;
+}
+
+message GetInvocationResponse {
+  Invocation invocation = 1;
 }
 
 message ListInvocationsResponse {

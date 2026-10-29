@@ -157,7 +157,8 @@ func (f *Frontend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	res, err := f.cfg.Ingress.Invoke(ctx, &ingressv1.InvokeRequest{RequestId: reqID, Request: f.buildRequest(r, body)})
 	if err != nil {
-		f.fail(rec, ctx, err)
+		invocation = edgerun.InvocationID(err)
+		f.fail(rec, ctx, err, invocation)
 		return
 	}
 	defer res.Body.Close()
@@ -256,7 +257,7 @@ func writeHead(w http.ResponseWriter, res *edgerun.Invocation, reqID string) {
 
 // fail answers with the HTTP status the protocol assigns to a platform error
 // (docs/protocol.md). The body is generic: error messages are for operators.
-func (f *Frontend) fail(w http.ResponseWriter, ctx context.Context, err error) {
+func (f *Frontend) fail(w http.ResponseWriter, ctx context.Context, err error, invocation string) {
 	status, retry := edgerun.FrontendStatus(err, ctx.Err())
 	if status == 0 {
 		return // the client cancelled; nobody is listening
@@ -266,6 +267,9 @@ func (f *Frontend) fail(w http.ResponseWriter, ctx context.Context, err error) {
 	}
 	if retry {
 		w.Header().Set("Retry-After", "1")
+	}
+	if invocation != "" {
+		w.Header().Set("X-Edgerun-Invocation-Id", invocation) // the way from a failure to its record
 	}
 	http.Error(w, http.StatusText(status), status)
 }

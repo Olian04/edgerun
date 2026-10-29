@@ -91,7 +91,7 @@ recorded by the component that knows the answer; there is no metric derived from
 |---|---|---|---|
 | `edgerun.invocation.duration` | histogram, `s` | orchestrator | `edgerun.function.name`, `error.type`, `http.response.status_code` |
 | `edgerun.invocation.attempts` | histogram, `{attempt}` | orchestrator | `edgerun.function.name` |
-| `edgerun.invocation.refusals` | counter, `{refusal}` | orchestrator | `edgerun.refusal.kind` (`no_capacity`, `unreachable`) |
+| `edgerun.invocation.refusals` | histogram, `{refusal}` | orchestrator | `edgerun.refusal.kind` (`no_capacity`, `unreachable`) |
 | `edgerun.workers.ready` | gauge, `{worker}` | orchestrator | |
 | `edgerun.network_services.ready` | gauge, `{service}` | orchestrator | |
 | `edgerun.frontend.aborted` | counter, `{response}` | frontend | |
@@ -105,6 +105,8 @@ recorded by the component that knows the answer; there is no metric derived from
 | `edgerun.egress.requests` | counter, `{request}` | network service | `http.request.method`, `error.type`, `http.response.status_code` |
 | `edgerun.egress.duration` | histogram, `s` | network service | the same |
 | `edgerun.egress.response.size` | counter, `By` | network service | |
+
+Both `attempts` and `refusals` are distributions per invocation, so a p95 or p99 says how often an invocation had to be moved to another worker; `refusals` has a point per invocation and kind, zero included. (Nothing of this is kept in the invocation record: what is measured is telemetry's, in one place.)
 
 `error.type` is the platform's error reason (`DEADLINE_EXCEEDED`, `FUNCTION_TRAPPED`, …, see `protocol.md`), and
 empty when the guest answered; a function that returns a 500 is a successful run with `http.response.status_code=500`.

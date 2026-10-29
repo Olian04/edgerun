@@ -1,0 +1,97 @@
+// Control seam, validating a sequence of changes. Server: orchestrator.
+// Clients: CLIs and tools that apply a whole configuration.
+syntax = "proto3";
+
+package edgerun.control.v1;
+
+import "edgerun/control/v1/function.proto";
+import "edgerun/control/v1/route.proto";
+
+service PlanService {
+  // Validate runs the steps in order against the real state, as if each one
+  // had been applied before the next, and keeps nothing: it is validate_only
+  // for a sequence. A step therefore sees what the steps before it did (a
+  // route can be created for a function an earlier step created; a route
+  // deleted by one step can be created again by the next; variables deleted
+  // make room for new ones), which no sequence of single validate_only calls
+  // can show. It stops at the first step that fails and says which.
+  //
+  // Validation is not a promise. It tells whether the sequence would be
+  // accepted by the state it was run against; another writer can change that
+  // state before the sequence is applied, and applying it is the steps' own
+  // calls, one by one. See "Validate-only" in docs/protocol.md.
+  rpc Validate(ValidateRequest) returns (ValidateResponse);
+}
+
+message ValidateRequest {
+  // At most 128. The request as a whole is bounded as an upload is (the
+  // modules of the version steps are in it).
+  repeated Step steps = 1;
+}
+
+// Step is one change, a request of the other control services. Its
+// validate_only field is ignored: every step of a Validate is.
+message Step {
+  // Names what a create step creates, so that later steps can refer to it:
+  // the ids of validated creates are empty, and nothing created exists after
+  // the call. 1-32 characters: lower-case letters, digits and '_', starting
+  // with a letter, unique within the request. A later step uses "$name" in
+  // place of the id (function_id, version_id or route_id), and the id is
+  // replaced by the id the created thing has in the validation. Only the
+  // create steps (function, version, route) may bind. A "$name" that no
+  // earlier step bound is invalid_argument.
+  string bind = 1;
+  oneof request {
+    CreateFunctionRequest create_function = 2;
+    DeleteFunctionRequest delete_function = 3;
+    CreateVersionRequest create_version = 4;
+    ActivateVersionRequest activate_version = 5;
+    SetEnvRequest set_env = 6;
+    DeleteEnvRequest delete_env = 7;
+    SetEgressRequest set_egress = 8;
+    SetLabelsRequest set_labels = 9;
+    PatchLabelsRequest patch_labels = 10;
+    CreateRouteRequest create_route = 11;
+    DeleteRouteRequest delete_route = 12;
+    SetRouteLabelsRequest set_route_labels = 13;
+    PatchRouteLabelsRequest patch_route_labels = 14;
+  }
+}
+
+message ValidateResponse {
+  // What each step that was accepted would have answered, in order. Ids in
+  // them are empty, as in the response of a validate-only create.
+  repeated StepResponse results = 1;
+  // Set if a step failed; it is the step after the last of results. The
+  // sequence is valid when this is unset.
+  StepFailure failure = 2;
+}
+
+message StepResponse {
+  oneof response {
+    CreateFunctionResponse create_function = 1;
+    DeleteFunctionResponse delete_function = 2;
+    CreateVersionResponse create_version = 3;
+    ActivateVersionResponse activate_version = 4;
+    SetEnvResponse set_env = 5;
+    DeleteEnvResponse delete_env = 6;
+    SetEgressResponse set_egress = 7;
+    SetLabelsResponse set_labels = 8;
+    PatchLabelsResponse patch_labels = 9;
+    CreateRouteResponse create_route = 10;
+    DeleteRouteResponse delete_route = 11;
+    SetRouteLabelsResponse set_route_labels = 12;
+    PatchRouteLabelsResponse patch_route_labels = 13;
+  }
+}
+
+// StepFailure is the error the failing step's own call would have answered
+// with.
+message StepFailure {
+  // Index into ValidateRequest.steps, from 0.
+  uint32 step = 1;
+  // The Connect code of that error, as its lower-case name: "invalid_argument",
+  // "not_found", "already_exists", ...
+  string code = 2;
+  string message = 3;
+}

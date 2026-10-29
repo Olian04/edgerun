@@ -225,6 +225,11 @@ makes one replaceable is that every frontend maps HTTP onto the protocol the sam
   are forwarded as given, repeated ones included, except the connection-level ones above and
   `content-length`: the frontend frames the response itself.
 - Chunks are written to the client, and flushed, as they arrive.
+- The invocation the response belongs to is named in an `X-Edgerun-Invocation-Id` header: with the head's
+  `invocation_id`, and on a platform error with the `invocation_id` of its `ErrorInfo`, when there is one (an
+  error for a request that was not routed has none, and the header is absent). It is the way from a response, or
+  a failure, to its record (`GetInvocation`), whoever the client is. Like the request id it is an identifier,
+  never a place for a message.
 - A function's own error statuses, 500 included, are forwarded as they are.
 - A platform error before the head is answered with the status in the table above, a generic body
   and `Retry-After: 1` where the table says so. An error with no `ErrorInfo` is classified by what
@@ -300,6 +305,16 @@ stderr tail (for a failure that has no summary, the error's message). `duration_
 `peak_memory_bytes` are what the worker reported in its summary. Records appear shortly after the
 invocation, not necessarily before the call returns.
 
+**From a response to its record.** A successful `Invoke` names its invocation in the head (`invocation_id`); a
+failed one in the `ErrorInfo` of its error (`invocation_id`, set exactly when a record is written, that is, for
+every failure after the request was routed). `GetInvocation` returns the record with that id: `not_found` if there is
+none *yet* (a record is written after the call ends, so a lookup right after a failure may have to be repeated
+briefly), none any more (records are removed after the retention period), or never (an id that is not one).
+`ListInvocations` can be restricted to one `request_id` (the one the frontend echoed), alone or with `function_id`;
+more than one record can carry a request id, since a client may send the same `X-Request-Id` twice. How many workers
+an invocation was offered to is not in the record: that is a measurement, and is exported as telemetry
+([`observability.md`](observability.md)), where it is kept once.
+
 ### Labels
 
 A function, a version and a route carry **labels**: a map of strings that whoever manages the resource sets, and
@@ -307,9 +322,16 @@ that nothing in edgerun interprets (they affect no routing, scheduling or access
 They exist so that tools can mark what they own and find it again. A tool should namespace its keys
 (`gitops.example.com/managed-by`); edgerun reserves none.
 
-- They are set when the resource is created (`CreateFunction`, `CreateVersion`, `CreateRoute`). A version and a
-  route cannot be edited, so their labels are as fixed as they are; `SetLabels` **replaces** a function's labels
-  as a whole (an empty map clears them), the way `SetEgress` replaces its list.
+- They are set when the resource is created (`CreateFunction`, `CreateVersion`, `CreateRoute`). A version cannot be
+  edited, so its labels are as fixed as it is. A function's and a route's can be changed: `SetLabels` and
+  `SetRouteLabels` **replace** the labels as a whole (an empty map clears them), the way `SetEgress` replaces its
+  list, and `PatchLabels` and `PatchRouteLabels` **change some and leave the rest**: they take labels to `set` and keys
+  to `remove`, apply them to the labels as they are at that moment, atomically with respect to every other change of
+  those labels, so that two tools that each patch their own keys never lose each other's changes (which two
+  replacements, each made from a read, would). A key that is not there is not an error to remove; a key both set
+  and removed is `invalid_argument`; the labels that result must be valid as a whole (so not more than 32). Nothing
+  else of a route changes when its labels do: they are no part of what it routes, and a route is still not
+  retargeted but deleted and created again.
 - A key is 1-63 characters of lower-case letters, digits and `.`, `_`, `/`, `-`, starting and ending with a
   letter or digit. A value is at most 253 characters of printable ASCII and may be empty. At most 32 labels.
   Anything else is `invalid_argument`. Labels are stored and returned as given.
@@ -318,6 +340,15 @@ They exist so that tools can mark what they own and find it again. A tool should
   does not match an empty one), are returned. An empty filter returns everything. The filter is not validated
   as a label set, it merely matches nothing if nothing carries it, and it combines with paging as the other
   lists do.
+- The three lists also take `has_label_keys` (only resources that carry a label with **each** of these keys,
+  whatever its value, an empty one included) and `lacks_label_keys` (only those that carry **none** of them), which is
+  how "everything nobody owns" is found without reading everything. All the filters given must hold. A filter
+  that could only match nothing is refused with `invalid_argument` instead of answering with an empty list, because
+  an empty answer to a typo is the dangerous one for a tool about to act on what it found: a malformed key in either
+  list, a key in both, and a key in `lacks_label_keys` that `match_labels` requires.
+- `ListFunctions` takes a `name` (the one function that has it, exactly, or none: names are unique and
+  lower case) and `ListRoutes` a `function_id` (the routes that point at it; an id that names nothing, a malformed
+  one included, selects none). Both combine with the label filters.
 - Deleting a function deletes its labels with everything else.
 
 ### Env revisions
@@ -346,7 +377,8 @@ the stored value without revealing it:
 ### Validate-only
 
 Every request that changes something (`CreateFunction`, `DeleteFunction`, `CreateVersion`, `ActivateVersion`,
-`SetEnv`, `DeleteEnv`, `SetEgress`, `SetLabels`, `CreateRoute`, `DeleteRoute`) has a `validate_only` field. With
+`SetEnv`, `DeleteEnv`, `SetEgress`, `SetLabels`, `PatchLabels`, `CreateRoute`, `DeleteRoute`, `SetRouteLabels`,
+`PatchRouteLabels`) has a `validate_only` field. With
 it set the orchestrator does everything the call would do, **against the real state**, up to but not including
 the commit:
 
@@ -365,13 +397,39 @@ the commit:
 
 Each validate-only call stands alone: it is judged against the stored state, never against the validate-only
 calls before it, so a function that a validate-only `CreateFunction` accepted does not exist for the
-`CreateVersion` that follows it (which answers `not_found`). To check the later steps of a plan that begins
-with a creation, use the order above: send them with the id of nothing (a well-formed, unused id), and read
-`invalid_argument` as a rejection and `not_found` as "every check that does not need the function passed".
+`CreateVersion` that follows it (which answers `not_found`). To validate a sequence, where each step sees the ones
+before it, use `PlanService.Validate`, below.
 
 It is a check against the state at that moment, not a reservation: the real call can still fail if something
 changed in between. A tool uses it for a dry run that cannot disagree with the apply, instead of re-implementing
 the server's rules.
+
+### Validating a plan
+
+`PlanService.Validate` is validate-only for a **sequence**: it runs `steps` in order against the real state, each as
+if the ones before it had been applied, and keeps nothing (they run in one transaction that is always rolled back).
+A step is one of the changes above (a `Step` carries one request of the other control services; its `validate_only`
+is ignored, because every step of a plan is one). This shows what no sequence of single validate-only calls can: a
+route for a function an earlier step creates, a route deleted and created again (a retarget), a name freed by a
+deletion, variables deleted to make room for new ones under the limit of 64.
+
+- It stops at the first step that fails. The response has a result in `results` for each step that was accepted, as the call
+  itself would have answered it, and, if a step failed, a `failure` with its index and the error its own call
+  would have answered with: the **lower-case Connect code** (`invalid_argument`, `not_found`, `already_exists`) and
+  the same message. A plan that is not valid is an answer, not an error of the call; only a failure of the platform
+  (or a call that is malformed in itself: more than 128 steps) is. The step's checks are the checks of its own
+  call, in the same order.
+- **Ids.** Nothing a validation creates exists after it, so a step that creates a function, a version or a route
+  cannot be referred to by id. It may `bind` a name (1-32 characters of lower-case letters, digits and `_`,
+  starting with a letter, unique in the plan; only a create step may bind), and a **later** step uses `$name` where
+  an id goes (`function_id`, `version_id`, `route_id`). A reference no earlier step bound, a duplicate bind, a
+  malformed bind or a bind on another kind of step is `invalid_argument` at that step. An id of the real state is
+  written as itself, in the same plan. Ids of what the plan creates are empty in the results, as in the response
+  of a validate-only create: nothing says an id that names nothing.
+- The request is bounded as an upload is (the modules of its version steps are in it).
+- It is a check against the state at that moment, as every validation is: a plan that validates is **not** thereby
+  applied, and applying it is its steps' own calls, one by one, none of which is atomic with the others. Another
+  writer can change what a step meant in between.
 
 ## Fleet and artifact semantics
 

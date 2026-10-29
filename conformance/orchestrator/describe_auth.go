@@ -89,6 +89,12 @@ func (h *harness) authentication(t *testing.T) {
 			_, err := controlv1connect.NewFunctionServiceClient(hc, h.url, check.Bearer(token)).ListFunctions(ctx, connect.NewRequest(&controlv1.ListFunctionsRequest{}))
 			return err
 		},
+		"PlanService": func(token string) error {
+			ctx, cancel := ctxT(settle)
+			defer cancel()
+			_, err := controlv1connect.NewPlanServiceClient(hc, h.url, check.Bearer(token)).Validate(ctx, connect.NewRequest(&controlv1.ValidateRequest{}))
+			return err
+		},
 		"RouteService": func(token string) error {
 			ctx, cancel := ctxT(settle)
 			defer cancel()

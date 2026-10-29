@@ -38,13 +38,17 @@ Only what every caller would otherwise write, identically, for itself:
 - **No envelopes.** `ctl.GetFunction(ctx, &req)` returns the response message, not a `connect.Response`.
 - **Iterators for paged lists.** `AllFunctions`, `AllVersions`, `AllRoutes`, `AllInvocations` are
   `iter.Seq2[T, error]`; they fetch pages as you consume them. `AllFunctionsMatching`, `AllVersionsMatching` and `AllRoutesMatching` take a label
-  filter (`match_labels`).
+  filter (`match_labels`); `AllFunctionsWhere`, `AllVersionsWhere`, `AllRoutesWhere` and `AllInvocationsWhere` take
+  the whole list request, for its other filters (`has_label_keys`, `lacks_label_keys`, `name`, `function_id`,
+  `request_id`).
 - **Streams as readers.** `Invoke`, `Execute` and `Fetch` return as soon as the response head arrives
   (`Status()`, `Header()`); the body is an `io.ReadCloser`. A failure after the head is returned by `Read`,
   never as `io.EOF`: a body that ends cleanly is complete. `Execution.Summary()` is available once the body has
   been read to its end.
 - **Verified artifacts.** `Artifacts.GetArtifact` checks the bytes against their digest and returns
   `ErrDigestMismatch` rather than bytes you must not run.
+- **`InvocationID(err)`** is the id of the invocation record an `Invoke` error refers to (`ctl.GetInvocation` finds
+  it), "" when there is none.
 - **Reasons.** Platform failures (invoke, execute, fetch, artifacts) carry a `common.v1.ErrorReason`. `Reason(err)`
   and `IsReason(err, r)` read it; branch on that, never on the code or the message. `NewError` builds one, for the
   other side. The control protocol has no reasons: its errors are plain Connect codes (`not_found`,
@@ -56,25 +60,29 @@ Only what every caller would otherwise write, identically, for itself:
 Three things of `control.v1` exist for tools that manage edgerun from a description of what it should look like
 (a GitOps service, a Terraform provider), and the library has nothing to add to them: they are fields and one RPC.
 
-- **Labels** (`labels` on a function, version and route, `SetLabels`, `match_labels` on the lists): mark what
-  you own and find it again. Key them under a namespace of your own.
+- **Labels** (`labels` on a function, version and route, `SetLabels` / `PatchLabels` and `SetRouteLabels` /
+  `PatchRouteLabels`, and `match_labels`, `has_label_keys`, `lacks_label_keys` on the lists): mark what you own and find
+  it again, "what nobody owns" included. Key them under a namespace of your own.
 - **Revisions** (`EnvEntry.revision`): a write-only secret cannot be read back, but its revision can be compared.
   Remember the revision your last write returned; a different one later means someone else changed the value.
 - **`validate_only`** on every change: all the checks against the real state, nothing kept. A dry run built on it
-  cannot disagree with the apply.
+  cannot disagree with the apply. **`Validate`** does the same for a whole sequence of changes, each step seeing the
+  ones before it.
 
 Things a tool learns the hard way (the rules are in `protocol.md`, "Control semantics"):
 
-- A validate-only call is judged against the stored state only, never against the validate-only calls before it. To
-  validate the later steps of a plan that starts by creating a function, send them with the id of nothing and treat
-  `not_found` as "passed every check that does not need the function": the order of checks (form, then existence,
-  then conflicts) is guaranteed for exactly this.
+- A validate-only call is judged against the stored state only, never against the validate-only calls before it.
+  A plan is validated with `Validate`: steps that create something `bind` a name and later steps refer to it as
+  `$name`; the response says which step failed, with the code and message its own call would have given. A plan that
+  is not valid is a response, not an error. It is a check, not a reservation, and applying the plan is still its
+  steps' own calls, none of them atomic with the others.
 - The revision a candidate secret would have is what a validate-only `SetEnv` returns. Compare it with the one
   `ListEnv` shows to ask "is the stored secret what I want?". Revisions differ per function, and all change if the
   orchestrator's key rotates.
-- `SetLabels` replaces the whole map, so changing one label is a read, an edit and a write: two writers can lose
-  each other's updates. A filter that is nil or empty means *everything*, and a typo in a key matches nothing: never
-  prune on the strength of a filter alone.
+- `SetLabels` replaces the whole map: use it for the labels that are yours alone. A tool that shares a resource
+  with others `PatchLabels` its own keys, which cannot lose theirs. A filter that is nil or empty means
+  *everything*; `match_labels` with a typo in a key matches nothing (the `has_label_keys` and `lacks_label_keys`
+  lists refuse a malformed key instead): never prune on the strength of a filter alone.
 - A validate-only `CreateVersion` carries the whole module, so a dry run followed by an apply uploads it twice.
 
 ## Many calls at once

@@ -59,7 +59,8 @@ message Route {
   string path_prefix = 3;
   string function_id = 4;
   google.protobuf.Timestamp create_time = 5;
-  // Set when the route is created. A route cannot be edited: replacing one is
+  // Set when the route is created and changed by SetRouteLabels and
+  // PatchRouteLabels. Nothing else of a route can be edited: retargeting one is
   // deleting it and creating another.
   map<string, string> labels = 6;
 }

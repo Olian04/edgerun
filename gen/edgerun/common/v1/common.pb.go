@@ -513,7 +513,13 @@ type ErrorInfo struct {
 	state  protoimpl.MessageState `protogen:"open.v1"`
 	Reason ErrorReason            `protobuf:"varint,1,opt,name=reason,proto3,enum=edgerun.common.v1.ErrorReason" json:"reason,omitempty"`
 	// Operator-facing diagnostic. Never shown to end users by the frontend.
-	Message       string `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	Message string `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	// Set by the orchestrator on an Invoke error when an invocation record was
+	// written for the call (it was routed to a function): the id of that record,
+	// the same id a successful response carries in InvokeHead.invocation_id.
+	// Empty on every other error, and on every error of any other call. The
+	// record becomes visible to control.v1 shortly after the call ends.
+	InvocationId  string `protobuf:"bytes,3,opt,name=invocation_id,json=invocationId,proto3" json:"invocation_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -562,6 +568,13 @@ func (x *ErrorInfo) GetMessage() string {
 	return ""
 }
 
+func (x *ErrorInfo) GetInvocationId() string {
+	if x != nil {
+		return x.InvocationId
+	}
+	return ""
+}
+
 var File_edgerun_common_v1_common_proto protoreflect.FileDescriptor
 
 const file_edgerun_common_v1_common_proto_rawDesc = "" +
@@ -591,10 +604,11 @@ const file_edgerun_common_v1_common_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\tR\x05value\"d\n" +
 	"\x06Limits\x12,\n" +
 	"\x12memory_limit_bytes\x18\x01 \x01(\x04R\x10memoryLimitBytes\x12,\n" +
-	"\x12max_response_bytes\x18\x02 \x01(\x04R\x10maxResponseBytes\"]\n" +
+	"\x12max_response_bytes\x18\x02 \x01(\x04R\x10maxResponseBytes\"\x82\x01\n" +
 	"\tErrorInfo\x126\n" +
 	"\x06reason\x18\x01 \x01(\x0e2\x1e.edgerun.common.v1.ErrorReasonR\x06reason\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage*\x9d\x03\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x12#\n" +
+	"\rinvocation_id\x18\x03 \x01(\tR\finvocationId*\x9d\x03\n" +
 	"\vErrorReason\x12\x1c\n" +
 	"\x18ERROR_REASON_UNSPECIFIED\x10\x00\x12#\n" +
 	"\x1fERROR_REASON_FUNCTION_NOT_FOUND\x10\x01\x12\x1c\n" +

@@ -108,4 +108,10 @@ message ErrorInfo {
   ErrorReason reason = 1;
   // Operator-facing diagnostic. Never shown to end users by the frontend.
   string message = 2;
+  // Set by the orchestrator on an Invoke error when an invocation record was
+  // written for the call (it was routed to a function): the id of that record,
+  // the same id a successful response carries in InvokeHead.invocation_id.
+  // Empty on every other error, and on every error of any other call. The
+  // record becomes visible to control.v1 shortly after the call ends.
+  string invocation_id = 3;
 }

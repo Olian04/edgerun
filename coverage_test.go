@@ -24,6 +24,7 @@ func TestTheLibraryCoversEveryRPCOfEveryService(t *testing.T) {
 	}{
 		"FunctionServiceClient":   {reflect.TypeFor[*edgerun.Control](), reflect.TypeFor[controlv1connect.FunctionServiceClient]()},
 		"RouteServiceClient":      {reflect.TypeFor[*edgerun.Control](), reflect.TypeFor[controlv1connect.RouteServiceClient]()},
+		"PlanServiceClient":       {reflect.TypeFor[*edgerun.Control](), reflect.TypeFor[controlv1connect.PlanServiceClient]()},
 		"InspectionServiceClient": {reflect.TypeFor[*edgerun.Control](), reflect.TypeFor[controlv1connect.InspectionServiceClient]()},
 		"IngressServiceClient":    {reflect.TypeFor[*edgerun.Ingress](), reflect.TypeFor[ingressv1connect.IngressServiceClient]()},
 		"ExecutionServiceClient":  {reflect.TypeFor[*edgerun.Execution](), reflect.TypeFor[workerv1connect.ExecutionServiceClient]()},

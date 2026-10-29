@@ -12,7 +12,6 @@ import (
 	"errors"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 	"io"
 	"log/slog"
@@ -151,9 +150,10 @@ func (s *Service) Invoke(ctx context.Context, req *connect.Request[ingressv1.Inv
 		attribute.String("edgerun.function.name", route.FunctionName), attribute.String("edgerun.function.id", route.FunctionID),
 		attribute.String("edgerun.version.id", route.Version.ID), attribute.String("edgerun.abi", route.Version.ABI))
 	attempts := 0
+	refused := map[string]int{} // by kind
 	var summary *workerv1.ExecutionSummary
 	finish := func(err error) error {
-		s.tel.finish(ctx, span, rec, route.FunctionName, attempts, started, err)
+		s.tel.finish(ctx, span, rec, route.FunctionName, attempts, refused, started, err)
 		if err != nil {
 			info := errs.Info(err)
 			rec.ErrorReason = info.GetReason()
@@ -167,7 +167,7 @@ func (s *Service) Invoke(ctx context.Context, req *connect.Request[ingressv1.Inv
 			rec.DurationMicros = uint64(time.Since(started).Microseconds())
 		}
 		s.cfg.Recorder.Record(rec)
-		return err
+		return errs.WithInvocation(err, rec.Id)
 	}
 	if route.EnvErr != nil {
 		s.cfg.Log.ErrorContext(ctx, "cannot open the environment of a routed function", "function", route.FunctionName, "error", route.EnvErr)
@@ -218,7 +218,7 @@ func (s *Service) Invoke(ctx context.Context, req *connect.Request[ingressv1.Inv
 		}
 		aspan.SetAttributes(attribute.String("edgerun.attempt.outcome", "refused: "+kind))
 		aspan.End()
-		s.tel.refusals.Add(ctx, 1, metric.WithAttributes(attribute.String("edgerun.refusal.kind", kind)))
+		refused[kind]++
 		lastErr = err
 		s.cfg.Log.DebugContext(ctx, "trying another worker", "invocation_id", rec.Id, "attempt", attempts,
 			"worker", w.Endpoint, "reason", errs.Reason(err).String())

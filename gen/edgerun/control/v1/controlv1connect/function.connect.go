@@ -70,6 +70,9 @@ const (
 	// FunctionServiceSetLabelsProcedure is the fully-qualified name of the FunctionService's SetLabels
 	// RPC.
 	FunctionServiceSetLabelsProcedure = "/edgerun.control.v1.FunctionService/SetLabels"
+	// FunctionServicePatchLabelsProcedure is the fully-qualified name of the FunctionService's
+	// PatchLabels RPC.
+	FunctionServicePatchLabelsProcedure = "/edgerun.control.v1.FunctionService/PatchLabels"
 )
 
 // FunctionServiceClient is a client for the edgerun.control.v1.FunctionService service.
@@ -102,6 +105,10 @@ type FunctionServiceClient interface {
 	// SetLabels replaces the function's labels (an empty map clears them).
 	// Labels are validated as described in docs/protocol.md.
 	SetLabels(context.Context, *connect.Request[v1.SetLabelsRequest]) (*connect.Response[v1.SetLabelsResponse], error)
+	// PatchLabels changes some of the function's labels and leaves the others as
+	// they are, atomically: two tools that each patch their own keys do not lose
+	// each other's changes, which two SetLabels calls would.
+	PatchLabels(context.Context, *connect.Request[v1.PatchLabelsRequest]) (*connect.Response[v1.PatchLabelsResponse], error)
 }
 
 // NewFunctionServiceClient constructs a client for the edgerun.control.v1.FunctionService service.
@@ -187,6 +194,12 @@ func NewFunctionServiceClient(httpClient connect.HTTPClient, baseURL string, opt
 			connect.WithSchema(functionServiceMethods.ByName("SetLabels")),
 			connect.WithClientOptions(opts...),
 		),
+		patchLabels: connect.NewClient[v1.PatchLabelsRequest, v1.PatchLabelsResponse](
+			httpClient,
+			baseURL+FunctionServicePatchLabelsProcedure,
+			connect.WithSchema(functionServiceMethods.ByName("PatchLabels")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -204,6 +217,7 @@ type functionServiceClient struct {
 	listEnv         *connect.Client[v1.ListEnvRequest, v1.ListEnvResponse]
 	setEgress       *connect.Client[v1.SetEgressRequest, v1.SetEgressResponse]
 	setLabels       *connect.Client[v1.SetLabelsRequest, v1.SetLabelsResponse]
+	patchLabels     *connect.Client[v1.PatchLabelsRequest, v1.PatchLabelsResponse]
 }
 
 // CreateFunction calls edgerun.control.v1.FunctionService.CreateFunction.
@@ -266,6 +280,11 @@ func (c *functionServiceClient) SetLabels(ctx context.Context, req *connect.Requ
 	return c.setLabels.CallUnary(ctx, req)
 }
 
+// PatchLabels calls edgerun.control.v1.FunctionService.PatchLabels.
+func (c *functionServiceClient) PatchLabels(ctx context.Context, req *connect.Request[v1.PatchLabelsRequest]) (*connect.Response[v1.PatchLabelsResponse], error) {
+	return c.patchLabels.CallUnary(ctx, req)
+}
+
 // FunctionServiceHandler is an implementation of the edgerun.control.v1.FunctionService service.
 type FunctionServiceHandler interface {
 	CreateFunction(context.Context, *connect.Request[v1.CreateFunctionRequest]) (*connect.Response[v1.CreateFunctionResponse], error)
@@ -296,6 +315,10 @@ type FunctionServiceHandler interface {
 	// SetLabels replaces the function's labels (an empty map clears them).
 	// Labels are validated as described in docs/protocol.md.
 	SetLabels(context.Context, *connect.Request[v1.SetLabelsRequest]) (*connect.Response[v1.SetLabelsResponse], error)
+	// PatchLabels changes some of the function's labels and leaves the others as
+	// they are, atomically: two tools that each patch their own keys do not lose
+	// each other's changes, which two SetLabels calls would.
+	PatchLabels(context.Context, *connect.Request[v1.PatchLabelsRequest]) (*connect.Response[v1.PatchLabelsResponse], error)
 }
 
 // NewFunctionServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -377,6 +400,12 @@ func NewFunctionServiceHandler(svc FunctionServiceHandler, opts ...connect.Handl
 		connect.WithSchema(functionServiceMethods.ByName("SetLabels")),
 		connect.WithHandlerOptions(opts...),
 	)
+	functionServicePatchLabelsHandler := connect.NewUnaryHandler(
+		FunctionServicePatchLabelsProcedure,
+		svc.PatchLabels,
+		connect.WithSchema(functionServiceMethods.ByName("PatchLabels")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/edgerun.control.v1.FunctionService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case FunctionServiceCreateFunctionProcedure:
@@ -403,6 +432,8 @@ func NewFunctionServiceHandler(svc FunctionServiceHandler, opts ...connect.Handl
 			functionServiceSetEgressHandler.ServeHTTP(w, r)
 		case FunctionServiceSetLabelsProcedure:
 			functionServiceSetLabelsHandler.ServeHTTP(w, r)
+		case FunctionServicePatchLabelsProcedure:
+			functionServicePatchLabelsHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -458,4 +489,8 @@ func (UnimplementedFunctionServiceHandler) SetEgress(context.Context, *connect.R
 
 func (UnimplementedFunctionServiceHandler) SetLabels(context.Context, *connect.Request[v1.SetLabelsRequest]) (*connect.Response[v1.SetLabelsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("edgerun.control.v1.FunctionService.SetLabels is not implemented"))
+}
+
+func (UnimplementedFunctionServiceHandler) PatchLabels(context.Context, *connect.Request[v1.PatchLabelsRequest]) (*connect.Response[v1.PatchLabelsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("edgerun.control.v1.FunctionService.PatchLabels is not implemented"))
 }

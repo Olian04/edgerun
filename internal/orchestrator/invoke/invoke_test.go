@@ -27,6 +27,8 @@ import (
 	"github.com/Olian04/edgerun/internal/orchestrator/sched"
 	"github.com/Olian04/edgerun/internal/orchestrator/snapshot"
 	"github.com/Olian04/edgerun/internal/orchestrator/store"
+	"github.com/Olian04/edgerun/internal/telemetry/telemetrytest"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
 
 var quiet = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -377,6 +379,43 @@ func TestRetriesNoCapacityOnTheNextWorker(t *testing.T) {
 	}
 	if r := e.rec.all()[0]; r.WorkerId != "id-"+epB || r.ErrorReason != 0 {
 		t.Errorf("the record must name the worker that served it: %+v", r)
+	}
+}
+
+// How often an invocation had to be moved is a distribution, like how many
+// attempts it took: a histogram, with a point for every invocation (zero too),
+// so that a percentile of it means something (docs/observability.md).
+func TestRefusalsAndAttemptsAreHistogramsWithAPointPerInvocation(t *testing.T) {
+	rec := telemetrytest.Install(t)
+	epA, _ := startWorker(t, failWith(commonv1.ErrorReason_ERROR_REASON_NO_CAPACITY, "all slots busy"), execToken)
+	epB, _ := startWorker(t, okBehaviour, execToken)
+	digest := digestPreferring(t, epA, epA, epB)
+	e := newEnv(t, []store.RouteEntry{route(digest)}, []store.Worker{worker(epA), worker(epB)}, nil)
+	if res := e.invoke("a.com", "/", "", 0); res.err != nil {
+		t.Fatal(res.err)
+	}
+
+	m := rec.Metrics(t)
+	hist := func(name string) metricdata.Histogram[int64] {
+		h, ok := m[name].Data.(metricdata.Histogram[int64])
+		if !ok {
+			t.Fatalf("%s is %T, want an int64 histogram", name, m[name].Data)
+		}
+		return h
+	}
+	if a := hist("edgerun.invocation.attempts"); len(a.DataPoints) != 1 || a.DataPoints[0].Count != 1 || a.DataPoints[0].Sum != 2 {
+		t.Errorf("attempts: %+v, want one invocation that took 2", a.DataPoints)
+	}
+	got := map[string]int64{}
+	for _, dp := range hist("edgerun.invocation.refusals").DataPoints {
+		kind, _ := dp.Attributes.Value("edgerun.refusal.kind")
+		if dp.Count != 1 {
+			t.Errorf("kind %s: %d points, want exactly one per invocation", kind.AsString(), dp.Count)
+		}
+		got[kind.AsString()] = dp.Sum
+	}
+	if len(got) != 2 || got["no_capacity"] != 1 || got["unreachable"] != 0 {
+		t.Errorf("refusals by kind: %v, want no_capacity=1 and unreachable=0 (zero is recorded)", got)
 	}
 }
 

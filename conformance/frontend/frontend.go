@@ -105,6 +105,7 @@ func Run(t *testing.T, target Target) {
 	t.Run("RequestMapping", h.requestMapping)
 	t.Run("RequestIDs", h.requestIDs)
 	t.Run("TraceContext", h.traceContext)
+	t.Run("InvocationIDs", h.invocationIDs)
 	t.Run("BodyLimit", h.bodyLimit)
 	t.Run("BadRequests", h.badRequests)
 	t.Run("ResponseMapping", h.responseMapping)

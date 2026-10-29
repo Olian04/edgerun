@@ -562,3 +562,34 @@ func (h *harness) traceContext(t *testing.T) {
 		}
 	}
 }
+
+// invocationIDs: the way from a response, or a failure, to the invocation record
+// (docs/protocol.md, "Frontend").
+func (h *harness) invocationIDs(t *testing.T) {
+	t.Run("a response names its invocation", func(t *testing.T) {
+		h.orch.script(answer(200, "ok"))
+		r := h.get(t, "inv-ok")
+		if got := r.header.Get("X-Edgerun-Invocation-Id"); got != "inv-conformance" {
+			t.Errorf("X-Edgerun-Invocation-Id = %q, want the id of InvokeHead.invocation_id (inv-conformance)", got)
+		}
+	})
+	t.Run("a failure names its invocation when the orchestrator says which", func(t *testing.T) {
+		h.orch.script(func(context.Context, *ingressv1.InvokeRequest, *connect.ServerStream[ingressv1.InvokeResponse]) error {
+			return check.ErrorForInvocation(commonv1.ErrorReason_ERROR_REASON_NO_CAPACITY, leak, "inv-failed-1")
+		})
+		r := h.get(t, "inv-fail")
+		if r.status != 503 {
+			t.Fatalf("status %d, want 503", r.status)
+		}
+		if got := r.header.Get("X-Edgerun-Invocation-Id"); got != "inv-failed-1" {
+			t.Errorf("X-Edgerun-Invocation-Id = %q, want inv-failed-1 (ErrorInfo.invocation_id)", got)
+		}
+	})
+	t.Run("a failure with no record names none", func(t *testing.T) {
+		h.orch.script(failWith(commonv1.ErrorReason_ERROR_REASON_FUNCTION_NOT_FOUND))
+		r := h.get(t, "inv-none")
+		if got := r.header.Get("X-Edgerun-Invocation-Id"); got != "" {
+			t.Errorf("X-Edgerun-Invocation-Id = %q on an error that has no invocation", got)
+		}
+	})
+}

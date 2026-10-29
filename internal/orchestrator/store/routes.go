@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"time"
 
@@ -70,19 +71,31 @@ func (s *Store) CreateRoute(ctx context.Context, host, prefix, functionID string
 }
 
 // ListRoutes pages through routes ordered by (host, path prefix).
-func (s *Store) ListRoutes(ctx context.Context, size uint32, token string, match map[string]string) ([]*controlv1.Route, string, error) {
+func (s *Store) ListRoutes(ctx context.Context, size uint32, token string, f LabelFilter, functionID string) ([]*controlv1.Route, string, error) {
+	if err := f.Validate(); err != nil {
+		return nil, "", err
+	}
 	after, err := decodeToken(token, 2)
 	if err != nil {
 		return nil, "", err
 	}
 	n := pageSize(size)
-	var rows pgx.Rows
-	if after == nil {
-		rows, err = s.q(ctx).Query(ctx, `SELECT `+routeCols+` FROM routes WHERE labels @> $2 ORDER BY host_pattern, path_prefix LIMIT $1`, n+1, labelArg(match))
-	} else {
-		rows, err = s.q(ctx).Query(ctx, `SELECT `+routeCols+` FROM routes
-			WHERE (host_pattern, path_prefix) > ($1, $2) AND labels @> $4 ORDER BY host_pattern, path_prefix LIMIT $3`, after[0], after[1], n+1, labelArg(match))
+	where, args := f.where(nil)
+	if functionID != "" {
+		fid, err := parseID("function", functionID)
+		if err != nil {
+			return nil, "", nil // nothing has this id, so no route goes to it
+		}
+		args = append(args, fid)
+		where += " AND function_id = $" + strconv.Itoa(len(args))
 	}
+	if after != nil {
+		args = append(args, after[0], after[1])
+		where += " AND (host_pattern, path_prefix) > ($" + strconv.Itoa(len(args)-1) + ", $" + strconv.Itoa(len(args)) + ")"
+	}
+	args = append(args, n+1)
+	rows, err := s.q(ctx).Query(ctx, `SELECT `+routeCols+` FROM routes WHERE `+where+
+		` ORDER BY host_pattern, path_prefix LIMIT $`+strconv.Itoa(len(args)), args...)
 	if err != nil {
 		return nil, "", err
 	}

@@ -148,7 +148,13 @@ type ListRoutesRequest struct {
 	PageSize  uint32                 `protobuf:"varint,1,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
 	PageToken string                 `protobuf:"bytes,2,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
 	// Only routes that carry every one of these labels with exactly these values.
-	MatchLabels   map[string]string `protobuf:"bytes,3,rep,name=match_labels,json=matchLabels,proto3" json:"match_labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	MatchLabels map[string]string `protobuf:"bytes,3,rep,name=match_labels,json=matchLabels,proto3" json:"match_labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// As in ListFunctionsRequest.
+	HasLabelKeys   []string `protobuf:"bytes,4,rep,name=has_label_keys,json=hasLabelKeys,proto3" json:"has_label_keys,omitempty"`
+	LacksLabelKeys []string `protobuf:"bytes,5,rep,name=lacks_label_keys,json=lacksLabelKeys,proto3" json:"lacks_label_keys,omitempty"`
+	// Only the routes to this function. A malformed id or one nothing has: none.
+	// Empty: all.
+	FunctionId    string `protobuf:"bytes,6,opt,name=function_id,json=functionId,proto3" json:"function_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -202,6 +208,27 @@ func (x *ListRoutesRequest) GetMatchLabels() map[string]string {
 		return x.MatchLabels
 	}
 	return nil
+}
+
+func (x *ListRoutesRequest) GetHasLabelKeys() []string {
+	if x != nil {
+		return x.HasLabelKeys
+	}
+	return nil
+}
+
+func (x *ListRoutesRequest) GetLacksLabelKeys() []string {
+	if x != nil {
+		return x.LacksLabelKeys
+	}
+	return nil
+}
+
+func (x *ListRoutesRequest) GetFunctionId() string {
+	if x != nil {
+		return x.FunctionId
+	}
+	return ""
 }
 
 type ListRoutesResponse struct {
@@ -344,6 +371,222 @@ func (*DeleteRouteResponse) Descriptor() ([]byte, []int) {
 	return file_edgerun_control_v1_route_proto_rawDescGZIP(), []int{5}
 }
 
+type SetRouteLabelsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RouteId       string                 `protobuf:"bytes,1,opt,name=route_id,json=routeId,proto3" json:"route_id,omitempty"`
+	Labels        map[string]string      `protobuf:"bytes,2,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	ValidateOnly  bool                   `protobuf:"varint,3,opt,name=validate_only,json=validateOnly,proto3" json:"validate_only,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetRouteLabelsRequest) Reset() {
+	*x = SetRouteLabelsRequest{}
+	mi := &file_edgerun_control_v1_route_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetRouteLabelsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetRouteLabelsRequest) ProtoMessage() {}
+
+func (x *SetRouteLabelsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_edgerun_control_v1_route_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetRouteLabelsRequest.ProtoReflect.Descriptor instead.
+func (*SetRouteLabelsRequest) Descriptor() ([]byte, []int) {
+	return file_edgerun_control_v1_route_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *SetRouteLabelsRequest) GetRouteId() string {
+	if x != nil {
+		return x.RouteId
+	}
+	return ""
+}
+
+func (x *SetRouteLabelsRequest) GetLabels() map[string]string {
+	if x != nil {
+		return x.Labels
+	}
+	return nil
+}
+
+func (x *SetRouteLabelsRequest) GetValidateOnly() bool {
+	if x != nil {
+		return x.ValidateOnly
+	}
+	return false
+}
+
+type SetRouteLabelsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Route         *Route                 `protobuf:"bytes,1,opt,name=route,proto3" json:"route,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetRouteLabelsResponse) Reset() {
+	*x = SetRouteLabelsResponse{}
+	mi := &file_edgerun_control_v1_route_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetRouteLabelsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetRouteLabelsResponse) ProtoMessage() {}
+
+func (x *SetRouteLabelsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_edgerun_control_v1_route_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetRouteLabelsResponse.ProtoReflect.Descriptor instead.
+func (*SetRouteLabelsResponse) Descriptor() ([]byte, []int) {
+	return file_edgerun_control_v1_route_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *SetRouteLabelsResponse) GetRoute() *Route {
+	if x != nil {
+		return x.Route
+	}
+	return nil
+}
+
+type PatchRouteLabelsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RouteId       string                 `protobuf:"bytes,1,opt,name=route_id,json=routeId,proto3" json:"route_id,omitempty"`
+	Set           map[string]string      `protobuf:"bytes,2,rep,name=set,proto3" json:"set,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Remove        []string               `protobuf:"bytes,3,rep,name=remove,proto3" json:"remove,omitempty"`
+	ValidateOnly  bool                   `protobuf:"varint,4,opt,name=validate_only,json=validateOnly,proto3" json:"validate_only,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PatchRouteLabelsRequest) Reset() {
+	*x = PatchRouteLabelsRequest{}
+	mi := &file_edgerun_control_v1_route_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PatchRouteLabelsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PatchRouteLabelsRequest) ProtoMessage() {}
+
+func (x *PatchRouteLabelsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_edgerun_control_v1_route_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PatchRouteLabelsRequest.ProtoReflect.Descriptor instead.
+func (*PatchRouteLabelsRequest) Descriptor() ([]byte, []int) {
+	return file_edgerun_control_v1_route_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *PatchRouteLabelsRequest) GetRouteId() string {
+	if x != nil {
+		return x.RouteId
+	}
+	return ""
+}
+
+func (x *PatchRouteLabelsRequest) GetSet() map[string]string {
+	if x != nil {
+		return x.Set
+	}
+	return nil
+}
+
+func (x *PatchRouteLabelsRequest) GetRemove() []string {
+	if x != nil {
+		return x.Remove
+	}
+	return nil
+}
+
+func (x *PatchRouteLabelsRequest) GetValidateOnly() bool {
+	if x != nil {
+		return x.ValidateOnly
+	}
+	return false
+}
+
+type PatchRouteLabelsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Route         *Route                 `protobuf:"bytes,1,opt,name=route,proto3" json:"route,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PatchRouteLabelsResponse) Reset() {
+	*x = PatchRouteLabelsResponse{}
+	mi := &file_edgerun_control_v1_route_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PatchRouteLabelsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PatchRouteLabelsResponse) ProtoMessage() {}
+
+func (x *PatchRouteLabelsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_edgerun_control_v1_route_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PatchRouteLabelsResponse.ProtoReflect.Descriptor instead.
+func (*PatchRouteLabelsResponse) Descriptor() ([]byte, []int) {
+	return file_edgerun_control_v1_route_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *PatchRouteLabelsResponse) GetRoute() *Route {
+	if x != nil {
+		return x.Route
+	}
+	return nil
+}
+
 var File_edgerun_control_v1_route_proto protoreflect.FileDescriptor
 
 const file_edgerun_control_v1_route_proto_rawDesc = "" +
@@ -361,12 +604,16 @@ const file_edgerun_control_v1_route_proto_rawDesc = "" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"F\n" +
 	"\x13CreateRouteResponse\x12/\n" +
-	"\x05route\x18\x01 \x01(\v2\x19.edgerun.control.v1.RouteR\x05route\"\xea\x01\n" +
+	"\x05route\x18\x01 \x01(\v2\x19.edgerun.control.v1.RouteR\x05route\"\xdb\x02\n" +
 	"\x11ListRoutesRequest\x12\x1b\n" +
 	"\tpage_size\x18\x01 \x01(\rR\bpageSize\x12\x1d\n" +
 	"\n" +
 	"page_token\x18\x02 \x01(\tR\tpageToken\x12Y\n" +
-	"\fmatch_labels\x18\x03 \x03(\v26.edgerun.control.v1.ListRoutesRequest.MatchLabelsEntryR\vmatchLabels\x1a>\n" +
+	"\fmatch_labels\x18\x03 \x03(\v26.edgerun.control.v1.ListRoutesRequest.MatchLabelsEntryR\vmatchLabels\x12$\n" +
+	"\x0ehas_label_keys\x18\x04 \x03(\tR\fhasLabelKeys\x12(\n" +
+	"\x10lacks_label_keys\x18\x05 \x03(\tR\x0elacksLabelKeys\x12\x1f\n" +
+	"\vfunction_id\x18\x06 \x01(\tR\n" +
+	"functionId\x1a>\n" +
 	"\x10MatchLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"o\n" +
@@ -376,12 +623,33 @@ const file_edgerun_control_v1_route_proto_rawDesc = "" +
 	"\x12DeleteRouteRequest\x12\x19\n" +
 	"\broute_id\x18\x01 \x01(\tR\arouteId\x12#\n" +
 	"\rvalidate_only\x18\x02 \x01(\bR\fvalidateOnly\"\x15\n" +
-	"\x13DeleteRouteResponse2\xab\x02\n" +
+	"\x13DeleteRouteResponse\"\xe1\x01\n" +
+	"\x15SetRouteLabelsRequest\x12\x19\n" +
+	"\broute_id\x18\x01 \x01(\tR\arouteId\x12M\n" +
+	"\x06labels\x18\x02 \x03(\v25.edgerun.control.v1.SetRouteLabelsRequest.LabelsEntryR\x06labels\x12#\n" +
+	"\rvalidate_only\x18\x03 \x01(\bR\fvalidateOnly\x1a9\n" +
+	"\vLabelsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"I\n" +
+	"\x16SetRouteLabelsResponse\x12/\n" +
+	"\x05route\x18\x01 \x01(\v2\x19.edgerun.control.v1.RouteR\x05route\"\xf1\x01\n" +
+	"\x17PatchRouteLabelsRequest\x12\x19\n" +
+	"\broute_id\x18\x01 \x01(\tR\arouteId\x12F\n" +
+	"\x03set\x18\x02 \x03(\v24.edgerun.control.v1.PatchRouteLabelsRequest.SetEntryR\x03set\x12\x16\n" +
+	"\x06remove\x18\x03 \x03(\tR\x06remove\x12#\n" +
+	"\rvalidate_only\x18\x04 \x01(\bR\fvalidateOnly\x1a6\n" +
+	"\bSetEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"K\n" +
+	"\x18PatchRouteLabelsResponse\x12/\n" +
+	"\x05route\x18\x01 \x01(\v2\x19.edgerun.control.v1.RouteR\x05route2\x83\x04\n" +
 	"\fRouteService\x12^\n" +
 	"\vCreateRoute\x12&.edgerun.control.v1.CreateRouteRequest\x1a'.edgerun.control.v1.CreateRouteResponse\x12[\n" +
 	"\n" +
 	"ListRoutes\x12%.edgerun.control.v1.ListRoutesRequest\x1a&.edgerun.control.v1.ListRoutesResponse\x12^\n" +
-	"\vDeleteRoute\x12&.edgerun.control.v1.DeleteRouteRequest\x1a'.edgerun.control.v1.DeleteRouteResponseB\xcb\x01\n" +
+	"\vDeleteRoute\x12&.edgerun.control.v1.DeleteRouteRequest\x1a'.edgerun.control.v1.DeleteRouteResponse\x12g\n" +
+	"\x0eSetRouteLabels\x12).edgerun.control.v1.SetRouteLabelsRequest\x1a*.edgerun.control.v1.SetRouteLabelsResponse\x12m\n" +
+	"\x10PatchRouteLabels\x12+.edgerun.control.v1.PatchRouteLabelsRequest\x1a,.edgerun.control.v1.PatchRouteLabelsResponseB\xcb\x01\n" +
 	"\x16com.edgerun.control.v1B\n" +
 	"RouteProtoP\x01Z;github.com/Olian04/edgerun/gen/edgerun/control/v1;controlv1\xa2\x02\x03ECX\xaa\x02\x12Edgerun.Control.V1\xca\x02\x12Edgerun\\Control\\V1\xe2\x02\x1eEdgerun\\Control\\V1\\GPBMetadata\xea\x02\x14Edgerun::Control::V1b\x06proto3"
 
@@ -397,34 +665,48 @@ func file_edgerun_control_v1_route_proto_rawDescGZIP() []byte {
 	return file_edgerun_control_v1_route_proto_rawDescData
 }
 
-var file_edgerun_control_v1_route_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_edgerun_control_v1_route_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
 var file_edgerun_control_v1_route_proto_goTypes = []any{
-	(*CreateRouteRequest)(nil),  // 0: edgerun.control.v1.CreateRouteRequest
-	(*CreateRouteResponse)(nil), // 1: edgerun.control.v1.CreateRouteResponse
-	(*ListRoutesRequest)(nil),   // 2: edgerun.control.v1.ListRoutesRequest
-	(*ListRoutesResponse)(nil),  // 3: edgerun.control.v1.ListRoutesResponse
-	(*DeleteRouteRequest)(nil),  // 4: edgerun.control.v1.DeleteRouteRequest
-	(*DeleteRouteResponse)(nil), // 5: edgerun.control.v1.DeleteRouteResponse
-	nil,                         // 6: edgerun.control.v1.CreateRouteRequest.LabelsEntry
-	nil,                         // 7: edgerun.control.v1.ListRoutesRequest.MatchLabelsEntry
-	(*Route)(nil),               // 8: edgerun.control.v1.Route
+	(*CreateRouteRequest)(nil),       // 0: edgerun.control.v1.CreateRouteRequest
+	(*CreateRouteResponse)(nil),      // 1: edgerun.control.v1.CreateRouteResponse
+	(*ListRoutesRequest)(nil),        // 2: edgerun.control.v1.ListRoutesRequest
+	(*ListRoutesResponse)(nil),       // 3: edgerun.control.v1.ListRoutesResponse
+	(*DeleteRouteRequest)(nil),       // 4: edgerun.control.v1.DeleteRouteRequest
+	(*DeleteRouteResponse)(nil),      // 5: edgerun.control.v1.DeleteRouteResponse
+	(*SetRouteLabelsRequest)(nil),    // 6: edgerun.control.v1.SetRouteLabelsRequest
+	(*SetRouteLabelsResponse)(nil),   // 7: edgerun.control.v1.SetRouteLabelsResponse
+	(*PatchRouteLabelsRequest)(nil),  // 8: edgerun.control.v1.PatchRouteLabelsRequest
+	(*PatchRouteLabelsResponse)(nil), // 9: edgerun.control.v1.PatchRouteLabelsResponse
+	nil,                              // 10: edgerun.control.v1.CreateRouteRequest.LabelsEntry
+	nil,                              // 11: edgerun.control.v1.ListRoutesRequest.MatchLabelsEntry
+	nil,                              // 12: edgerun.control.v1.SetRouteLabelsRequest.LabelsEntry
+	nil,                              // 13: edgerun.control.v1.PatchRouteLabelsRequest.SetEntry
+	(*Route)(nil),                    // 14: edgerun.control.v1.Route
 }
 var file_edgerun_control_v1_route_proto_depIdxs = []int32{
-	6, // 0: edgerun.control.v1.CreateRouteRequest.labels:type_name -> edgerun.control.v1.CreateRouteRequest.LabelsEntry
-	8, // 1: edgerun.control.v1.CreateRouteResponse.route:type_name -> edgerun.control.v1.Route
-	7, // 2: edgerun.control.v1.ListRoutesRequest.match_labels:type_name -> edgerun.control.v1.ListRoutesRequest.MatchLabelsEntry
-	8, // 3: edgerun.control.v1.ListRoutesResponse.routes:type_name -> edgerun.control.v1.Route
-	0, // 4: edgerun.control.v1.RouteService.CreateRoute:input_type -> edgerun.control.v1.CreateRouteRequest
-	2, // 5: edgerun.control.v1.RouteService.ListRoutes:input_type -> edgerun.control.v1.ListRoutesRequest
-	4, // 6: edgerun.control.v1.RouteService.DeleteRoute:input_type -> edgerun.control.v1.DeleteRouteRequest
-	1, // 7: edgerun.control.v1.RouteService.CreateRoute:output_type -> edgerun.control.v1.CreateRouteResponse
-	3, // 8: edgerun.control.v1.RouteService.ListRoutes:output_type -> edgerun.control.v1.ListRoutesResponse
-	5, // 9: edgerun.control.v1.RouteService.DeleteRoute:output_type -> edgerun.control.v1.DeleteRouteResponse
-	7, // [7:10] is the sub-list for method output_type
-	4, // [4:7] is the sub-list for method input_type
-	4, // [4:4] is the sub-list for extension type_name
-	4, // [4:4] is the sub-list for extension extendee
-	0, // [0:4] is the sub-list for field type_name
+	10, // 0: edgerun.control.v1.CreateRouteRequest.labels:type_name -> edgerun.control.v1.CreateRouteRequest.LabelsEntry
+	14, // 1: edgerun.control.v1.CreateRouteResponse.route:type_name -> edgerun.control.v1.Route
+	11, // 2: edgerun.control.v1.ListRoutesRequest.match_labels:type_name -> edgerun.control.v1.ListRoutesRequest.MatchLabelsEntry
+	14, // 3: edgerun.control.v1.ListRoutesResponse.routes:type_name -> edgerun.control.v1.Route
+	12, // 4: edgerun.control.v1.SetRouteLabelsRequest.labels:type_name -> edgerun.control.v1.SetRouteLabelsRequest.LabelsEntry
+	14, // 5: edgerun.control.v1.SetRouteLabelsResponse.route:type_name -> edgerun.control.v1.Route
+	13, // 6: edgerun.control.v1.PatchRouteLabelsRequest.set:type_name -> edgerun.control.v1.PatchRouteLabelsRequest.SetEntry
+	14, // 7: edgerun.control.v1.PatchRouteLabelsResponse.route:type_name -> edgerun.control.v1.Route
+	0,  // 8: edgerun.control.v1.RouteService.CreateRoute:input_type -> edgerun.control.v1.CreateRouteRequest
+	2,  // 9: edgerun.control.v1.RouteService.ListRoutes:input_type -> edgerun.control.v1.ListRoutesRequest
+	4,  // 10: edgerun.control.v1.RouteService.DeleteRoute:input_type -> edgerun.control.v1.DeleteRouteRequest
+	6,  // 11: edgerun.control.v1.RouteService.SetRouteLabels:input_type -> edgerun.control.v1.SetRouteLabelsRequest
+	8,  // 12: edgerun.control.v1.RouteService.PatchRouteLabels:input_type -> edgerun.control.v1.PatchRouteLabelsRequest
+	1,  // 13: edgerun.control.v1.RouteService.CreateRoute:output_type -> edgerun.control.v1.CreateRouteResponse
+	3,  // 14: edgerun.control.v1.RouteService.ListRoutes:output_type -> edgerun.control.v1.ListRoutesResponse
+	5,  // 15: edgerun.control.v1.RouteService.DeleteRoute:output_type -> edgerun.control.v1.DeleteRouteResponse
+	7,  // 16: edgerun.control.v1.RouteService.SetRouteLabels:output_type -> edgerun.control.v1.SetRouteLabelsResponse
+	9,  // 17: edgerun.control.v1.RouteService.PatchRouteLabels:output_type -> edgerun.control.v1.PatchRouteLabelsResponse
+	13, // [13:18] is the sub-list for method output_type
+	8,  // [8:13] is the sub-list for method input_type
+	8,  // [8:8] is the sub-list for extension type_name
+	8,  // [8:8] is the sub-list for extension extendee
+	0,  // [0:8] is the sub-list for field type_name
 }
 
 func init() { file_edgerun_control_v1_route_proto_init() }
@@ -439,7 +721,7 @@ func file_edgerun_control_v1_route_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_edgerun_control_v1_route_proto_rawDesc), len(file_edgerun_control_v1_route_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   8,
+			NumMessages:   14,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

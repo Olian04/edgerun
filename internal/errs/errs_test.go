@@ -44,3 +44,20 @@ func TestReasonOfForeignErrors(t *testing.T) {
 		t.Error("Invalid must be InvalidArgument")
 	}
 }
+
+func TestWithInvocationKeepsTheErrorAndNamesTheRecord(t *testing.T) {
+	err := WithInvocation(New(commonv1.ErrorReason_ERROR_REASON_NO_CAPACITY, "busy %d", 3), "inv-1")
+	if Reason(err) != commonv1.ErrorReason_ERROR_REASON_NO_CAPACITY || connect.CodeOf(err) != Code(commonv1.ErrorReason_ERROR_REASON_NO_CAPACITY) {
+		t.Errorf("the reason and the code must survive: %v", err)
+	}
+	if info := Info(err); info.GetInvocationId() != "inv-1" || info.GetMessage() != "busy 3" {
+		t.Errorf("info: %+v", info)
+	}
+	if n := len(err.(*connect.Error).Details()); n != 1 {
+		t.Errorf("%d details, want exactly one ErrorInfo", n)
+	}
+	plain := Invalid("bad")
+	if WithInvocation(plain, "x") != error(plain) {
+		t.Error("an error without ErrorInfo is returned as it is")
+	}
+}

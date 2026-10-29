@@ -31,6 +31,11 @@ func IsReason(err error, reason commonv1.ErrorReason) bool { return errs.Reason(
 // Info returns the ErrorInfo detail of err, or nil if it carries none.
 func Info(err error) *commonv1.ErrorInfo { return errs.Info(err) }
 
+// InvocationID returns the id of the invocation record an Invoke error refers
+// to (control.v1 GetInvocation finds it), or "" if err carries none: the call
+// was not routed to a function, or err is no platform error.
+func InvocationID(err error) string { return errs.Info(err).GetInvocationId() }
+
 // NewError builds the error a peer must return for reason: its canonical
 // Connect code and the ErrorInfo detail. It is for implementing a role.
 func NewError(reason commonv1.ErrorReason, format string, args ...any) *connect.Error {

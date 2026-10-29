@@ -97,7 +97,7 @@ func TestNonUUIDIDsAreNotFoundNotErrors(t *testing.T) {
 		"get":      func() error { _, err := s.GetFunction(ctx, "nope"); return err },
 		"delete":   func() error { return s.DeleteFunction(ctx, "nope") },
 		"activate": func() error { _, err := s.ActivateVersion(ctx, "nope", "nope"); return err },
-		"versions": func() error { _, _, err := s.ListVersions(ctx, "nope", 0, "", nil); return err },
+		"versions": func() error { _, _, err := s.ListVersions(ctx, "nope", 0, "", store.LabelFilter{}); return err },
 	} {
 		if err := f(); !errors.Is(err, store.ErrNotFound) {
 			t.Errorf("%s: %v", name, err)
@@ -113,7 +113,7 @@ func TestListFunctionsPaginates(t *testing.T) {
 	var seen []string
 	token := ""
 	for pages := 0; ; pages++ {
-		fs, next, err := s.ListFunctions(ctx, 2, token, nil)
+		fs, next, err := s.ListFunctions(ctx, 2, token, store.LabelFilter{}, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -131,7 +131,7 @@ func TestListFunctionsPaginates(t *testing.T) {
 	if fmt.Sprint(seen) != "[a b c d e]" {
 		t.Errorf("order/coverage: %v", seen)
 	}
-	if _, _, err := s.ListFunctions(ctx, 2, "garbage!!", nil); !errors.Is(err, store.ErrInvalid) {
+	if _, _, err := s.ListFunctions(ctx, 2, "garbage!!", store.LabelFilter{}, ""); !errors.Is(err, store.ErrInvalid) {
 		t.Errorf("tampered token: %v", err)
 	}
 }
@@ -231,7 +231,7 @@ func TestListVersionsNewestFirst(t *testing.T) {
 	var got []int64
 	tok := ""
 	for {
-		vs, next, err := s.ListVersions(ctx, fid, 2, tok, nil)
+		vs, next, err := s.ListVersions(ctx, fid, 2, tok, store.LabelFilter{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -281,7 +281,7 @@ func TestDeleteFunctionCascadesButKeepsArtifacts(t *testing.T) {
 	s := newStore(t)
 	fid := mustFn(t, s, "fn")
 	v := mustVersion(t, s, fid, "code", true)
-	vs, _, _ := s.ListVersions(ctx, fid, 0, "", nil)
+	vs, _, _ := s.ListVersions(ctx, fid, 0, "", store.LabelFilter{})
 	digest := vs[0].ArtifactDigest
 	_ = v
 	if err := s.DeleteFunction(ctx, fid); err != nil {

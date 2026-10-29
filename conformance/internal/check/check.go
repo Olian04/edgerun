@@ -130,12 +130,18 @@ func Eventually(t testing.TB, what string, limit time.Duration, cond func() bool
 // Error builds the error a peer answers with for a platform failure: the
 // canonical code for reason, and the ErrorInfo detail carrying it.
 func Error(reason commonv1.ErrorReason, message string) error {
+	return ErrorForInvocation(reason, message, "")
+}
+
+// ErrorForInvocation is Error for a failure that has an invocation record, whose
+// id the ErrorInfo carries.
+func ErrorForInvocation(reason commonv1.ErrorReason, message, invocationID string) error {
 	code, ok := CanonicalCode[reason]
 	if !ok {
 		code = connect.CodeUnknown
 	}
 	err := connect.NewError(code, errors.New(message))
-	if d, derr := connect.NewErrorDetail(&commonv1.ErrorInfo{Reason: reason, Message: message}); derr == nil {
+	if d, derr := connect.NewErrorDetail(&commonv1.ErrorInfo{Reason: reason, Message: message, InvocationId: invocationID}); derr == nil {
 		err.AddDetail(d)
 	}
 	return err

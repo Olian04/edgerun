@@ -66,7 +66,7 @@ func TestListRoutesPaginatesInOrder(t *testing.T) {
 	var got []string
 	tok := ""
 	for {
-		rs, next, err := s.ListRoutes(ctx, 2, tok, nil)
+		rs, next, err := s.ListRoutes(ctx, 2, tok, store.LabelFilter{}, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -88,7 +88,7 @@ func TestDeletingAFunctionDeletesItsRoutes(t *testing.T) {
 	fid := mustFn(t, s, "fn")
 	s.CreateRoute(ctx, "h.com", "/", fid, nil)
 	s.DeleteFunction(ctx, fid)
-	if rs, _, _ := s.ListRoutes(ctx, 0, "", nil); len(rs) != 0 {
+	if rs, _, _ := s.ListRoutes(ctx, 0, "", store.LabelFilter{}, ""); len(rs) != 0 {
 		t.Errorf("orphaned routes: %v", rs)
 	}
 }
@@ -383,7 +383,7 @@ func TestInvocationsStoredListedAndPaged(t *testing.T) {
 	var got []string
 	tok := ""
 	for {
-		vs, next, err := s.ListInvocations(ctx, "", 3, tok)
+		vs, next, err := s.ListInvocations(ctx, "", "", 3, tok)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -399,7 +399,7 @@ func TestInvocationsStoredListedAndPaged(t *testing.T) {
 		t.Errorf("got %v, want %s (newest first, ties broken by id, no duplicates across pages)", got, want)
 	}
 
-	vs, _, _ := s.ListInvocations(ctx, f2, 0, "")
+	vs, _, _ := s.ListInvocations(ctx, f2, "", 0, "")
 	if len(vs) != 3 {
 		t.Errorf("filter by function: %d records", len(vs))
 	}
@@ -408,11 +408,11 @@ func TestInvocationsStoredListedAndPaged(t *testing.T) {
 			t.Errorf("record = %+v", v)
 		}
 	}
-	if vs, _, err := s.ListInvocations(ctx, "not-a-uuid", 0, ""); err != nil || len(vs) != 0 {
+	if vs, _, err := s.ListInvocations(ctx, "not-a-uuid", "", 0, ""); err != nil || len(vs) != 0 {
 		t.Errorf("unknown function: %v %v", vs, err)
 	}
 	for _, bad := range []string{"%%%", "AAAA"} {
-		if _, _, err := s.ListInvocations(ctx, "", 0, bad); !errors.Is(err, store.ErrInvalid) {
+		if _, _, err := s.ListInvocations(ctx, "", "", 0, bad); !errors.Is(err, store.ErrInvalid) {
 			t.Errorf("forged token %q: %v", bad, err)
 		}
 	}
@@ -427,7 +427,7 @@ func TestInvocationsOutliveTheirFunctionAndNullableIDs(t *testing.T) {
 		inv("00000000-0000-0000-0000-000000000002", now, ""), // e.g. a request no route matched
 	})
 	s.DeleteFunction(ctx, fid)
-	vs, _, err := s.ListInvocations(ctx, "", 0, "")
+	vs, _, err := s.ListInvocations(ctx, "", "", 0, "")
 	if err != nil || len(vs) != 2 {
 		t.Fatalf("records must outlive their function: %v %v", vs, err)
 	}
@@ -441,7 +441,7 @@ func TestInvocationFieldsAreTruncatedNotRejected(t *testing.T) {
 	if err := s.InsertInvocations(ctx, []*controlv1.Invocation{v}); err != nil {
 		t.Fatal(err)
 	}
-	vs, _, _ := s.ListInvocations(ctx, "", 0, "")
+	vs, _, _ := s.ListInvocations(ctx, "", "", 0, "")
 	if len(vs[0].Path) != 2048 || len(vs[0].Stderr) != 64<<10 || !bytes.HasSuffix(vs[0].Stderr, []byte("THE-TAIL")) {
 		t.Errorf("path %d bytes, stderr %d bytes (must keep the tail)", len(vs[0].Path), len(vs[0].Stderr))
 	}
@@ -464,7 +464,7 @@ func TestInvocationRetention(t *testing.T) {
 	if n != 2 {
 		t.Errorf("second batch: %d, want the remaining 2", n)
 	}
-	if vs, _, _ := s.ListInvocations(ctx, "", 0, ""); len(vs) != 4 {
+	if vs, _, _ := s.ListInvocations(ctx, "", "", 0, ""); len(vs) != 4 {
 		t.Errorf("%d records left, want 4", len(vs))
 	}
 }

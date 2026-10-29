@@ -225,7 +225,17 @@ type ListFunctionsRequest struct {
 	PageToken string `protobuf:"bytes,2,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
 	// Only functions that carry every one of these labels with exactly these
 	// values. Empty: all.
-	MatchLabels   map[string]string `protobuf:"bytes,3,rep,name=match_labels,json=matchLabels,proto3" json:"match_labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	MatchLabels map[string]string `protobuf:"bytes,3,rep,name=match_labels,json=matchLabels,proto3" json:"match_labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// Only functions that carry a label with each of has_label_keys, whatever
+	// its value, and none with any of lacks_label_keys. All the filters given
+	// must hold. A filter that can only match nothing is invalid_argument: a
+	// malformed key, a key in both lists, or a key in lacks_label_keys that
+	// match_labels requires.
+	HasLabelKeys   []string `protobuf:"bytes,4,rep,name=has_label_keys,json=hasLabelKeys,proto3" json:"has_label_keys,omitempty"`
+	LacksLabelKeys []string `protobuf:"bytes,5,rep,name=lacks_label_keys,json=lacksLabelKeys,proto3" json:"lacks_label_keys,omitempty"`
+	// Only the function with exactly this name (at most one: names are unique).
+	// Empty: all.
+	Name          string `protobuf:"bytes,6,opt,name=name,proto3" json:"name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -279,6 +289,27 @@ func (x *ListFunctionsRequest) GetMatchLabels() map[string]string {
 		return x.MatchLabels
 	}
 	return nil
+}
+
+func (x *ListFunctionsRequest) GetHasLabelKeys() []string {
+	if x != nil {
+		return x.HasLabelKeys
+	}
+	return nil
+}
+
+func (x *ListFunctionsRequest) GetLacksLabelKeys() []string {
+	if x != nil {
+		return x.LacksLabelKeys
+	}
+	return nil
+}
+
+func (x *ListFunctionsRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
 }
 
 type ListFunctionsResponse struct {
@@ -567,9 +598,12 @@ type ListVersionsRequest struct {
 	PageSize   uint32                 `protobuf:"varint,2,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
 	PageToken  string                 `protobuf:"bytes,3,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
 	// Only versions that carry every one of these labels with exactly these values.
-	MatchLabels   map[string]string `protobuf:"bytes,4,rep,name=match_labels,json=matchLabels,proto3" json:"match_labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	MatchLabels map[string]string `protobuf:"bytes,4,rep,name=match_labels,json=matchLabels,proto3" json:"match_labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// As in ListFunctionsRequest.
+	HasLabelKeys   []string `protobuf:"bytes,5,rep,name=has_label_keys,json=hasLabelKeys,proto3" json:"has_label_keys,omitempty"`
+	LacksLabelKeys []string `protobuf:"bytes,6,rep,name=lacks_label_keys,json=lacksLabelKeys,proto3" json:"lacks_label_keys,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *ListVersionsRequest) Reset() {
@@ -626,6 +660,20 @@ func (x *ListVersionsRequest) GetPageToken() string {
 func (x *ListVersionsRequest) GetMatchLabels() map[string]string {
 	if x != nil {
 		return x.MatchLabels
+	}
+	return nil
+}
+
+func (x *ListVersionsRequest) GetHasLabelKeys() []string {
+	if x != nil {
+		return x.HasLabelKeys
+	}
+	return nil
+}
+
+func (x *ListVersionsRequest) GetLacksLabelKeys() []string {
+	if x != nil {
+		return x.LacksLabelKeys
 	}
 	return nil
 }
@@ -1198,6 +1246,123 @@ func (x *SetLabelsResponse) GetFunction() *Function {
 	return nil
 }
 
+type PatchLabelsRequest struct {
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	FunctionId string                 `protobuf:"bytes,1,opt,name=function_id,json=functionId,proto3" json:"function_id,omitempty"`
+	// Labels to add or change.
+	Set map[string]string `protobuf:"bytes,2,rep,name=set,proto3" json:"set,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// Keys to remove; a key that is not there is not an error. A key in both
+	// set and remove is invalid_argument. The labels that result are validated
+	// as a whole (the limit on their number applies to them).
+	Remove        []string `protobuf:"bytes,3,rep,name=remove,proto3" json:"remove,omitempty"`
+	ValidateOnly  bool     `protobuf:"varint,4,opt,name=validate_only,json=validateOnly,proto3" json:"validate_only,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PatchLabelsRequest) Reset() {
+	*x = PatchLabelsRequest{}
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PatchLabelsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PatchLabelsRequest) ProtoMessage() {}
+
+func (x *PatchLabelsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PatchLabelsRequest.ProtoReflect.Descriptor instead.
+func (*PatchLabelsRequest) Descriptor() ([]byte, []int) {
+	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *PatchLabelsRequest) GetFunctionId() string {
+	if x != nil {
+		return x.FunctionId
+	}
+	return ""
+}
+
+func (x *PatchLabelsRequest) GetSet() map[string]string {
+	if x != nil {
+		return x.Set
+	}
+	return nil
+}
+
+func (x *PatchLabelsRequest) GetRemove() []string {
+	if x != nil {
+		return x.Remove
+	}
+	return nil
+}
+
+func (x *PatchLabelsRequest) GetValidateOnly() bool {
+	if x != nil {
+		return x.ValidateOnly
+	}
+	return false
+}
+
+type PatchLabelsResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The function with its new labels.
+	Function      *Function `protobuf:"bytes,1,opt,name=function,proto3" json:"function,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PatchLabelsResponse) Reset() {
+	*x = PatchLabelsResponse{}
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PatchLabelsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PatchLabelsResponse) ProtoMessage() {}
+
+func (x *PatchLabelsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PatchLabelsResponse.ProtoReflect.Descriptor instead.
+func (*PatchLabelsResponse) Descriptor() ([]byte, []int) {
+	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *PatchLabelsResponse) GetFunction() *Function {
+	if x != nil {
+		return x.Function
+	}
+	return nil
+}
+
 type SetEgressResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// The function with its canonical allow list.
@@ -1208,7 +1373,7 @@ type SetEgressResponse struct {
 
 func (x *SetEgressResponse) Reset() {
 	*x = SetEgressResponse{}
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[22]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1220,7 +1385,7 @@ func (x *SetEgressResponse) String() string {
 func (*SetEgressResponse) ProtoMessage() {}
 
 func (x *SetEgressResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[22]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1233,7 +1398,7 @@ func (x *SetEgressResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetEgressResponse.ProtoReflect.Descriptor instead.
 func (*SetEgressResponse) Descriptor() ([]byte, []int) {
-	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{22}
+	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *SetEgressResponse) GetFunction() *Function {
@@ -1253,7 +1418,7 @@ type ListEnvResponse struct {
 
 func (x *ListEnvResponse) Reset() {
 	*x = ListEnvResponse{}
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[23]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1265,7 +1430,7 @@ func (x *ListEnvResponse) String() string {
 func (*ListEnvResponse) ProtoMessage() {}
 
 func (x *ListEnvResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[23]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1278,7 +1443,7 @@ func (x *ListEnvResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListEnvResponse.ProtoReflect.Descriptor instead.
 func (*ListEnvResponse) Descriptor() ([]byte, []int) {
-	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{23}
+	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *ListEnvResponse) GetEntries() []*EnvEntry {
@@ -1306,12 +1471,15 @@ const file_edgerun_control_v1_function_proto_rawDesc = "" +
 	"\vfunction_id\x18\x01 \x01(\tR\n" +
 	"functionId\"O\n" +
 	"\x13GetFunctionResponse\x128\n" +
-	"\bfunction\x18\x01 \x01(\v2\x1c.edgerun.control.v1.FunctionR\bfunction\"\xf0\x01\n" +
+	"\bfunction\x18\x01 \x01(\v2\x1c.edgerun.control.v1.FunctionR\bfunction\"\xd4\x02\n" +
 	"\x14ListFunctionsRequest\x12\x1b\n" +
 	"\tpage_size\x18\x01 \x01(\rR\bpageSize\x12\x1d\n" +
 	"\n" +
 	"page_token\x18\x02 \x01(\tR\tpageToken\x12\\\n" +
-	"\fmatch_labels\x18\x03 \x03(\v29.edgerun.control.v1.ListFunctionsRequest.MatchLabelsEntryR\vmatchLabels\x1a>\n" +
+	"\fmatch_labels\x18\x03 \x03(\v29.edgerun.control.v1.ListFunctionsRequest.MatchLabelsEntryR\vmatchLabels\x12$\n" +
+	"\x0ehas_label_keys\x18\x04 \x03(\tR\fhasLabelKeys\x12(\n" +
+	"\x10lacks_label_keys\x18\x05 \x03(\tR\x0elacksLabelKeys\x12\x12\n" +
+	"\x04name\x18\x06 \x01(\tR\x04name\x1a>\n" +
 	"\x10MatchLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"{\n" +
@@ -1336,14 +1504,16 @@ const file_edgerun_control_v1_function_proto_rawDesc = "" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"V\n" +
 	"\x15CreateVersionResponse\x12=\n" +
-	"\aversion\x18\x01 \x01(\v2#.edgerun.control.v1.FunctionVersionR\aversion\"\x8f\x02\n" +
+	"\aversion\x18\x01 \x01(\v2#.edgerun.control.v1.FunctionVersionR\aversion\"\xdf\x02\n" +
 	"\x13ListVersionsRequest\x12\x1f\n" +
 	"\vfunction_id\x18\x01 \x01(\tR\n" +
 	"functionId\x12\x1b\n" +
 	"\tpage_size\x18\x02 \x01(\rR\bpageSize\x12\x1d\n" +
 	"\n" +
 	"page_token\x18\x03 \x01(\tR\tpageToken\x12[\n" +
-	"\fmatch_labels\x18\x04 \x03(\v28.edgerun.control.v1.ListVersionsRequest.MatchLabelsEntryR\vmatchLabels\x1a>\n" +
+	"\fmatch_labels\x18\x04 \x03(\v28.edgerun.control.v1.ListVersionsRequest.MatchLabelsEntryR\vmatchLabels\x12$\n" +
+	"\x0ehas_label_keys\x18\x05 \x03(\tR\fhasLabelKeys\x12(\n" +
+	"\x10lacks_label_keys\x18\x06 \x03(\tR\x0elacksLabelKeys\x1a>\n" +
 	"\x10MatchLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x7f\n" +
@@ -1388,11 +1558,22 @@ const file_edgerun_control_v1_function_proto_rawDesc = "" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"M\n" +
 	"\x11SetLabelsResponse\x128\n" +
+	"\bfunction\x18\x01 \x01(\v2\x1c.edgerun.control.v1.FunctionR\bfunction\"\xed\x01\n" +
+	"\x12PatchLabelsRequest\x12\x1f\n" +
+	"\vfunction_id\x18\x01 \x01(\tR\n" +
+	"functionId\x12A\n" +
+	"\x03set\x18\x02 \x03(\v2/.edgerun.control.v1.PatchLabelsRequest.SetEntryR\x03set\x12\x16\n" +
+	"\x06remove\x18\x03 \x03(\tR\x06remove\x12#\n" +
+	"\rvalidate_only\x18\x04 \x01(\bR\fvalidateOnly\x1a6\n" +
+	"\bSetEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"O\n" +
+	"\x13PatchLabelsResponse\x128\n" +
 	"\bfunction\x18\x01 \x01(\v2\x1c.edgerun.control.v1.FunctionR\bfunction\"M\n" +
 	"\x11SetEgressResponse\x128\n" +
 	"\bfunction\x18\x01 \x01(\v2\x1c.edgerun.control.v1.FunctionR\bfunction\"I\n" +
 	"\x0fListEnvResponse\x126\n" +
-	"\aentries\x18\x01 \x03(\v2\x1c.edgerun.control.v1.EnvEntryR\aentries2\x91\t\n" +
+	"\aentries\x18\x01 \x03(\v2\x1c.edgerun.control.v1.EnvEntryR\aentries2\xf1\t\n" +
 	"\x0fFunctionService\x12g\n" +
 	"\x0eCreateFunction\x12).edgerun.control.v1.CreateFunctionRequest\x1a*.edgerun.control.v1.CreateFunctionResponse\x12^\n" +
 	"\vGetFunction\x12&.edgerun.control.v1.GetFunctionRequest\x1a'.edgerun.control.v1.GetFunctionResponse\x12d\n" +
@@ -1405,7 +1586,8 @@ const file_edgerun_control_v1_function_proto_rawDesc = "" +
 	"\tDeleteEnv\x12$.edgerun.control.v1.DeleteEnvRequest\x1a%.edgerun.control.v1.DeleteEnvResponse\x12R\n" +
 	"\aListEnv\x12\".edgerun.control.v1.ListEnvRequest\x1a#.edgerun.control.v1.ListEnvResponse\x12X\n" +
 	"\tSetEgress\x12$.edgerun.control.v1.SetEgressRequest\x1a%.edgerun.control.v1.SetEgressResponse\x12X\n" +
-	"\tSetLabels\x12$.edgerun.control.v1.SetLabelsRequest\x1a%.edgerun.control.v1.SetLabelsResponseB\xce\x01\n" +
+	"\tSetLabels\x12$.edgerun.control.v1.SetLabelsRequest\x1a%.edgerun.control.v1.SetLabelsResponse\x12^\n" +
+	"\vPatchLabels\x12&.edgerun.control.v1.PatchLabelsRequest\x1a'.edgerun.control.v1.PatchLabelsResponseB\xce\x01\n" +
 	"\x16com.edgerun.control.v1B\rFunctionProtoP\x01Z;github.com/Olian04/edgerun/gen/edgerun/control/v1;controlv1\xa2\x02\x03ECX\xaa\x02\x12Edgerun.Control.V1\xca\x02\x12Edgerun\\Control\\V1\xe2\x02\x1eEdgerun\\Control\\V1\\GPBMetadata\xea\x02\x14Edgerun::Control::V1b\x06proto3"
 
 var (
@@ -1420,7 +1602,7 @@ func file_edgerun_control_v1_function_proto_rawDescGZIP() []byte {
 	return file_edgerun_control_v1_function_proto_rawDescData
 }
 
-var file_edgerun_control_v1_function_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
+var file_edgerun_control_v1_function_proto_msgTypes = make([]protoimpl.MessageInfo, 32)
 var file_edgerun_control_v1_function_proto_goTypes = []any{
 	(*CreateFunctionRequest)(nil),   // 0: edgerun.control.v1.CreateFunctionRequest
 	(*CreateFunctionResponse)(nil),  // 1: edgerun.control.v1.CreateFunctionResponse
@@ -1444,65 +1626,72 @@ var file_edgerun_control_v1_function_proto_goTypes = []any{
 	(*SetEgressRequest)(nil),        // 19: edgerun.control.v1.SetEgressRequest
 	(*SetLabelsRequest)(nil),        // 20: edgerun.control.v1.SetLabelsRequest
 	(*SetLabelsResponse)(nil),       // 21: edgerun.control.v1.SetLabelsResponse
-	(*SetEgressResponse)(nil),       // 22: edgerun.control.v1.SetEgressResponse
-	(*ListEnvResponse)(nil),         // 23: edgerun.control.v1.ListEnvResponse
-	nil,                             // 24: edgerun.control.v1.CreateFunctionRequest.LabelsEntry
-	nil,                             // 25: edgerun.control.v1.ListFunctionsRequest.MatchLabelsEntry
-	nil,                             // 26: edgerun.control.v1.CreateVersionRequest.LabelsEntry
-	nil,                             // 27: edgerun.control.v1.ListVersionsRequest.MatchLabelsEntry
-	nil,                             // 28: edgerun.control.v1.SetLabelsRequest.LabelsEntry
-	(*Function)(nil),                // 29: edgerun.control.v1.Function
-	(*v1.Limits)(nil),               // 30: edgerun.common.v1.Limits
-	(*FunctionVersion)(nil),         // 31: edgerun.control.v1.FunctionVersion
-	(*EnvEntry)(nil),                // 32: edgerun.control.v1.EnvEntry
+	(*PatchLabelsRequest)(nil),      // 22: edgerun.control.v1.PatchLabelsRequest
+	(*PatchLabelsResponse)(nil),     // 23: edgerun.control.v1.PatchLabelsResponse
+	(*SetEgressResponse)(nil),       // 24: edgerun.control.v1.SetEgressResponse
+	(*ListEnvResponse)(nil),         // 25: edgerun.control.v1.ListEnvResponse
+	nil,                             // 26: edgerun.control.v1.CreateFunctionRequest.LabelsEntry
+	nil,                             // 27: edgerun.control.v1.ListFunctionsRequest.MatchLabelsEntry
+	nil,                             // 28: edgerun.control.v1.CreateVersionRequest.LabelsEntry
+	nil,                             // 29: edgerun.control.v1.ListVersionsRequest.MatchLabelsEntry
+	nil,                             // 30: edgerun.control.v1.SetLabelsRequest.LabelsEntry
+	nil,                             // 31: edgerun.control.v1.PatchLabelsRequest.SetEntry
+	(*Function)(nil),                // 32: edgerun.control.v1.Function
+	(*v1.Limits)(nil),               // 33: edgerun.common.v1.Limits
+	(*FunctionVersion)(nil),         // 34: edgerun.control.v1.FunctionVersion
+	(*EnvEntry)(nil),                // 35: edgerun.control.v1.EnvEntry
 }
 var file_edgerun_control_v1_function_proto_depIdxs = []int32{
-	24, // 0: edgerun.control.v1.CreateFunctionRequest.labels:type_name -> edgerun.control.v1.CreateFunctionRequest.LabelsEntry
-	29, // 1: edgerun.control.v1.CreateFunctionResponse.function:type_name -> edgerun.control.v1.Function
-	29, // 2: edgerun.control.v1.GetFunctionResponse.function:type_name -> edgerun.control.v1.Function
-	25, // 3: edgerun.control.v1.ListFunctionsRequest.match_labels:type_name -> edgerun.control.v1.ListFunctionsRequest.MatchLabelsEntry
-	29, // 4: edgerun.control.v1.ListFunctionsResponse.functions:type_name -> edgerun.control.v1.Function
-	30, // 5: edgerun.control.v1.CreateVersionRequest.limits:type_name -> edgerun.common.v1.Limits
-	26, // 6: edgerun.control.v1.CreateVersionRequest.labels:type_name -> edgerun.control.v1.CreateVersionRequest.LabelsEntry
-	31, // 7: edgerun.control.v1.CreateVersionResponse.version:type_name -> edgerun.control.v1.FunctionVersion
-	27, // 8: edgerun.control.v1.ListVersionsRequest.match_labels:type_name -> edgerun.control.v1.ListVersionsRequest.MatchLabelsEntry
-	31, // 9: edgerun.control.v1.ListVersionsResponse.versions:type_name -> edgerun.control.v1.FunctionVersion
-	29, // 10: edgerun.control.v1.ActivateVersionResponse.function:type_name -> edgerun.control.v1.Function
-	32, // 11: edgerun.control.v1.SetEnvRequest.entry:type_name -> edgerun.control.v1.EnvEntry
-	32, // 12: edgerun.control.v1.SetEnvResponse.entry:type_name -> edgerun.control.v1.EnvEntry
-	28, // 13: edgerun.control.v1.SetLabelsRequest.labels:type_name -> edgerun.control.v1.SetLabelsRequest.LabelsEntry
-	29, // 14: edgerun.control.v1.SetLabelsResponse.function:type_name -> edgerun.control.v1.Function
-	29, // 15: edgerun.control.v1.SetEgressResponse.function:type_name -> edgerun.control.v1.Function
-	32, // 16: edgerun.control.v1.ListEnvResponse.entries:type_name -> edgerun.control.v1.EnvEntry
-	0,  // 17: edgerun.control.v1.FunctionService.CreateFunction:input_type -> edgerun.control.v1.CreateFunctionRequest
-	2,  // 18: edgerun.control.v1.FunctionService.GetFunction:input_type -> edgerun.control.v1.GetFunctionRequest
-	4,  // 19: edgerun.control.v1.FunctionService.ListFunctions:input_type -> edgerun.control.v1.ListFunctionsRequest
-	6,  // 20: edgerun.control.v1.FunctionService.DeleteFunction:input_type -> edgerun.control.v1.DeleteFunctionRequest
-	8,  // 21: edgerun.control.v1.FunctionService.CreateVersion:input_type -> edgerun.control.v1.CreateVersionRequest
-	10, // 22: edgerun.control.v1.FunctionService.ListVersions:input_type -> edgerun.control.v1.ListVersionsRequest
-	12, // 23: edgerun.control.v1.FunctionService.ActivateVersion:input_type -> edgerun.control.v1.ActivateVersionRequest
-	14, // 24: edgerun.control.v1.FunctionService.SetEnv:input_type -> edgerun.control.v1.SetEnvRequest
-	16, // 25: edgerun.control.v1.FunctionService.DeleteEnv:input_type -> edgerun.control.v1.DeleteEnvRequest
-	18, // 26: edgerun.control.v1.FunctionService.ListEnv:input_type -> edgerun.control.v1.ListEnvRequest
-	19, // 27: edgerun.control.v1.FunctionService.SetEgress:input_type -> edgerun.control.v1.SetEgressRequest
-	20, // 28: edgerun.control.v1.FunctionService.SetLabels:input_type -> edgerun.control.v1.SetLabelsRequest
-	1,  // 29: edgerun.control.v1.FunctionService.CreateFunction:output_type -> edgerun.control.v1.CreateFunctionResponse
-	3,  // 30: edgerun.control.v1.FunctionService.GetFunction:output_type -> edgerun.control.v1.GetFunctionResponse
-	5,  // 31: edgerun.control.v1.FunctionService.ListFunctions:output_type -> edgerun.control.v1.ListFunctionsResponse
-	7,  // 32: edgerun.control.v1.FunctionService.DeleteFunction:output_type -> edgerun.control.v1.DeleteFunctionResponse
-	9,  // 33: edgerun.control.v1.FunctionService.CreateVersion:output_type -> edgerun.control.v1.CreateVersionResponse
-	11, // 34: edgerun.control.v1.FunctionService.ListVersions:output_type -> edgerun.control.v1.ListVersionsResponse
-	13, // 35: edgerun.control.v1.FunctionService.ActivateVersion:output_type -> edgerun.control.v1.ActivateVersionResponse
-	15, // 36: edgerun.control.v1.FunctionService.SetEnv:output_type -> edgerun.control.v1.SetEnvResponse
-	17, // 37: edgerun.control.v1.FunctionService.DeleteEnv:output_type -> edgerun.control.v1.DeleteEnvResponse
-	23, // 38: edgerun.control.v1.FunctionService.ListEnv:output_type -> edgerun.control.v1.ListEnvResponse
-	22, // 39: edgerun.control.v1.FunctionService.SetEgress:output_type -> edgerun.control.v1.SetEgressResponse
-	21, // 40: edgerun.control.v1.FunctionService.SetLabels:output_type -> edgerun.control.v1.SetLabelsResponse
-	29, // [29:41] is the sub-list for method output_type
-	17, // [17:29] is the sub-list for method input_type
-	17, // [17:17] is the sub-list for extension type_name
-	17, // [17:17] is the sub-list for extension extendee
-	0,  // [0:17] is the sub-list for field type_name
+	26, // 0: edgerun.control.v1.CreateFunctionRequest.labels:type_name -> edgerun.control.v1.CreateFunctionRequest.LabelsEntry
+	32, // 1: edgerun.control.v1.CreateFunctionResponse.function:type_name -> edgerun.control.v1.Function
+	32, // 2: edgerun.control.v1.GetFunctionResponse.function:type_name -> edgerun.control.v1.Function
+	27, // 3: edgerun.control.v1.ListFunctionsRequest.match_labels:type_name -> edgerun.control.v1.ListFunctionsRequest.MatchLabelsEntry
+	32, // 4: edgerun.control.v1.ListFunctionsResponse.functions:type_name -> edgerun.control.v1.Function
+	33, // 5: edgerun.control.v1.CreateVersionRequest.limits:type_name -> edgerun.common.v1.Limits
+	28, // 6: edgerun.control.v1.CreateVersionRequest.labels:type_name -> edgerun.control.v1.CreateVersionRequest.LabelsEntry
+	34, // 7: edgerun.control.v1.CreateVersionResponse.version:type_name -> edgerun.control.v1.FunctionVersion
+	29, // 8: edgerun.control.v1.ListVersionsRequest.match_labels:type_name -> edgerun.control.v1.ListVersionsRequest.MatchLabelsEntry
+	34, // 9: edgerun.control.v1.ListVersionsResponse.versions:type_name -> edgerun.control.v1.FunctionVersion
+	32, // 10: edgerun.control.v1.ActivateVersionResponse.function:type_name -> edgerun.control.v1.Function
+	35, // 11: edgerun.control.v1.SetEnvRequest.entry:type_name -> edgerun.control.v1.EnvEntry
+	35, // 12: edgerun.control.v1.SetEnvResponse.entry:type_name -> edgerun.control.v1.EnvEntry
+	30, // 13: edgerun.control.v1.SetLabelsRequest.labels:type_name -> edgerun.control.v1.SetLabelsRequest.LabelsEntry
+	32, // 14: edgerun.control.v1.SetLabelsResponse.function:type_name -> edgerun.control.v1.Function
+	31, // 15: edgerun.control.v1.PatchLabelsRequest.set:type_name -> edgerun.control.v1.PatchLabelsRequest.SetEntry
+	32, // 16: edgerun.control.v1.PatchLabelsResponse.function:type_name -> edgerun.control.v1.Function
+	32, // 17: edgerun.control.v1.SetEgressResponse.function:type_name -> edgerun.control.v1.Function
+	35, // 18: edgerun.control.v1.ListEnvResponse.entries:type_name -> edgerun.control.v1.EnvEntry
+	0,  // 19: edgerun.control.v1.FunctionService.CreateFunction:input_type -> edgerun.control.v1.CreateFunctionRequest
+	2,  // 20: edgerun.control.v1.FunctionService.GetFunction:input_type -> edgerun.control.v1.GetFunctionRequest
+	4,  // 21: edgerun.control.v1.FunctionService.ListFunctions:input_type -> edgerun.control.v1.ListFunctionsRequest
+	6,  // 22: edgerun.control.v1.FunctionService.DeleteFunction:input_type -> edgerun.control.v1.DeleteFunctionRequest
+	8,  // 23: edgerun.control.v1.FunctionService.CreateVersion:input_type -> edgerun.control.v1.CreateVersionRequest
+	10, // 24: edgerun.control.v1.FunctionService.ListVersions:input_type -> edgerun.control.v1.ListVersionsRequest
+	12, // 25: edgerun.control.v1.FunctionService.ActivateVersion:input_type -> edgerun.control.v1.ActivateVersionRequest
+	14, // 26: edgerun.control.v1.FunctionService.SetEnv:input_type -> edgerun.control.v1.SetEnvRequest
+	16, // 27: edgerun.control.v1.FunctionService.DeleteEnv:input_type -> edgerun.control.v1.DeleteEnvRequest
+	18, // 28: edgerun.control.v1.FunctionService.ListEnv:input_type -> edgerun.control.v1.ListEnvRequest
+	19, // 29: edgerun.control.v1.FunctionService.SetEgress:input_type -> edgerun.control.v1.SetEgressRequest
+	20, // 30: edgerun.control.v1.FunctionService.SetLabels:input_type -> edgerun.control.v1.SetLabelsRequest
+	22, // 31: edgerun.control.v1.FunctionService.PatchLabels:input_type -> edgerun.control.v1.PatchLabelsRequest
+	1,  // 32: edgerun.control.v1.FunctionService.CreateFunction:output_type -> edgerun.control.v1.CreateFunctionResponse
+	3,  // 33: edgerun.control.v1.FunctionService.GetFunction:output_type -> edgerun.control.v1.GetFunctionResponse
+	5,  // 34: edgerun.control.v1.FunctionService.ListFunctions:output_type -> edgerun.control.v1.ListFunctionsResponse
+	7,  // 35: edgerun.control.v1.FunctionService.DeleteFunction:output_type -> edgerun.control.v1.DeleteFunctionResponse
+	9,  // 36: edgerun.control.v1.FunctionService.CreateVersion:output_type -> edgerun.control.v1.CreateVersionResponse
+	11, // 37: edgerun.control.v1.FunctionService.ListVersions:output_type -> edgerun.control.v1.ListVersionsResponse
+	13, // 38: edgerun.control.v1.FunctionService.ActivateVersion:output_type -> edgerun.control.v1.ActivateVersionResponse
+	15, // 39: edgerun.control.v1.FunctionService.SetEnv:output_type -> edgerun.control.v1.SetEnvResponse
+	17, // 40: edgerun.control.v1.FunctionService.DeleteEnv:output_type -> edgerun.control.v1.DeleteEnvResponse
+	25, // 41: edgerun.control.v1.FunctionService.ListEnv:output_type -> edgerun.control.v1.ListEnvResponse
+	24, // 42: edgerun.control.v1.FunctionService.SetEgress:output_type -> edgerun.control.v1.SetEgressResponse
+	21, // 43: edgerun.control.v1.FunctionService.SetLabels:output_type -> edgerun.control.v1.SetLabelsResponse
+	23, // 44: edgerun.control.v1.FunctionService.PatchLabels:output_type -> edgerun.control.v1.PatchLabelsResponse
+	32, // [32:45] is the sub-list for method output_type
+	19, // [19:32] is the sub-list for method input_type
+	19, // [19:19] is the sub-list for extension type_name
+	19, // [19:19] is the sub-list for extension extendee
+	0,  // [0:19] is the sub-list for field type_name
 }
 
 func init() { file_edgerun_control_v1_function_proto_init() }
@@ -1517,7 +1706,7 @@ func file_edgerun_control_v1_function_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_edgerun_control_v1_function_proto_rawDesc), len(file_edgerun_control_v1_function_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   29,
+			NumMessages:   32,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

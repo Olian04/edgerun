@@ -76,3 +76,22 @@ func Reason(err error) commonv1.ErrorReason {
 	}
 	return commonv1.ErrorReason_ERROR_REASON_UNSPECIFIED
 }
+
+// WithInvocation returns err with the id of the invocation record written for
+// the call added to its ErrorInfo, so that whoever receives the error can find
+// the record. An error that carries no ErrorInfo is returned as it is.
+func WithInvocation(err error, id string) error {
+	info := Info(err)
+	var ce *connect.Error
+	if info == nil || id == "" || !errors.As(err, &ce) {
+		return err
+	}
+	out := connect.NewError(ce.Code(), ce.Unwrap())
+	for k, v := range ce.Meta() {
+		out.Meta()[k] = v
+	}
+	if d, derr := connect.NewErrorDetail(&commonv1.ErrorInfo{Reason: info.GetReason(), Message: info.GetMessage(), InvocationId: id}); derr == nil {
+		out.AddDetail(d)
+	}
+	return out
+}

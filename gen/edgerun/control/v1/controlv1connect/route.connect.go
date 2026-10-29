@@ -43,6 +43,12 @@ const (
 	// RouteServiceDeleteRouteProcedure is the fully-qualified name of the RouteService's DeleteRoute
 	// RPC.
 	RouteServiceDeleteRouteProcedure = "/edgerun.control.v1.RouteService/DeleteRoute"
+	// RouteServiceSetRouteLabelsProcedure is the fully-qualified name of the RouteService's
+	// SetRouteLabels RPC.
+	RouteServiceSetRouteLabelsProcedure = "/edgerun.control.v1.RouteService/SetRouteLabels"
+	// RouteServicePatchRouteLabelsProcedure is the fully-qualified name of the RouteService's
+	// PatchRouteLabels RPC.
+	RouteServicePatchRouteLabelsProcedure = "/edgerun.control.v1.RouteService/PatchRouteLabels"
 )
 
 // RouteServiceClient is a client for the edgerun.control.v1.RouteService service.
@@ -52,6 +58,13 @@ type RouteServiceClient interface {
 	CreateRoute(context.Context, *connect.Request[v1.CreateRouteRequest]) (*connect.Response[v1.CreateRouteResponse], error)
 	ListRoutes(context.Context, *connect.Request[v1.ListRoutesRequest]) (*connect.Response[v1.ListRoutesResponse], error)
 	DeleteRoute(context.Context, *connect.Request[v1.DeleteRouteRequest]) (*connect.Response[v1.DeleteRouteResponse], error)
+	// SetRouteLabels replaces the route's labels (an empty map clears them).
+	// Labels are not part of what a route routes: changing them changes nothing
+	// about which requests it serves, which is why a route can be relabelled
+	// though it cannot be retargeted.
+	SetRouteLabels(context.Context, *connect.Request[v1.SetRouteLabelsRequest]) (*connect.Response[v1.SetRouteLabelsResponse], error)
+	// PatchRouteLabels is PatchLabels for a route.
+	PatchRouteLabels(context.Context, *connect.Request[v1.PatchRouteLabelsRequest]) (*connect.Response[v1.PatchRouteLabelsResponse], error)
 }
 
 // NewRouteServiceClient constructs a client for the edgerun.control.v1.RouteService service. By
@@ -83,14 +96,28 @@ func NewRouteServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(routeServiceMethods.ByName("DeleteRoute")),
 			connect.WithClientOptions(opts...),
 		),
+		setRouteLabels: connect.NewClient[v1.SetRouteLabelsRequest, v1.SetRouteLabelsResponse](
+			httpClient,
+			baseURL+RouteServiceSetRouteLabelsProcedure,
+			connect.WithSchema(routeServiceMethods.ByName("SetRouteLabels")),
+			connect.WithClientOptions(opts...),
+		),
+		patchRouteLabels: connect.NewClient[v1.PatchRouteLabelsRequest, v1.PatchRouteLabelsResponse](
+			httpClient,
+			baseURL+RouteServicePatchRouteLabelsProcedure,
+			connect.WithSchema(routeServiceMethods.ByName("PatchRouteLabels")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // routeServiceClient implements RouteServiceClient.
 type routeServiceClient struct {
-	createRoute *connect.Client[v1.CreateRouteRequest, v1.CreateRouteResponse]
-	listRoutes  *connect.Client[v1.ListRoutesRequest, v1.ListRoutesResponse]
-	deleteRoute *connect.Client[v1.DeleteRouteRequest, v1.DeleteRouteResponse]
+	createRoute      *connect.Client[v1.CreateRouteRequest, v1.CreateRouteResponse]
+	listRoutes       *connect.Client[v1.ListRoutesRequest, v1.ListRoutesResponse]
+	deleteRoute      *connect.Client[v1.DeleteRouteRequest, v1.DeleteRouteResponse]
+	setRouteLabels   *connect.Client[v1.SetRouteLabelsRequest, v1.SetRouteLabelsResponse]
+	patchRouteLabels *connect.Client[v1.PatchRouteLabelsRequest, v1.PatchRouteLabelsResponse]
 }
 
 // CreateRoute calls edgerun.control.v1.RouteService.CreateRoute.
@@ -108,6 +135,16 @@ func (c *routeServiceClient) DeleteRoute(ctx context.Context, req *connect.Reque
 	return c.deleteRoute.CallUnary(ctx, req)
 }
 
+// SetRouteLabels calls edgerun.control.v1.RouteService.SetRouteLabels.
+func (c *routeServiceClient) SetRouteLabels(ctx context.Context, req *connect.Request[v1.SetRouteLabelsRequest]) (*connect.Response[v1.SetRouteLabelsResponse], error) {
+	return c.setRouteLabels.CallUnary(ctx, req)
+}
+
+// PatchRouteLabels calls edgerun.control.v1.RouteService.PatchRouteLabels.
+func (c *routeServiceClient) PatchRouteLabels(ctx context.Context, req *connect.Request[v1.PatchRouteLabelsRequest]) (*connect.Response[v1.PatchRouteLabelsResponse], error) {
+	return c.patchRouteLabels.CallUnary(ctx, req)
+}
+
 // RouteServiceHandler is an implementation of the edgerun.control.v1.RouteService service.
 type RouteServiceHandler interface {
 	// CreateRoute fails with ALREADY_EXISTS if the same (host_pattern,
@@ -115,6 +152,13 @@ type RouteServiceHandler interface {
 	CreateRoute(context.Context, *connect.Request[v1.CreateRouteRequest]) (*connect.Response[v1.CreateRouteResponse], error)
 	ListRoutes(context.Context, *connect.Request[v1.ListRoutesRequest]) (*connect.Response[v1.ListRoutesResponse], error)
 	DeleteRoute(context.Context, *connect.Request[v1.DeleteRouteRequest]) (*connect.Response[v1.DeleteRouteResponse], error)
+	// SetRouteLabels replaces the route's labels (an empty map clears them).
+	// Labels are not part of what a route routes: changing them changes nothing
+	// about which requests it serves, which is why a route can be relabelled
+	// though it cannot be retargeted.
+	SetRouteLabels(context.Context, *connect.Request[v1.SetRouteLabelsRequest]) (*connect.Response[v1.SetRouteLabelsResponse], error)
+	// PatchRouteLabels is PatchLabels for a route.
+	PatchRouteLabels(context.Context, *connect.Request[v1.PatchRouteLabelsRequest]) (*connect.Response[v1.PatchRouteLabelsResponse], error)
 }
 
 // NewRouteServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -142,6 +186,18 @@ func NewRouteServiceHandler(svc RouteServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(routeServiceMethods.ByName("DeleteRoute")),
 		connect.WithHandlerOptions(opts...),
 	)
+	routeServiceSetRouteLabelsHandler := connect.NewUnaryHandler(
+		RouteServiceSetRouteLabelsProcedure,
+		svc.SetRouteLabels,
+		connect.WithSchema(routeServiceMethods.ByName("SetRouteLabels")),
+		connect.WithHandlerOptions(opts...),
+	)
+	routeServicePatchRouteLabelsHandler := connect.NewUnaryHandler(
+		RouteServicePatchRouteLabelsProcedure,
+		svc.PatchRouteLabels,
+		connect.WithSchema(routeServiceMethods.ByName("PatchRouteLabels")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/edgerun.control.v1.RouteService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case RouteServiceCreateRouteProcedure:
@@ -150,6 +206,10 @@ func NewRouteServiceHandler(svc RouteServiceHandler, opts ...connect.HandlerOpti
 			routeServiceListRoutesHandler.ServeHTTP(w, r)
 		case RouteServiceDeleteRouteProcedure:
 			routeServiceDeleteRouteHandler.ServeHTTP(w, r)
+		case RouteServiceSetRouteLabelsProcedure:
+			routeServiceSetRouteLabelsHandler.ServeHTTP(w, r)
+		case RouteServicePatchRouteLabelsProcedure:
+			routeServicePatchRouteLabelsHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -169,4 +229,12 @@ func (UnimplementedRouteServiceHandler) ListRoutes(context.Context, *connect.Req
 
 func (UnimplementedRouteServiceHandler) DeleteRoute(context.Context, *connect.Request[v1.DeleteRouteRequest]) (*connect.Response[v1.DeleteRouteResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("edgerun.control.v1.RouteService.DeleteRoute is not implemented"))
+}
+
+func (UnimplementedRouteServiceHandler) SetRouteLabels(context.Context, *connect.Request[v1.SetRouteLabelsRequest]) (*connect.Response[v1.SetRouteLabelsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("edgerun.control.v1.RouteService.SetRouteLabels is not implemented"))
+}
+
+func (UnimplementedRouteServiceHandler) PatchRouteLabels(context.Context, *connect.Request[v1.PatchRouteLabelsRequest]) (*connect.Response[v1.PatchRouteLabelsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("edgerun.control.v1.RouteService.PatchRouteLabels is not implemented"))
 }

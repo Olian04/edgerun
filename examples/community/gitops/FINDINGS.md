@@ -30,7 +30,7 @@ orchestrator and worker (also with `-race`).
    plan is validated before the first write, nothing of the function is created by the apply either. The
    hand-written copy of the server's rules is deleted except for the 64-variable total (a cumulative rule no single
    validate-only call can see).
-4. **Lookup is by scanning. STILL OPEN.** No name filter on functions, no function filter on routes. The owner filter
+4. **Lookup is by scanning. RESOLVED since this probe (protocol): `ListFunctionsRequest.name`, `ListRoutesRequest.function_id`, `has_label_keys` / `lacks_label_keys`. Original finding:** No name filter on functions, no function filter on routes. The owner filter
    turns the steady state into one filtered list per kind; a name that is not ours still costs a full scan.
 5. **Control errors carry no ErrorReason; docs said to branch on it. RESOLVED (docs).**
 6. **Multi-step operations are not atomic. STILL OPEN, inherent.** Validate-only narrows it (a rejected function is not
@@ -45,6 +45,13 @@ orchestrator and worker (also with `-race`).
 11. **Minor. STILL OPEN.** The `All*` iterators take no page size or per-page deadline; there is no supported
     throwaway-stack tool (the harness, which builds from a snapshot given by `GITOPS_EDGERUN_SRC`, is still the most
     work); `ingress.Invocation` and `controlv1.Invocation` share a name.
+
+## Since this probe
+
+`PlanService.Validate` validates a sequence (steps `bind` names, later steps use `$name`), which covers a retarget and
+the 64-variable limit, the first two items below. `PatchLabels` / `PatchRouteLabels` (per-key, atomic),
+`SetRouteLabels` (a route can be relabelled without being recreated) and the has / lacks key filters cover three
+more. The service itself has not been migrated to them; the notes below are as the probe found things.
 
 ## Still awkward, with the new features
 

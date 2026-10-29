@@ -26,7 +26,7 @@ type instruments struct {
 	tracer     trace.Tracer
 	duration   metric.Float64Histogram
 	attempts   metric.Int64Histogram
-	refusals   metric.Int64Counter
+	refusals   metric.Int64Histogram
 	registered metric.Registration
 }
 
@@ -41,9 +41,10 @@ func newInstruments(cache *snapshot.Cache) *instruments {
 		metric.WithUnit("{attempt}"),
 		metric.WithDescription("How many workers an invocation was offered to before it was served or given up."),
 		metric.WithExplicitBucketBoundaries(1, 2, 3, 4))
-	in.refusals, _ = m.Int64Counter("edgerun.invocation.refusals",
+	in.refusals, _ = m.Int64Histogram("edgerun.invocation.refusals",
 		metric.WithUnit("{refusal}"),
-		metric.WithDescription("Attempts on a worker that came to nothing and led to trying another: the worker had no free slot, or could not be reached."))
+		metric.WithDescription("How many attempts on a worker came to nothing and led to trying another, per invocation and kind (edgerun.refusal.kind): the worker had no free slot, or could not be reached. Zero is recorded too, so a percentile says how often an invocation had to be moved."),
+		metric.WithExplicitBucketBoundaries(0, 1, 2, 3, 4))
 	ready, _ := m.Int64ObservableGauge("edgerun.workers.ready",
 		metric.WithUnit("{worker}"), metric.WithDescription("Workers that are alive and ready for work, as this orchestrator sees them."))
 	svcs, _ := m.Int64ObservableGauge("edgerun.network_services.ready",
@@ -57,7 +58,7 @@ func newInstruments(cache *snapshot.Cache) *instruments {
 }
 
 // finish records what an invocation came to: the metrics, and the span's outcome.
-func (in *instruments) finish(ctx context.Context, span trace.Span, rec *controlv1.Invocation, function string, attempts int, started time.Time, err error) {
+func (in *instruments) finish(ctx context.Context, span trace.Span, rec *controlv1.Invocation, function string, attempts int, refused map[string]int, started time.Time, err error) {
 	reason := errs.Reason(err)
 	attrs := []attribute.KeyValue{attribute.String("edgerun.function.name", function), errorType(reason)}
 	if rec.Status != 0 {
@@ -65,6 +66,9 @@ func (in *instruments) finish(ctx context.Context, span trace.Span, rec *control
 	}
 	in.duration.Record(ctx, time.Since(started).Seconds(), metric.WithAttributes(attrs...))
 	in.attempts.Record(ctx, int64(attempts), metric.WithAttributes(attribute.String("edgerun.function.name", function)))
+	for _, kind := range []string{"no_capacity", "unreachable"} {
+		in.refusals.Record(ctx, int64(refused[kind]), metric.WithAttributes(attribute.String("edgerun.refusal.kind", kind)))
+	}
 	if err != nil {
 		span.SetAttributes(errorType(reason))
 		if reason != commonv1.ErrorReason_ERROR_REASON_UNSPECIFIED {

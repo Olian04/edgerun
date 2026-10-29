@@ -60,8 +60,12 @@ func (s *Store) GetFunction(ctx context.Context, id string) (*controlv1.Function
 	return f, err
 }
 
-// ListFunctions pages through functions ordered by name.
-func (s *Store) ListFunctions(ctx context.Context, size uint32, token string, match map[string]string) ([]*controlv1.Function, string, error) {
+// ListFunctions pages through functions ordered by name. name, if set, selects
+// the one function that has it.
+func (s *Store) ListFunctions(ctx context.Context, size uint32, token string, f LabelFilter, name string) ([]*controlv1.Function, string, error) {
+	if err := f.Validate(); err != nil {
+		return nil, "", err
+	}
 	after, err := decodeToken(token, 1)
 	if err != nil {
 		return nil, "", err
@@ -71,8 +75,14 @@ func (s *Store) ListFunctions(ctx context.Context, size uint32, token string, ma
 	if after != nil {
 		last = after[0]
 	}
+	where, args := f.where([]any{last})
+	if name != "" {
+		args = append(args, name)
+		where += " AND name = $" + strconv.Itoa(len(args))
+	}
+	args = append(args, n+1)
 	rows, err := s.q(ctx).Query(ctx,
-		`SELECT `+functionCols+` FROM functions WHERE name > $1 AND labels @> $3 ORDER BY name LIMIT $2`, last, n+1, labelArg(match))
+		`SELECT `+functionCols+` FROM functions WHERE name > $1 AND `+where+` ORDER BY name LIMIT $`+strconv.Itoa(len(args)), args...)
 	if err != nil {
 		return nil, "", err
 	}
@@ -207,7 +217,10 @@ func (s *Store) CreateVersion(ctx context.Context, nv NewVersion) (*controlv1.Fu
 }
 
 // ListVersions pages through a function's versions, newest first.
-func (s *Store) ListVersions(ctx context.Context, functionID string, size uint32, token string, match map[string]string) ([]*controlv1.FunctionVersion, string, error) {
+func (s *Store) ListVersions(ctx context.Context, functionID string, size uint32, token string, f LabelFilter) ([]*controlv1.FunctionVersion, string, error) {
+	if err := f.Validate(); err != nil {
+		return nil, "", err
+	}
 	fid, err := parseID("function", functionID)
 	if err != nil {
 		return nil, "", err
@@ -226,8 +239,10 @@ func (s *Store) ListVersions(ctx context.Context, functionID string, size uint32
 		return nil, "", err
 	}
 	n := pageSize(size)
+	where, args := f.where([]any{fid, below})
+	args = append(args, n+1)
 	rows, err := s.q(ctx).Query(ctx, `SELECT `+versionCols+` FROM function_versions
-		WHERE function_id = $1 AND number < $2 AND labels @> $4 ORDER BY number DESC LIMIT $3`, fid, below, n+1, labelArg(match))
+		WHERE function_id = $1 AND number < $2 AND `+where+` ORDER BY number DESC LIMIT $`+strconv.Itoa(len(args)), args...)
 	if err != nil {
 		return nil, "", err
 	}

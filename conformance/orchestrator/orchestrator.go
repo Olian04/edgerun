@@ -116,7 +116,10 @@ func Run(t *testing.T, target Target) {
 	t.Run("ControlPagination", h.controlPagination)
 	t.Run("ControlLabels", h.controlLabels)
 	t.Run("ControlEnvRevision", h.controlEnvRevision)
+	t.Run("ControlLabelEditing", h.controlLabelEditing)
+	t.Run("ControlFilters", h.controlFilters)
 	t.Run("ValidateOnly", h.validateOnly)
+	t.Run("Plans", h.plans)
 	t.Run("Artifacts", h.artifacts)
 	t.Run("FleetRegistration", h.fleetRegistration)
 	t.Run("FleetLiveness", h.fleetLiveness)
@@ -135,6 +138,7 @@ func Run(t *testing.T, target Target) {
 	t.Run("NetworkRouting", h.networkRouting)
 	t.Run("EgressReachesTheWorker", h.egressReachesTheWorker)
 	t.Run("InvocationRecords", h.invocationRecords)
+	t.Run("InvocationLookup", h.invocationLookup)
 	t.Run("FunctionDeletion", h.functionDeletion)
 }
 
@@ -147,6 +151,7 @@ type harness struct {
 
 	fn   controlv1connect.FunctionServiceClient
 	rt   controlv1connect.RouteServiceClient
+	plan controlv1connect.PlanServiceClient
 	insp controlv1connect.InspectionServiceClient
 	ing  ingressv1connect.IngressServiceClient
 
@@ -162,6 +167,7 @@ func newHarness(url string, env Env, n check.Net) *harness {
 		url: url, env: env, net: n, run: hex.EncodeToString(run[:]),
 		fn:   controlv1connect.NewFunctionServiceClient(hc, url, admin),
 		rt:   controlv1connect.NewRouteServiceClient(hc, url, admin),
+		plan: controlv1connect.NewPlanServiceClient(hc, url, admin),
 		insp: controlv1connect.NewInspectionServiceClient(hc, url, admin),
 		ing:  ingressv1connect.NewIngressServiceClient(&http.Client{Transport: budgetTransport{}}, url, check.Bearer(env.IngressToken)),
 	}

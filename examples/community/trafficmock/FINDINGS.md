@@ -72,8 +72,8 @@ on the killed worker according to its record; the other requests verify. No fail
     `NO_CAPACITY` retries between workers happen thousands of times a minute under this load and appear nowhere: no
     log, no counter, `worker_id` of the record is the last attempt. The test counts them with a TCP forwarder in
     front of the workers. A retry counter or `attempts` on the record would make saturation visible. **Partly addressed:** the orchestrator now
-    logs each retry at debug level (invocation, attempt, worker, reason). A counter or an `attempts` field on the record is
-    a protocol and metrics decision, not made.
+    logs each retry at debug level (invocation, attempt, worker, reason). Decided since: it is telemetry, not a field of
+    the record (`edgerun.invocation.attempts` and `edgerun.invocation.refusals`, both histograms), so it is kept in one place.
 
 (An earlier version of the test put `httputil.ReverseProxy` between the orchestrator and the workers to count
 attempts: about one run in four then had an invocation torn mid-body ("incomplete envelope: unexpected EOF"). 22 runs
@@ -123,7 +123,7 @@ that stops reading holds the producer a few MiB ahead, not the whole response.
 9. **`cmd/orchestrator` had no flag for the largest request body (awkward). Fixed.** `--max-request-bytes`.
 11. **The library's frontend example ignored the `io.Copy` error (docs only). Fixed.** It now shows what a mid-body
     failure must do, and mentions `FrontendStatus`.
-1. **No cheap way from a response or an error to its invocation record (awkward). OPEN, protocol.** `Invoke` errors
+1. **No cheap way from a response or an error to its invocation record (awkward). RESOLVED since this probe (protocol, without the optional head fields): `ErrorInfo.invocation_id`, `X-Edgerun-Invocation-Id` on failures, `GetInvocation` and a `request_id` filter. Original finding:** `Invoke` errors
     carry no invocation id though a record is written; `ListInvocations` filters only by function (no get-by-id, no
     `request_id` filter), so the tool scans newest-first, with the admin token (a second scope a frontend does not
     have); records become visible 24-200 ms after the response; which worker and version served a request exists only in
