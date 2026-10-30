@@ -1,0 +1,86 @@
+# A complete edgerun stack on one machine. Not hardened: the tokens below are
+# placeholders and every component speaks plain HTTP. Replace the tokens, the
+# secret key and the admin password before exposing anything.
+#
+#   docker compose -f deploy/compose.yaml up --build
+#
+# Then: admin UI on http://localhost:9090 (alice / admin), requests on :8000.
+#
+# Generate the values marked CHANGE with:
+#   secret key       head -c32 /dev/urandom | base64
+#   password hash    printf '%s' 'new-password' | go run ./cmd/admin hash-password
+#                    (double every $ as $$ when pasting into this file)
+x-tokens: &tokens
+  EDGERUN_INGRESS_TOKEN: change-me-ingress
+  EDGERUN_WORKER_TOKEN: change-me-worker
+  EDGERUN_ADMIN_TOKEN: change-me-admin
+  EDGERUN_EXECUTION_TOKEN: change-me-execution
+  EDGERUN_EGRESS_TOKEN: change-me-egress
+  EDGERUN_NETWORK_TOKEN: change-me-network
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: edgerun
+      POSTGRES_DB: edgerun
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d edgerun"]
+      interval: 2s
+      retries: 30
+
+  orchestrator:
+    build: { context: .., dockerfile: deploy/Dockerfile, args: { CMD: orchestrator } }
+    environment:
+      <<: *tokens
+      EDGERUN_DATABASE_URL: postgres://postgres:edgerun@postgres:5432/edgerun?sslmode=disable
+      EDGERUN_SECRET_KEY: ZGV2LW9ubHktc2VjcmV0LWtleS0zMi1ieXRlcyEhISE= # CHANGE
+      EDGERUN_ORCHESTRATOR_LISTEN: ":8080"
+    depends_on: { postgres: { condition: service_healthy } }
+
+  # A network service: the only component that talks to a network on guests'
+  # behalf. It registers with the orchestrator and says what it carries; run
+  # several, one per network (this one carries everything on the public
+  # internet, and refuses private and loopback addresses). A service inside a
+  # private network would set EDGERUN_EGRESS_COVERS to that network and
+  # EDGERUN_EGRESS_ALLOW_NETWORKS to the ranges it may connect to.
+  egress:
+    build: { context: .., dockerfile: deploy/Dockerfile, args: { CMD: egress } }
+    environment:
+      <<: *tokens
+      EDGERUN_EGRESS_LISTEN: ":8090"
+      EDGERUN_EGRESS_ADVERTISE_URL: http://egress:8090
+      EDGERUN_ORCHESTRATOR_URL: http://orchestrator:8080
+      EDGERUN_EGRESS_COVERS: "*"
+    depends_on: [orchestrator]
+
+  worker:
+    build: { context: .., dockerfile: deploy/Dockerfile, args: { CMD: worker } }
+    environment:
+      <<: *tokens
+      EDGERUN_ORCHESTRATOR_URL: http://orchestrator:8080
+      EDGERUN_WORKER_ADVERTISE_URL: http://worker:9000
+    depends_on: [orchestrator]
+    deploy: { replicas: 1 } # scale freely: workers register themselves
+
+  frontend:
+    build: { context: .., dockerfile: deploy/Dockerfile, args: { CMD: frontend } }
+    environment:
+      <<: *tokens
+      EDGERUN_ORCHESTRATOR_URL: http://orchestrator:8080
+    ports: ["8000:8000"]
+    depends_on: [orchestrator]
+
+  admin:
+    build: { context: .., dockerfile: deploy/Dockerfile, args: { CMD: admin } }
+    environment:
+      <<: *tokens
+      EDGERUN_ORCHESTRATOR_URL: http://orchestrator:8080
+      # alice / admin. CHANGE.
+      EDGERUN_ADMIN_USERS: "alice:admin:$$2a$$10$$LW2D/nXQOjpQXLjJEIMQROlZlQSQRhljk5ZebS.qREc3nFbu9APn2"
+    ports: ["9090:9090"]
+    depends_on: [orchestrator]
+
+volumes:
+  pgdata:

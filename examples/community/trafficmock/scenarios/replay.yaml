@@ -1,0 +1,6 @@
+# Replay a recorded trace (see trace.jsonl; `edgerun-trafficmock listen -record t.jsonl` writes one).
+# speed: 1 (original), 0.5 or 4 (scaled), max (as fast as `concurrency` requests in flight allow)
+name: replay
+defaults: {host: mock.test, budget: 5s}
+replay: {file: trace.jsonl, speed: "2"}
+expect: [errors==0]

@@ -1,0 +1,13 @@
+# Users, not rates: 50 users each send a request, wait for it, think, repeat.
+name: closed
+defaults: {host: mock.test, budget: 10s}
+requests:
+  - {name: browse, weight: 8, paths: [/, /status/200]}
+  - {name: upload, weight: 1, method: POST, path: /echo, body: {size: 64KiB}}
+load:
+  model: closed
+  users: 50
+  think: 250ms
+  think_dist: exp        # fixed | exp | uniform
+  ramp_up: 10s           # users start spread over this time
+  duration: 2m

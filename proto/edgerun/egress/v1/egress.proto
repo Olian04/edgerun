@@ -1,0 +1,78 @@
+// Egress seam: outbound HTTP on behalf of guests, through a network service.
+// Server: network service. Client: worker.
+//
+// A guest never touches the network itself. The worker has no route out for it:
+// every outbound request a guest makes is handed to a network service over this
+// protocol, and the service is the one place that decides whether it may leave,
+// and does the leaving. That is what makes the policy enforceable (the worker
+// need not be trusted with a network), observable, and replaceable (any
+// implementation of this package will do).
+//
+// Closed by default: a call carries the destinations the calling function may
+// reach (allow), and an empty list allows nothing. The service adds its own
+// restrictions on top, which a caller cannot lift: it carries only what it
+// declared (it registers with the orchestrator, see registry.proto) and it
+// refuses the address classes the protocol docs name.
+syntax = "proto3";
+
+package edgerun.egress.v1;
+
+import "edgerun/common/v1/common.proto";
+
+service EgressService {
+  rpc Describe(DescribeRequest) returns (DescribeResponse);
+
+  // Fetch performs one HTTP request and streams the response: exactly one
+  // head, then zero or more chunks of at most 1 MiB. Redirects are not
+  // followed (the caller sees the 3xx and decides, and every hop is checked on
+  // its own). The RPC deadline is the budget for the whole exchange, and
+  // cancelling the call abandons the upstream request.
+  //
+  // Platform failures use these reasons, with the canonical codes in the
+  // protocol docs: ERROR_REASON_EGRESS_DENIED (the destination is not allowed),
+  // ERROR_REASON_EGRESS_FAILED (it could not be reached, or failed mid-way),
+  // ERROR_REASON_RESPONSE_TOO_LARGE, ERROR_REASON_REQUEST_TOO_LARGE and
+  // ERROR_REASON_DEADLINE_EXCEEDED. A malformed request is invalid_argument
+  // with no reason. An upstream answering 4xx or 5xx is NOT an error: it is a
+  // response, forwarded as it is.
+  rpc Fetch(FetchRequest) returns (stream FetchResponse);
+}
+
+message DescribeRequest {}
+
+message DescribeResponse {
+  edgerun.common.v1.Implementation implementation = 1;
+  // Largest request body the service accepts.
+  uint64 max_request_body_bytes = 2;
+  // Largest response body it will return, whatever the caller asks for.
+  uint64 max_response_body_bytes = 3;
+  // What it carries, as it registered with the orchestrator.
+  repeated string covers = 4;
+}
+
+message FetchRequest {
+  // Upper-case HTTP method.
+  string method = 1;
+  // Absolute http or https URL, without credentials.
+  string url = 2;
+  repeated edgerun.common.v1.Header headers = 3;
+  bytes body = 4;
+  // The destinations the caller permits for this request: host patterns as
+  // described in the protocol docs ("example.com", "example.com:8443",
+  // "*.example.com"). The request is refused unless its URL matches one, and
+  // unless the service carries its host (see DescribeResponse.covers).
+  repeated string allow = 5;
+  // Bound on the response body; 0 means the service's own maximum. The
+  // service's maximum applies in any case.
+  uint64 max_response_bytes = 6;
+  // Correlation id of the invocation on whose behalf this is made. For the
+  // service's logs only.
+  string invocation_id = 7;
+}
+
+message FetchResponse {
+  oneof part {
+    edgerun.common.v1.HttpResponseHead head = 1;
+    bytes chunk = 2;
+  }
+}

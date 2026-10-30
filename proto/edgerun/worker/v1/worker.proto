@@ -1,0 +1,30 @@
+// Shared description of a worker's capabilities, used both when a worker
+// describes itself to its caller and when it registers with an orchestrator.
+syntax = "proto3";
+
+package edgerun.worker.v1;
+
+import "edgerun/common/v1/common.proto";
+
+// WorkerInfo is everything the orchestrator may use to decide whether and how
+// to schedule onto a worker. Scheduling is driven by these declared
+// capabilities, never by Implementation.name.
+message WorkerInfo {
+  edgerun.common.v1.Implementation implementation = 1;
+  // Guest ABIs this worker can execute, e.g. "wagi-1". A module is only
+  // scheduled onto workers that list its ABI.
+  repeated string abis = 2;
+  // Number of invocations the worker runs at once. Beyond this it answers
+  // ERROR_REASON_NO_CAPACITY instead of queueing.
+  uint32 max_concurrency = 3;
+  // Free-form scheduling hints, e.g. region. Not interpreted by the protocol.
+  map<string, string> labels = 4;
+}
+
+enum WorkerState {
+  WORKER_STATE_UNSPECIFIED = 0;
+  // Accepting new invocations.
+  WORKER_STATE_READY = 1;
+  // Finishing in-flight invocations; must not be sent new ones.
+  WORKER_STATE_DRAINING = 2;
+}

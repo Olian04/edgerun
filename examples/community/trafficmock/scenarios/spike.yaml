@@ -1,0 +1,12 @@
+# A quiet base load, a surge, and a thundering herd at one instant.
+# Against a worker with few slots this is where NO_CAPACITY (503 + Retry-After) shows up.
+name: spike
+defaults: {host: mock.test, budget: 5s}
+requests:
+  - {path: /sleep/200}
+load:
+  model: spike
+  rate: 5
+  duration: 30s
+  spikes: [{at: 10s, duration: 5s, rate: 100}]   # total rate inside the window
+  bursts: [{at: 20s, count: 200}]                # 200 requests released at once

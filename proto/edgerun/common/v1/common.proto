@@ -1,0 +1,121 @@
+// Types shared by every edgerun protocol. Nothing in here is a service:
+// this package only defines the vocabulary the seams have in common.
+syntax = "proto3";
+
+package edgerun.common.v1;
+
+// Header is one HTTP header field. Names are lowercase. Repeated fields keep
+// their wire order and are not merged, so a hop never has to guess.
+message Header {
+  string name = 1;
+  // Opaque bytes, as they arrived: HTTP does not say a header value is text, and
+  // a hop that changed or refused the bytes it did not understand would not be
+  // forwarding the message unchanged. A value contains no control character
+  // other than horizontal tab (no NUL, CR or LF); see docs/protocol.md.
+  bytes value = 2;
+}
+
+// HttpRequest is the request as received at the edge, forwarded unchanged
+// through every hop. The body is bounded (see MAX_REQUEST_BODY_BYTES in the
+// protocol docs) and carried inline so that any plain HTTP stack can implement
+// a peer.
+message HttpRequest {
+  // Upper-case HTTP method, e.g. "GET".
+  string method = 1;
+  // Value of the Host header, without normalisation.
+  string host = 2;
+  // Absolute path, already percent-decoded exactly once. Starts with "/".
+  string path = 3;
+  // Raw query string without the leading "?".
+  string raw_query = 4;
+  repeated Header headers = 5;
+  bytes body = 6;
+  // Address of the original client, "ip:port". Informational only.
+  string remote_addr = 7;
+}
+
+// HttpResponseHead is the status line and headers of a response. It is always
+// the first part of a response stream.
+message HttpResponseHead {
+  // HTTP status code, 100-599 excluding 1xx.
+  uint32 status = 1;
+  repeated Header headers = 2;
+}
+
+// Implementation identifies a concrete component. It is for humans and
+// dashboards; peers must never branch on it. Behaviour is negotiated through
+// declared capabilities (protocol versions, ABIs), not through names.
+message Implementation {
+  // e.g. "edgerun-worker-wazero".
+  string name = 1;
+  // Free-form version of the implementation.
+  string version = 2;
+  // Fully-qualified protocol packages this component speaks,
+  // e.g. "edgerun.worker.v1".
+  repeated string protocols = 3;
+}
+
+// EnvVar is one environment variable handed to a function. Secrets are
+// decrypted by the orchestrator and sent to the worker over the (authenticated)
+// transport; workers must not persist them.
+message EnvVar {
+  string name = 1;
+  string value = 2;
+}
+
+// Limits bound a single invocation. Wall-clock time is not here: it travels as
+// the RPC deadline so that every hop enforces the same budget.
+message Limits {
+  // Maximum linear memory the guest may grow to. 0 means "worker default".
+  // Workers may round this up to a size they support and clamp it to their
+  // own maximum.
+  uint64 memory_limit_bytes = 1;
+  // Maximum total output of the guest (response headers and body together).
+  // 0 means "worker default"; workers may clamp it to their own maximum.
+  uint64 max_response_bytes = 2;
+}
+
+// ErrorReason classifies why a platform operation failed. It travels as a
+// Connect error detail (ErrorInfo) next to the canonical RPC code, and is what
+// peers branch on. A function that itself answers 500 is NOT a platform error:
+// it is a successful invocation with status 500.
+enum ErrorReason {
+  ERROR_REASON_UNSPECIFIED = 0;
+  // No route matches the request, or the function has no active version.
+  ERROR_REASON_FUNCTION_NOT_FOUND = 1;
+  // No healthy worker could accept the invocation right now. Retryable.
+  ERROR_REASON_NO_CAPACITY = 2;
+  // The deadline expired before the function finished.
+  ERROR_REASON_DEADLINE_EXCEEDED = 3;
+  // The guest crashed, trapped, ran out of memory, or exited non-zero.
+  ERROR_REASON_FUNCTION_TRAPPED = 4;
+  // No worker supports the module's ABI, or the module violated its ABI.
+  ERROR_REASON_ABI_MISMATCH = 5;
+  // The request body exceeded the protocol bound.
+  ERROR_REASON_REQUEST_TOO_LARGE = 6;
+  // The guest produced more than Limits.max_response_bytes.
+  ERROR_REASON_RESPONSE_TOO_LARGE = 7;
+  // The artifact digest is unknown to the orchestrator.
+  ERROR_REASON_ARTIFACT_NOT_FOUND = 8;
+  // Anything else; the message is for operators, not for end users.
+  ERROR_REASON_INTERNAL = 9;
+  // Egress: the destination is not on the caller's allow list, or is one the
+  // network service never reaches.
+  ERROR_REASON_EGRESS_DENIED = 10;
+  // Egress: the destination was allowed but could not be reached, or the
+  // exchange broke part-way.
+  ERROR_REASON_EGRESS_FAILED = 11;
+}
+
+// ErrorInfo is attached to every non-OK Connect error as a detail.
+message ErrorInfo {
+  ErrorReason reason = 1;
+  // Operator-facing diagnostic. Never shown to end users by the frontend.
+  string message = 2;
+  // Set by the orchestrator on an Invoke error when an invocation record was
+  // written for the call (it was routed to a function): the id of that record,
+  // the same id a successful response carries in InvokeHead.invocation_id.
+  // Empty on every other error, and on every error of any other call. The
+  // record becomes visible to control.v1 shortly after the call ends.
+  string invocation_id = 3;
+}

@@ -1,0 +1,24 @@
+// Artifact seam: how workers obtain module bytes.
+// Server: orchestrator. Client: worker.
+//
+// Artifacts are immutable and content-addressed, so a worker may cache them
+// forever by digest and never needs to revalidate.
+syntax = "proto3";
+
+package edgerun.worker.v1;
+
+service ArtifactService {
+  // GetArtifact streams the bytes of the artifact in order. Chunk size is up
+  // to the server; clients must verify the digest of the reassembled bytes.
+  // Unknown digests fail with ERROR_REASON_ARTIFACT_NOT_FOUND.
+  rpc GetArtifact(GetArtifactRequest) returns (stream GetArtifactResponse);
+}
+
+message GetArtifactRequest {
+  // "sha256:<lowercase hex>".
+  string digest = 1;
+}
+
+message GetArtifactResponse {
+  bytes chunk = 1;
+}

@@ -1,0 +1,219 @@
+// Control seam, functions: create functions, upload versions, deploy, and
+// configure environment. Server: orchestrator. Clients: admin UI, CLI.
+syntax = "proto3";
+
+package edgerun.control.v1;
+
+import "edgerun/common/v1/common.proto";
+import "edgerun/control/v1/model.proto";
+
+service FunctionService {
+  rpc CreateFunction(CreateFunctionRequest) returns (CreateFunctionResponse);
+  rpc GetFunction(GetFunctionRequest) returns (GetFunctionResponse);
+  rpc ListFunctions(ListFunctionsRequest) returns (ListFunctionsResponse);
+  // DeleteFunction removes the function with its versions, routes and
+  // environment. Invocation records are retained.
+  rpc DeleteFunction(DeleteFunctionRequest) returns (DeleteFunctionResponse);
+
+  // CreateVersion stores a new immutable version. It does not deploy it unless
+  // activate is set.
+  rpc CreateVersion(CreateVersionRequest) returns (CreateVersionResponse);
+  rpc ListVersions(ListVersionsRequest) returns (ListVersionsResponse);
+  // ActivateVersion atomically points the function at a version. This is both
+  // deploy and rollback.
+  rpc ActivateVersion(ActivateVersionRequest) returns (ActivateVersionResponse);
+
+  // SetEnv creates or replaces one environment variable.
+  rpc SetEnv(SetEnvRequest) returns (SetEnvResponse);
+  rpc DeleteEnv(DeleteEnvRequest) returns (DeleteEnvResponse);
+  rpc ListEnv(ListEnvRequest) returns (ListEnvResponse);
+
+  // SetEgress replaces the function's network allow list. Each entry is a host
+  // pattern: "example.com", "example.com:8443", "*.example.com" or an IP
+  // literal, optionally with a port. Without a port only the scheme's default
+  // (80 for http, 443 for https) matches. Entries are lower-cased, deduplicated
+  // and sorted; a malformed entry, a bare "*" and more than 64 entries are
+  // invalid_argument. An empty list closes the function off again. Whatever is
+  // listed here, the network service may still refuse a destination.
+  rpc SetEgress(SetEgressRequest) returns (SetEgressResponse);
+
+  // SetLabels replaces the function's labels (an empty map clears them).
+  // Labels are validated as described in docs/protocol.md.
+  rpc SetLabels(SetLabelsRequest) returns (SetLabelsResponse);
+
+  // PatchLabels changes some of the function's labels and leaves the others as
+  // they are, atomically: two tools that each patch their own keys do not lose
+  // each other's changes, which two SetLabels calls would.
+  rpc PatchLabels(PatchLabelsRequest) returns (PatchLabelsResponse);
+}
+
+// Every request that changes something has a validate_only field. With it set
+// the server does everything the call would do, against the real state, and
+// stops short of committing: it performs every check (the request's form, the
+// existence of what it names, conflicts with what is stored, limits), answers
+// with the error the call would have answered with or, if there is none, with
+// the response it would have returned, and changes nothing. Ids in the
+// response of a validate-only create are empty. See "Validate-only" in
+// docs/protocol.md.
+
+message CreateFunctionRequest {
+  string name = 1;
+  map<string, string> labels = 2;
+  bool validate_only = 3;
+}
+
+message CreateFunctionResponse {
+  Function function = 1;
+}
+
+message GetFunctionRequest {
+  string function_id = 1;
+}
+
+message GetFunctionResponse {
+  Function function = 1;
+}
+
+message ListFunctionsRequest {
+  // 0 means server default.
+  uint32 page_size = 1;
+  // Opaque; empty for the first page.
+  string page_token = 2;
+  // Only functions that carry every one of these labels with exactly these
+  // values. Empty: all.
+  map<string, string> match_labels = 3;
+  // Only functions that carry a label with each of has_label_keys, whatever
+  // its value, and none with any of lacks_label_keys. All the filters given
+  // must hold. A filter that can only match nothing is invalid_argument: a
+  // malformed key, a key in both lists, or a key in lacks_label_keys that
+  // match_labels requires.
+  repeated string has_label_keys = 4;
+  repeated string lacks_label_keys = 5;
+  // Only the function with exactly this name (at most one: names are unique).
+  // Empty: all.
+  string name = 6;
+}
+
+message ListFunctionsResponse {
+  repeated Function functions = 1;
+  // Empty when there are no more pages.
+  string next_page_token = 2;
+}
+
+message DeleteFunctionRequest {
+  string function_id = 1;
+  bool validate_only = 2;
+}
+
+message DeleteFunctionResponse {}
+
+message CreateVersionRequest {
+  string function_id = 1;
+  // The module bytes, bounded by DescribeResponse.max_module_bytes.
+  bytes module = 2;
+  // Guest ABI the module was built for.
+  string abi = 3;
+  edgerun.common.v1.Limits limits = 4;
+  // Deploy the new version immediately.
+  bool activate = 5;
+  map<string, string> labels = 6;
+  bool validate_only = 7;
+}
+
+message CreateVersionResponse {
+  FunctionVersion version = 1;
+}
+
+message ListVersionsRequest {
+  string function_id = 1;
+  uint32 page_size = 2;
+  string page_token = 3;
+  // Only versions that carry every one of these labels with exactly these values.
+  map<string, string> match_labels = 4;
+  // As in ListFunctionsRequest.
+  repeated string has_label_keys = 5;
+  repeated string lacks_label_keys = 6;
+}
+
+message ListVersionsResponse {
+  // Newest first.
+  repeated FunctionVersion versions = 1;
+  string next_page_token = 2;
+}
+
+message ActivateVersionRequest {
+  string function_id = 1;
+  string version_id = 2;
+  bool validate_only = 3;
+}
+
+message ActivateVersionResponse {
+  Function function = 1;
+}
+
+message SetEnvRequest {
+  string function_id = 1;
+  EnvEntry entry = 2;
+  bool validate_only = 3;
+}
+
+message SetEnvResponse {
+  // The entry as stored: a secret's value is empty, and the revision is that
+  // of the value just set.
+  EnvEntry entry = 1;
+}
+
+message DeleteEnvRequest {
+  string function_id = 1;
+  string name = 2;
+  bool validate_only = 3;
+}
+
+message DeleteEnvResponse {}
+
+message ListEnvRequest {
+  string function_id = 1;
+}
+
+message SetEgressRequest {
+  string function_id = 1;
+  repeated string allow = 2;
+  bool validate_only = 3;
+}
+
+message SetLabelsRequest {
+  string function_id = 1;
+  map<string, string> labels = 2;
+  bool validate_only = 3;
+}
+
+message SetLabelsResponse {
+  // The function with its new labels.
+  Function function = 1;
+}
+
+message PatchLabelsRequest {
+  string function_id = 1;
+  // Labels to add or change.
+  map<string, string> set = 2;
+  // Keys to remove; a key that is not there is not an error. A key in both
+  // set and remove is invalid_argument. The labels that result are validated
+  // as a whole (the limit on their number applies to them).
+  repeated string remove = 3;
+  bool validate_only = 4;
+}
+
+message PatchLabelsResponse {
+  // The function with its new labels.
+  Function function = 1;
+}
+
+message SetEgressResponse {
+  // The function with its canonical allow list.
+  Function function = 1;
+}
+
+message ListEnvResponse {
+  // Secret values are returned empty.
+  repeated EnvEntry entries = 1;
+}

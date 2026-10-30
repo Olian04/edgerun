@@ -1,0 +1,16 @@
+# Proof of delivery. Every body starts with its own request id and the run id, then padding; the
+# function echoes it, and every response is compared with its request, byte for byte. A response
+# that is not the one for the request (wrong content, truncated, another request's) is a mismatch:
+#   edgerun-trafficmock run -scenario scenarios/verify.yaml -expect 'echo_mismatches==0'
+# Run several instances at once against one orchestrator (each with its own -run-id and -seed)
+# to check that responses come back to the instance that asked.
+name: verify
+defaults: {host: mock.test, budget: 10s}
+requests:
+  # /echo answers with the request body; the guest also returns the id in X-Echo-Request-Id
+  - {name: echo, weight: 4, method: POST, path: /echo, verify: echo, verify_header: x-echo-request-id,
+     body: {stamp: true, size_min: 0, size_max: 4KiB}}
+  # /echo-with-id answers "<request id>\n<body>"
+  - {name: with-id, weight: 2, method: POST, path: /echo-with-id, verify: echo-with-id,
+     body: {stamp: true, size_min: 64KiB, size_max: 1MiB, kind: text}}
+load: {model: closed, users: 8, think: 10ms, think_dist: uniform, duration: 30s}

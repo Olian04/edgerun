@@ -1,0 +1,5 @@
+{"t": 0, "method": "GET", "path": "/status/200"}
+{"t": 0.2, "method": "POST", "path": "/echo", "headers": {"content-type": "text/plain"}, "body": "hello"}
+{"t": "450ms", "method": "GET", "host": "other.test", "path": "/", "query": "a=1&b=2"}
+{"t": 1.0, "method": "POST", "path": "/echo", "body_size": 4096}
+{"t": 1.5, "method": "GET", "path": "/sleep/100", "budget": "1s"}
