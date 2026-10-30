@@ -7,7 +7,9 @@
 // response limit that stops the guest "as soon as it crosses the limit" is not
 // expressible with options alone. stdin/stdout/stderr (fd 0/1/2) and
 // poll_oneoff are therefore re-implemented in JS on top of node:wasi's
-// wasiImport; every other system call is node:wasi's.
+// wasiImport, and so are environ_sizes_get and environ_get: node:wasi takes the
+// environment as JS strings and encodes them as UTF-8, which cannot express a
+// header value such as the bytes E9 FF. Every other system call is node:wasi's.
 import { openSync } from "node:fs";
 import { parentPort, workerData } from "node:worker_threads";
 import { WASI } from "node:wasi";
@@ -32,7 +34,7 @@ const devnull = openSync("/dev/null", "r+");
 const wasi = new WASI({
   version: "preview1",
   args: ["guest"],
-  env,
+  env: {}, // the real one is served by environ_get below, as bytes
   returnOnExit: true,
   stdin: devnull, stdout: devnull, stderr: devnull, // never the process's own stdio
 });
@@ -88,6 +90,28 @@ sys.fd_read = (fd, iovs, iovsLen, nreadPtr) => {
     n += k;
   }
   dv.setUint32(nreadPtr, n, true);
+  return ESUCCESS;
+};
+
+// environ_sizes_get(count, size) and environ_get(environ, buf): `env` is a list
+// of `NAME=value` byte strings, handed out verbatim.
+const environSize = env.reduce((n, e) => n + e.length + 1, 0);
+sys.environ_sizes_get = (countPtr, sizePtr) => {
+  const dv = view();
+  dv.setUint32(countPtr, env.length, true);
+  dv.setUint32(sizePtr, environSize, true);
+  return ESUCCESS;
+};
+sys.environ_get = (environPtr, bufPtr) => {
+  const dv = view();
+  const mem = Buffer.from(memory.buffer);
+  let at = bufPtr;
+  env.forEach((e, i) => {
+    dv.setUint32(environPtr + i * 4, at, true);
+    mem.set(e, at);
+    mem[at + e.length] = 0;
+    at += e.length + 1;
+  });
   return ESUCCESS;
 };
 

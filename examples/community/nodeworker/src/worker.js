@@ -9,6 +9,7 @@ import { bearerAuth } from "./auth.js";
 import { ModuleStore } from "./artifacts.js";
 import { ExecutionImpl, SUPPORTED_ABIS } from "./execution.js";
 import { FleetClient } from "./fleet.js";
+import { invalidArgumentOnParseError } from "./parse-errors.js";
 
 export const VERSION = "0.1.0";
 
@@ -49,6 +50,7 @@ export async function startWorker(cfg) {
       res.statusCode = impl.state === "READY" ? 200 : 503;
       return void res.end(impl.state === "READY" ? "ok\n" : "draining\n");
     }
+    invalidArgumentOnParseError(res);
     rpc(req, res);
   });
   const [host, port] = splitListen(cfg.listen);

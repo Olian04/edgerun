@@ -45,7 +45,7 @@ test("deploy hello through control.v1, invoke through ingress.v1, the Node worke
 
   const { head, body } = await invoke(ingress, {
     method: "GET", host: "hello.localhost", path: "/greet", rawQuery: "name=node",
-    headers: [{ name: "x-forwarded-for", value: "203.0.113.9" }], remoteAddr: "203.0.113.9:4444",
+    headers: [{ name: "x-forwarded-for", value: new TextEncoder().encode("203.0.113.9") }], remoteAddr: "203.0.113.9:4444",
   });
   assert.equal(head.http.status, 200);
   assert.ok(head.invocationId);

@@ -14,7 +14,7 @@ const THREAD = new URL("./guest-thread.js", import.meta.url);
  */
 
 /**
- * @param {{module:WebAssembly.Module, env:Record<string,string>, body:Uint8Array,
+ * @param {{module:WebAssembly.Module, env:Uint8Array[] (NAME=value entries, bytes), body:Uint8Array,
  *   maxOutput:number, memLimit:number, stderrMax:number, deadlineAt?:number, signal?:AbortSignal}} o
  * @returns {Promise<Outcome>} resolves only after the thread has exited, so the
  *   caller may free its slot when this settles.

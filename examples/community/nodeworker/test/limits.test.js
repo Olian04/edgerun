@@ -7,7 +7,7 @@ import { guest, guests } from "./wasm.js";
 
 const MiB = 1024 * 1024;
 const run = async (bytes, o = {}) => runGuest({
-  module: await WebAssembly.compile(bytes), env: {}, body: new Uint8Array(0),
+  module: await WebAssembly.compile(bytes), env: [], body: new Uint8Array(0),
   maxOutput: MiB, memLimit: 64 * MiB, stderrMax: 1024, ...o,
 });
 

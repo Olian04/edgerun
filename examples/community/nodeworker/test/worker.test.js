@@ -33,6 +33,7 @@ function clientWith(baseUrl, token) {
   }));
 }
 
+const bytes = (s) => Buffer.from(s, "latin1");
 const request = (o = {}) => ({ method: "GET", host: "h.test", path: "/", rawQuery: "", headers: [], body: new Uint8Array(0), remoteAddr: "192.0.2.1:1", ...o });
 
 /** Execute `wasm` and collect the stream (or the error). */
@@ -59,7 +60,7 @@ test("a valid response: head, body, summary", async () => {
   const o = await execute(guests.respond("Status: 201 Created\r\nX-A: 1\nX-A: 2\nContent-Type: text/plain\n\nbody!"));
   assert.equal(o.err, undefined);
   assert.equal(o.head.status, 201);
-  assert.deepEqual(o.head.headers.map((h) => `${h.name}=${h.value}`), ["x-a=1", "x-a=2", "content-type=text/plain"]);
+  assert.deepEqual(o.head.headers.map((h) => `${h.name}=${Buffer.from(h.value).toString("latin1")}`), ["x-a=1", "x-a=2", "content-type=text/plain"]);
   assert.equal(o.body.toString(), "body!");
   assert.ok(o.summary.durationMicros > 0n);
   assert.ok(o.summary.peakMemoryBytes >= 65536n);
@@ -117,6 +118,18 @@ test("malformed requests are invalid_argument with no reason", async () => {
     await execute(wasm, { env: [{ name: "REQUEST_METHOD", value: "x" }] }),
     await execute(wasm, { env: [{ name: "HTTP_X", value: "x" }] }),
     await execute(wasm, { env: [{ name: "OK", value: "a\0b" }] }),
+    // docs/protocol.md "HTTP messages": who judges what
+    await execute(wasm, { req: { path: "" } }),
+    await execute(wasm, { req: { path: "echo" } }),
+    await execute(wasm, { req: { path: "/a\0" } }),
+    await execute(wasm, { req: { path: "/a\nb" } }),
+    await execute(wasm, { req: { path: "/a\x7f" } }),
+    await execute(wasm, { req: { rawQuery: "a\nb" } }),
+    await execute(wasm, { req: { headers: [{ name: "bad name", value: bytes("x") }] } }),
+    await execute(wasm, { req: { headers: [{ name: "", value: bytes("x") }] } }),
+    await execute(wasm, { req: { headers: [{ name: "x-a", value: bytes("a\r\nb: c") }] } }),
+    await execute(wasm, { req: { headers: [{ name: "x-a", value: bytes("a\0b") }] } }),
+    await execute(wasm, { req: { headers: [{ name: "x-a", value: bytes("a\x7f") }] } }),
   ]) {
     assert.equal(o.err?.code, Code.InvalidArgument);
     assert.equal(reason(o), ErrorReason.UNSPECIFIED);
@@ -155,13 +168,75 @@ test("the guest's environment: CGI variables, HTTP_ headers joined, user variabl
   // the env is covered end to end by the conformance suite's /env guest; here, the pure function
   const { buildEnv } = await import("../src/wagi.js");
   const env = buildEnv(request({ method: "POST", path: "/p", rawQuery: "a=b", headers: [
-    { name: "content-type", value: "text/x" }, { name: "x-multi", value: "a" }, { name: "x-multi", value: "b" }, { name: "content-length", value: "99" }, { name: "x-request-id", value: "7" },
-  ] }), 3, [{ name: "MINE", value: "1" }]);
-  assert.deepEqual(env, {
+    { name: "content-type", value: bytes("text/x") }, { name: "x-multi", value: bytes("a") }, { name: "x-multi", value: bytes("b") },
+    { name: "content-length", value: bytes("99") }, { name: "x-request-id", value: bytes("7") },
+  ] }), 3, [{ name: "MINE", value: "1é" }]);
+  assert.deepEqual(Object.fromEntries([...env].map(([k, v]) => [k, v.toString("latin1")])), {
     GATEWAY_INTERFACE: "CGI/1.1", SERVER_PROTOCOL: "HTTP/1.1", REQUEST_METHOD: "POST", SERVER_NAME: "h.test", PATH_INFO: "/p",
     QUERY_STRING: "a=b", REMOTE_ADDR: "192.0.2.1:1", CONTENT_LENGTH: "3", CONTENT_TYPE: "text/x",
-    HTTP_X_MULTI: "a, b", HTTP_X_REQUEST_ID: "7", MINE: "1",
+    HTTP_X_MULTI: "a, b", HTTP_X_REQUEST_ID: "7", MINE: "1\xc3\xa9", // a user variable is text, UTF-8
   });
+});
+
+test("header values reach the guest byte-exact in HTTP_* (not UTF-8 re-encoded), joined with ', '", async () => {
+  const o = await execute(guests.printEnv(), { req: {
+    path: "/pé日", headers: [
+      { name: "x-latin", value: bytes("caf\xe9") }, { name: "x-junk", value: bytes("\xe9\xff\x80") },
+      { name: "x-dup", value: bytes("one") }, { name: "x-dup", value: bytes("\xe9two") }, { name: "x-tab", value: bytes("a\tb") },
+    ],
+  } });
+  assert.equal(o.err, undefined);
+  const env = o.body.toString("latin1").split("\0").filter(Boolean);
+  for (const want of ["HTTP_X_LATIN=caf\xe9", "HTTP_X_JUNK=\xe9\xff\x80", "HTTP_X_DUP=one, \xe9two", "HTTP_X_TAB=a\tb", "PATH_INFO=/p\xc3\xa9\xe6\x97\xa5"]) {
+    assert.ok(env.includes(want), `${JSON.stringify(want)} in ${JSON.stringify(env)}`);
+  }
+});
+
+test("a guest's response header values are bytes: only space and tab are trimmed, control characters are ABI_MISMATCH", async () => {
+  const o = await execute(guests.respond(bytes("Content-Type: t\nX-Latin: caf\xe9\nX-Junk:  \xff\xfe\x80 \t\nX-Nbsp: \xc2\xa0v\xc2\xa0\nX-Empty:\nX-Tab: a\tb\n\nraw")));
+  assert.equal(o.err, undefined);
+  const got = Object.fromEntries(o.head.headers.map((h) => [h.name, Buffer.from(h.value).toString("latin1")]));
+  assert.deepEqual(got, { "content-type": "t", "x-latin": "caf\xe9", "x-junk": "\xff\xfe\x80", "x-nbsp": "\xc2\xa0v\xc2\xa0", "x-empty": "", "x-tab": "a\tb" });
+  for (const bad of ["X-Bad: a\x01b", "X-Bad: a\x7fb", "X-Bad: a\rb", "X-Bad: a\x00b"]) {
+    assert.equal(reason(await execute(guests.respond(bytes(`Content-Type: t\n${bad}\n\nbody`)))), ErrorReason.ABI_MISMATCH, JSON.stringify(bad));
+  }
+});
+
+test("a path that is not UTF-8 on the wire is invalid_argument (the Go client cannot send one, so by hand)", async () => {
+  const { create, toBinary } = await import("@bufbuild/protobuf");
+  const { ExecuteRequestSchema } = await import("../gen/edgerun/worker/v1/execution_pb.js");
+  const digest = orch.add(guests.respond());
+  const msg = toBinary(ExecuteRequestSchema, create(ExecuteRequestSchema, { artifactDigest: digest, abi: "wagi-1", request: request({ path: "/ab" }) }));
+  const at = Buffer.from(msg).indexOf("/ab");
+  assert.ok(at > 0);
+  msg[at + 1] = 0xff; // "/\xffb": not UTF-8
+  const frame = Buffer.concat([Buffer.from([0, 0, 0, 0, 0]), msg]);
+  frame.writeUInt32BE(msg.length, 1);
+  for (const accept of ["identity", "gzip"]) { // an end-of-stream message may be compressed
+    const res = await fetch(`http://127.0.0.1:${new URL(w.url).port}/edgerun.worker.v1.ExecutionService/Execute`, {
+      method: "POST", body: frame,
+      headers: { "content-type": "application/connect+proto", "connect-protocol-version": "1", "connect-accept-encoding": accept, authorization: `Bearer ${EXEC}` },
+    });
+    const out = Buffer.from(await res.arrayBuffer());
+    // a failed stream is 200 with one envelope, flag 0x02: the end-of-stream message, JSON, carrying the error
+    assert.equal(out[0] & 2, 2);
+    assert.equal(out[0] & 1, 0);
+    const end = JSON.parse(out.subarray(5, 5 + out.readUInt32BE(1)).toString());
+    assert.equal(end.error.code, "invalid_argument", accept);
+    assert.equal(end.error.details, undefined); // no ErrorInfo, so no reason
+  }
+});
+
+test("trace context: the guest gets the call's trace with a span of its own, never the client's", async () => {
+  const { buildEnv, guestTraceparent } = await import("../src/wagi.js");
+  const tp = guestTraceparent("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01", () => "1111111111111111");
+  assert.equal(tp, "00-4bf92f3577b34da6a3ce929d0e0e4736-1111111111111111-01");
+  for (const bad of [null, "", "garbage", "00-" + "0".repeat(32) + "-00f067aa0ba902b7-01", "01-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"]) assert.equal(guestTraceparent(bad), null, String(bad));
+  const client = ["traceparent", "tracestate", "baggage"].map((name) => ({ name, value: bytes("client") }));
+  const names = (m) => [...m.keys()].filter((k) => /TRACE|BAGGAGE/.test(k));
+  assert.deepEqual(names(buildEnv(request({ headers: client }), 0, [], tp)), ["HTTP_TRACEPARENT"]);
+  assert.equal(buildEnv(request({ headers: client }), 0, [], tp).get("HTTP_TRACEPARENT").toString(), tp);
+  assert.deepEqual(names(buildEnv(request({ headers: client }), 0, [])), []);
 });
 
 test("RESPONSE_TOO_LARGE: the guest is stopped as soon as it crosses the limit, nothing is streamed", async () => {

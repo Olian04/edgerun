@@ -59,6 +59,17 @@ export const guests = {
   growThenSpin: (pages) => guest([...i32(pages), 0x40, 0, ...drop, ...loop([])]),
   /** traps (unreachable) if memory.grow(pages) fails */
   growOrTrap: (pages) => guest([...i32(pages), 0x40, 0, ...i32(-1), 0x46, 0x04, 0x40, 0x00, 0x0b, ...write(1)], { texts: [OK] }),
+  /** a valid response whose body is the environment block as environ_get hands it out (NAME=value NUL ...) */
+  printEnv: () => guest([
+    ...i32(0x1000), ...i32(0x1004), ...i32(0), ...i32(0), ...call(2), ...drop, // environ_sizes_get (declared with 4 params; the host ignores the rest)
+    ...i32(0x2000), ...i32(0x3000), ...i32(0), ...i32(0), ...call(3), ...drop, // environ_get
+    ...i32(8), ...i32(0x3000), 0x36, 2, 0, // iovec 1 = { 0x3000, size }
+    ...i32(12), ...i32(0x1004), 0x28, 2, 0, 0x36, 2, 0,
+    ...i32(1), ...i32(0), ...i32(2), ...i32(200), ...call(0), ...drop, // fd_write(1, iovs, 2, ...)
+  ], { texts: ["Content-Type: text/plain\n\n"], imports: [
+    [...str("wasi_snapshot_preview1"), ...str("environ_sizes_get"), 0, 1],
+    [...str("wasi_snapshot_preview1"), ...str("environ_get"), 0, 1],
+  ] }),
   spin: () => guest(loop([])),
   /** writes text forever */
   flood: (text = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx") => guest(loop(write(1)), { texts: [text] }),

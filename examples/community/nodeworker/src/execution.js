@@ -2,7 +2,7 @@
 import { Code, ConnectError } from "@connectrpc/connect";
 import { ErrorReason, invalidArgument, platformError } from "./errors.js";
 import { runGuest } from "./runner.js";
-import { AbiViolation, DIGEST, ENV_NAME, buildEnv, parseResponse, reservedEnvName } from "./wagi.js";
+import { AbiViolation, DIGEST, ENV_NAME, buildEnv, environEntries, guestTraceparent, malformedRequest, parseResponse, reservedEnvName } from "./wagi.js";
 
 const MiB = 1024 * 1024;
 const MEMORY_SIZES = [16, 32, 64, 128, 256, 512].map((m) => m * MiB);
@@ -60,6 +60,8 @@ export class ExecutionImpl {
       if (reservedEnvName(e.name)) throw invalidArgument(`environment variable ${e.name} collides with one the ABI sets`);
       if (e.value.includes("\0")) throw invalidArgument(`environment variable ${e.name} contains NUL`);
     }
+    const malformed = malformedRequest(req.request); // docs/protocol.md "HTTP messages": who judges what
+    if (malformed) throw invalidArgument(malformed);
     // 2. ABI.
     if (!SUPPORTED_ABIS.includes(req.abi)) throw platformError(ErrorReason.ABI_MISMATCH, `this worker runs ${SUPPORTED_ABIS.join(", ")}, not ${JSON.stringify(req.abi)}`);
     // 3. Capacity is never queued.
@@ -94,7 +96,7 @@ export class ExecutionImpl {
           throw e;
         }
         const body = req.request.body;
-        const env = buildEnv(req.request, body.length, req.env);
+        const env = environEntries(buildEnv(req.request, body.length, req.env, guestTraceparent(ctx.requestHeader.get("traceparent"))));
         const out = await runGuest({ module, env, body, maxOutput, memLimit, stderrMax: STDERR_TAIL, deadlineAt, signal: abort.signal });
 
         const tail = (b) => Buffer.from(b.subarray(Math.max(0, b.length - TRAP_MESSAGE_STDERR))).toString("utf8");
