@@ -29,11 +29,15 @@ func TestValidHeaderValue(t *testing.T) {
 }
 
 func TestValidateRequest(t *testing.T) {
-	ok := &commonv1.HttpRequest{Path: "/a", RawQuery: "x=%ff", Headers: []*commonv1.Header{{Name: "x-a", Value: []byte("caf\xe9")}}}
+	ok := &commonv1.HttpRequest{Method: "GET", Path: "/a", RawQuery: "x=%ff", Headers: []*commonv1.Header{{Name: "x-a", Value: []byte("caf\xe9")}}}
 	if err := ValidateRequest(ok); err != nil {
 		t.Errorf("a request whose header value is not text is fine: %v", err)
 	}
 	for name, r := range map[string]*commonv1.HttpRequest{
+		"no method":               {Path: "/"},
+		"a bad method":            {Method: "GE T", Path: "/"},
+		"a NUL in the host":       {Host: "a\x00b", Path: "/"},
+		"a newline in remote":     {RemoteAddr: "1.2.3.4\n", Path: "/"},
 		"no path":                 {Path: ""},
 		"relative path":           {Path: "a"},
 		"a path with a NUL":       {Path: "/a\x00"},
@@ -43,6 +47,9 @@ func TestValidateRequest(t *testing.T) {
 		"an empty header name":    {Path: "/", Headers: []*commonv1.Header{{Name: "", Value: []byte("x")}}},
 		"a header value with CR":  {Path: "/", Headers: []*commonv1.Header{{Name: "a", Value: []byte("x\ry")}}},
 	} {
+		if r.Method == "" && name != "no method" {
+			r.Method = "GET"
+		}
 		if err := ValidateRequest(r); err == nil {
 			t.Errorf("%s: accepted", name)
 		}

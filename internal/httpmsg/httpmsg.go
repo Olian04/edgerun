@@ -83,6 +83,12 @@ func ValidateHeaders(hs []*commonv1.Header) error {
 // the path starts with '/' and is text, the query is text, and the headers are
 // well formed. A request that fails is a bug of whoever sent it.
 func ValidateRequest(r *commonv1.HttpRequest) error {
+	if !ValidHeaderName(r.GetMethod()) { // a method is a token too
+		return fmt.Errorf("method %q is not a token", r.GetMethod())
+	}
+	if !ValidText(r.GetHost()) || !ValidText(r.GetRemoteAddr()) {
+		return fmt.Errorf("host and remote_addr must be text without control characters")
+	}
 	if p := r.GetPath(); p == "" || p[0] != '/' {
 		return fmt.Errorf("path %q must start with '/'", p)
 	}

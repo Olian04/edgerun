@@ -146,12 +146,14 @@ what a hop may rely on.
 - **A header value is bytes.** `Header.value` is `bytes`, not text: HTTP does not say a value is UTF-8 and a hop that
   refused or rewrote what it did not understand would not be forwarding the message. A value is forwarded **exactly
   as it arrived** (with the optional whitespace around it, space and horizontal tab, removed, as HTTP says); bytes of
-  0x80 and above are fine. A value contains **no control character other than horizontal tab**: no NUL, CR or LF.
+  0x80 and above are fine. A value contains **no control character other than horizontal tab**: no byte below 0x20
+  except 0x09, and not 0x7F (so no NUL, CR or LF).
   A header name is an RFC 9110 token, lower-cased by the frontend.
 - **Who judges what.** The frontend refuses what an HTTP client can send and is not allowed (400). An orchestrator and
   a worker are handed a request by something that is meant to have judged it, and answer `invalid_argument` (no
-  reason) to one that is not well formed: a path that is empty, does not start with `/`, or is not text; a query that
-  is not text; a header name that is not a token; a header value with a control character other than tab. The same
+  reason) to one that is not well formed: a method that is not a token; a `host` or `remote_addr` that is not text without control characters; a path
+  that is empty, does not start with `/`, or is not text; a query that is not text; a header name that is not a
+  token; a header value with a control character other than tab. The same
   rules apply to the response: a guest's response header whose value has a control character is an ABI violation
   (`ABI_MISMATCH`), and a frontend never lets a value split a response.
 - A **guest** sees header values as the bytes they are (`HTTP_<NAME>` environment variables hold them unchanged, the
