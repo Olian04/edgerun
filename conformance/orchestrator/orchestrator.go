@@ -130,6 +130,7 @@ func Run(t *testing.T, target Target) {
 	t.Run("InvokeForwarding", h.invokeForwarding)
 	t.Run("InvokeStreaming", h.invokeStreaming)
 	t.Run("InvokeValidation", h.invokeValidation)
+	t.Run("InvokeMessages", h.invokeMessages)
 	t.Run("TraceContext", h.traceContext)
 	t.Run("RoutingPrecedence", h.routingPrecedence)
 	t.Run("ABIScheduling", h.abiScheduling)

@@ -117,7 +117,9 @@ func refuse(reason commonv1.ErrorReason, code connect.Code) func(context.Context
 	}
 }
 
-func hdr(name, value string) *commonv1.Header { return &commonv1.Header{Name: name, Value: value} }
+func hdr(name, value string) *commonv1.Header {
+	return &commonv1.Header{Name: name, Value: []byte(value)}
+}
 
 // netCall runs the network guest's /fetch path with the given request text and
 // allow list, and returns the guest's answer split into the code it got and
@@ -261,7 +263,7 @@ func (h *harness) network(t *testing.T) {
 		var two []string
 		for _, hd := range got.req.GetHeaders() {
 			if strings.EqualFold(hd.GetName(), "x-two") {
-				two = append(two, hd.GetValue())
+				two = append(two, string(hd.GetValue()))
 			}
 		}
 		if len(two) != 2 || two[0] != "2" || two[1] != "3" {

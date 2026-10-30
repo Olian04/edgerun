@@ -120,9 +120,13 @@ func (ErrorReason) EnumDescriptor() ([]byte, []int) {
 // Header is one HTTP header field. Names are lowercase. Repeated fields keep
 // their wire order and are not merged, so a hop never has to guess.
 type Header struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	Value         string                 `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Name  string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	// Opaque bytes, as they arrived: HTTP does not say a header value is text, and
+	// a hop that changed or refused the bytes it did not understand would not be
+	// forwarding the message unchanged. A value contains no control character
+	// other than horizontal tab (no NUL, CR or LF); see docs/protocol.md.
+	Value         []byte `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -164,11 +168,11 @@ func (x *Header) GetName() string {
 	return ""
 }
 
-func (x *Header) GetValue() string {
+func (x *Header) GetValue() []byte {
 	if x != nil {
 		return x.Value
 	}
-	return ""
+	return nil
 }
 
 // HttpRequest is the request as received at the edge, forwarded unchanged
@@ -582,7 +586,7 @@ const file_edgerun_common_v1_common_proto_rawDesc = "" +
 	"\x1eedgerun/common/v1/common.proto\x12\x11edgerun.common.v1\"2\n" +
 	"\x06Header\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value\"\xd4\x01\n" +
+	"\x05value\x18\x02 \x01(\fR\x05value\"\xd4\x01\n" +
 	"\vHttpRequest\x12\x16\n" +
 	"\x06method\x18\x01 \x01(\tR\x06method\x12\x12\n" +
 	"\x04host\x18\x02 \x01(\tR\x04host\x12\x12\n" +

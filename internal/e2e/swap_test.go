@@ -71,7 +71,7 @@ func (sw *staticWorker) Execute(ctx context.Context, req *connect.Request[worker
 	sw.served++
 	sw.mu.Unlock()
 	st.Send(&workerv1.ExecuteResponse{Part: &workerv1.ExecuteResponse_Head{Head: &commonv1.HttpResponseHead{Status: 200,
-		Headers: []*commonv1.Header{{Name: "content-type", Value: "text/plain"}, {Name: "x-served-by", Value: "static-worker"}}}}})
+		Headers: []*commonv1.Header{{Name: "content-type", Value: []byte("text/plain")}, {Name: "x-served-by", Value: []byte("static-worker")}}}}})
 	st.Send(&workerv1.ExecuteResponse{Part: &workerv1.ExecuteResponse_Chunk{Chunk: body}})
 	return st.Send(&workerv1.ExecuteResponse{Part: &workerv1.ExecuteResponse_Summary{Summary: &workerv1.ExecutionSummary{DurationMicros: 1}}})
 }

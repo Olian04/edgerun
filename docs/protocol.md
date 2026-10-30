@@ -125,6 +125,39 @@ refused by the transport's message cap before it is decoded, with a bare `resour
 no `ErrorInfo`. A frontend that receives that untyped error from `Invoke` must treat it as a 413
 too, never as a 500.
 
+## HTTP messages
+
+The protocols carry HTTP requests and responses (`HttpRequest`, `HttpResponseHead`, `Header`) between components
+that are not all written in one language, and between an edge that is HTTP and ingresses that need not be. This is
+what a hop may rely on.
+
+- **A path is text, and is decoded.** `HttpRequest.path` is the path as a program would use it, not as a URL spells
+  it: **percent-decoded once**, by whatever turned a URL into a request, so that an ingress that never had a URL (a
+  queue, a schedule, a test) states its path in the clear and never has to encode one. Nothing downstream decodes it
+  again: a `%` in a path is a `%`, and `/a%2Fb` arrives as `/a/b` (an encoded slash is not distinguishable from a
+  real one, which is the price of this rule). A path starts with `/`, is valid UTF-8, and contains no control
+  character (U+0000 to U+001F, U+007F): a frontend answers `400` to a request whose path does not decode to such
+  text (`/%ff`, `/%00`, `/a%0Ab`) and does not forward it. A guest is given the path as it stands (`PATH_INFO`).
+- **A query is raw.** `raw_query` is the part after `?`, **not decoded**, as received (for an ingress that is not
+  HTTP: already encoded, as an HTTP client would send it). It is text without control characters.
+- **A request target is ASCII.** A frontend answers `400` and does not forward a request whose target (path and
+  query as the client wrote them) contains a byte outside printable ASCII (RFC 9112 allows no other), so a
+  `path` and a `raw_query` that are not text cannot be made by an HTTP client.
+- **A header value is bytes.** `Header.value` is `bytes`, not text: HTTP does not say a value is UTF-8 and a hop that
+  refused or rewrote what it did not understand would not be forwarding the message. A value is forwarded **exactly
+  as it arrived** (with the optional whitespace around it, space and horizontal tab, removed, as HTTP says); bytes of
+  0x80 and above are fine. A value contains **no control character other than horizontal tab**: no NUL, CR or LF.
+  A header name is an RFC 9110 token, lower-cased by the frontend.
+- **Who judges what.** The frontend refuses what an HTTP client can send and is not allowed (400). An orchestrator and
+  a worker are handed a request by something that is meant to have judged it, and answer `invalid_argument` (no
+  reason) to one that is not well formed: a path that is empty, does not start with `/`, or is not text; a query that
+  is not text; a header name that is not a token; a header value with a control character other than tab. The same
+  rules apply to the response: a guest's response header whose value has a control character is an ABI violation
+  (`ABI_MISMATCH`), and a frontend never lets a value split a response.
+- A **guest** sees header values as the bytes they are (`HTTP_<NAME>` environment variables hold them unchanged, the
+  values of repeated headers joined by `, `), and writes its own as bytes: a header line's value is every byte
+  after the colon, with surrounding spaces and tabs trimmed.
+
 ## Invocation semantics
 
 1. **Frontend → orchestrator.** The frontend sends `HttpRequest` (host, path, method, headers,
@@ -202,10 +235,12 @@ makes one replaceable is that every frontend maps HTTP onto the protocol the sam
   That includes a body of undeclared length, which it must stop reading at the limit.
 - A request target that is not a path starting with `/` (`OPTIONS *`) is never forwarded: the frontend
   answers it itself, with a 2xx or a 4xx.
-- `HttpRequest` carries the method; `host` as the `Host` header arrived; `path` and `raw_query` as
-  received (the query without its `?`), neither cleaned nor re-encoded; the body; and `remote_addr`,
-  the peer's `ip:port`.
-- Header names are lower-cased and every value kept, in order. Headers that describe one connection
+- `HttpRequest` carries the method; `host` as the `Host` header arrived; the `path`, **decoded** (percent-decoded once,
+  by the frontend; dot segments and repeated slashes are kept, nothing is cleaned); `raw_query` as received, still
+  encoded (the query without its `?`); the body; and `remote_addr`, the peer's `ip:port`. See "HTTP messages".
+- A request whose target contains a byte outside printable ASCII (a space, a control character, DEL, or any byte of
+  0x80 and above), or whose path does not decode to text, is answered 400 and never forwarded. See "HTTP messages".
+- Header names are lower-cased and every value kept, in order, **as the bytes it arrived as**. Headers that describe one connection
   and not the message are dropped: `connection`, `keep-alive`, `proxy-authenticate`,
   `proxy-authorization`, `proxy-connection`, `te`, `trailer`, `transfer-encoding`, `upgrade`.
 - Who the client is comes from the connection, not from what the client claims: client-supplied

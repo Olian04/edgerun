@@ -23,6 +23,7 @@ import (
 	"github.com/Olian04/edgerun"
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
 	ingressv1 "github.com/Olian04/edgerun/gen/edgerun/ingress/v1"
+	"github.com/Olian04/edgerun/internal/httpmsg"
 )
 
 const (
@@ -136,6 +137,20 @@ func (f *Frontend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(rec, "Bad Request", http.StatusBadRequest)
 		return
 	}
+	// The request target is ASCII (RFC 9112): a byte outside it, or a control
+	// character, is not a request this edge can describe faithfully. The path is
+	// carried decoded, so it must come out as text (docs/protocol.md,
+	// "HTTP messages").
+	for i := 0; i < len(r.RequestURI); i++ {
+		if c := r.RequestURI[i]; c < 0x21 || c >= 0x7f {
+			http.Error(rec, "Bad Request", http.StatusBadRequest)
+			return
+		}
+	}
+	if !httpmsg.ValidText(r.URL.Path) {
+		http.Error(rec, "Bad Request", http.StatusBadRequest)
+		return
+	}
 	limit := f.maxBody.Load()
 	if r.ContentLength > 0 && uint64(r.ContentLength) > limit {
 		http.Error(rec, "Request Entity Too Large", http.StatusRequestEntityTooLarge)
@@ -212,7 +227,7 @@ func (f *Frontend) buildRequest(r *http.Request, body []byte) *commonv1.HttpRequ
 			continue
 		}
 		for _, v := range values {
-			out.Headers = append(out.Headers, &commonv1.Header{Name: n, Value: v})
+			out.Headers = append(out.Headers, &commonv1.Header{Name: n, Value: []byte(v)})
 		}
 	}
 	// Go moves Host out of the header map; the protocol carries it separately.
@@ -222,14 +237,14 @@ func (f *Frontend) buildRequest(r *http.Request, body []byte) *commonv1.HttpRequ
 			xff = prior + ", " + ip
 		}
 		if r.Header.Get("X-Forwarded-Proto") == "" {
-			out.Headers = append(out.Headers, &commonv1.Header{Name: "x-forwarded-proto", Value: proto})
+			out.Headers = append(out.Headers, &commonv1.Header{Name: "x-forwarded-proto", Value: []byte(proto)})
 		}
 	} else {
 		out.Headers = append(out.Headers,
-			&commonv1.Header{Name: "x-forwarded-proto", Value: proto},
-			&commonv1.Header{Name: "x-forwarded-host", Value: r.Host})
+			&commonv1.Header{Name: "x-forwarded-proto", Value: []byte(proto)},
+			&commonv1.Header{Name: "x-forwarded-host", Value: []byte(r.Host)})
 	}
-	out.Headers = append(out.Headers, &commonv1.Header{Name: "x-forwarded-for", Value: xff})
+	out.Headers = append(out.Headers, &commonv1.Header{Name: "x-forwarded-for", Value: []byte(xff)})
 	return out
 }
 
@@ -242,7 +257,7 @@ func writeHead(w http.ResponseWriter, res *edgerun.Invocation, reqID string) {
 		if hopByHop[n] || n == "content-length" {
 			continue
 		}
-		h.Add(n, hd.GetValue())
+		h.Add(n, string(hd.GetValue()))
 	}
 	h.Set("X-Request-Id", reqID)
 	if id := res.ID; id != "" {

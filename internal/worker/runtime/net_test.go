@@ -38,7 +38,7 @@ func TestParseFetchRequest(t *testing.T) {
 		}
 		var hs []string
 		for _, h := range r.Headers {
-			hs = append(hs, h.Name+"="+h.Value)
+			hs = append(hs, h.Name+"="+string(h.Value))
 		}
 		if r.Method != c.method || r.URL != c.url || fmt.Sprint(hs) != c.headers || string(r.Body) != c.body {
 			t.Errorf("%s: got %s %s %v %q", name, r.Method, r.URL, hs, r.Body)
@@ -60,7 +60,7 @@ func TestParseFetchRequest(t *testing.T) {
 
 func TestFormatFetchResponse(t *testing.T) {
 	got := string(FormatFetchResponse(&NetResponse{Status: 201,
-		Headers: []*commonv1.Header{{Name: "x-a", Value: "1"}, {Name: "x-a", Value: "2"}}, Body: []byte("body\n\nmore")}))
+		Headers: []*commonv1.Header{{Name: "x-a", Value: []byte("1")}, {Name: "x-a", Value: []byte("2")}}, Body: []byte("body\n\nmore")}))
 	if want := "Status: 201\nx-a: 1\nx-a: 2\n\nbody\n\nmore"; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}

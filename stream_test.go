@@ -44,7 +44,7 @@ func serve(t *testing.T, s scripted) *edgerun.Ingress {
 func head(status uint32, id string, hs ...string) *ingressv1.InvokeResponse {
 	h := &commonv1.HttpResponseHead{Status: status}
 	for i := 0; i+1 < len(hs); i += 2 {
-		h.Headers = append(h.Headers, &commonv1.Header{Name: hs[i], Value: hs[i+1]})
+		h.Headers = append(h.Headers, &commonv1.Header{Name: hs[i], Value: []byte(hs[i+1])})
 	}
 	return &ingressv1.InvokeResponse{Part: &ingressv1.InvokeResponse_Head{Head: &ingressv1.InvokeHead{Http: h, InvocationId: id}}}
 }

@@ -198,7 +198,9 @@ func summary(stderr string) *workerv1.ExecuteResponse {
 	}}}
 }
 
-func hdr(name, value string) *commonv1.Header { return &commonv1.Header{Name: name, Value: value} }
+func hdr(name, value string) *commonv1.Header {
+	return &commonv1.Header{Name: name, Value: []byte(value)}
+}
 
 // respond answers 200 with body.
 func respond(body string) behaviour { return respondWith(200, body, "", nil) }

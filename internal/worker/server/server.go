@@ -22,6 +22,7 @@ import (
 	"github.com/Olian04/edgerun/gen/edgerun/worker/v1/workerv1connect"
 	"github.com/Olian04/edgerun/internal/authn"
 	"github.com/Olian04/edgerun/internal/errs"
+	"github.com/Olian04/edgerun/internal/httpmsg"
 	"github.com/Olian04/edgerun/internal/telemetry"
 	"github.com/Olian04/edgerun/internal/worker/cache"
 	"github.com/Olian04/edgerun/internal/worker/runtime"
@@ -154,6 +155,9 @@ func (s *Server) Execute(ctx context.Context, req *connect.Request[workerv1.Exec
 	m := req.Msg
 	if m.GetRequest() == nil {
 		return errs.Invalid("request is required")
+	}
+	if err := httpmsg.ValidateRequest(m.GetRequest()); err != nil {
+		return errs.Invalid("%v", err)
 	}
 	if !slices.Contains(s.info.GetAbis(), m.GetAbi()) {
 		return errs.New(commonv1.ErrorReason_ERROR_REASON_ABI_MISMATCH,

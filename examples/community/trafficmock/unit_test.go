@@ -123,7 +123,7 @@ func TestFilterHeadersLikeAFrontend(t *testing.T) {
 	h.Set("X-Forwarded-For", "1.2.3.4")
 	h.Set("Host", "ignored")
 	got := filterHeaders(h, false)
-	if len(got) != 2 || got[0].Name != "x-one" || got[0].Value != "a" || got[1].Value != "b" {
+	if len(got) != 2 || got[0].Name != "x-one" || string(got[0].Value) != "a" || string(got[1].Value) != "b" {
 		t.Errorf("%v", got)
 	}
 	if got := filterHeaders(h, true); len(got) != 3 {

@@ -233,14 +233,14 @@ func (s *Server) validate(r *egressv1.FetchRequest) (*request, error) {
 		if !httpguts.ValidHeaderFieldName(h.GetName()) {
 			return nil, invalid("invalid header name %q", h.GetName())
 		}
-		if !httpguts.ValidHeaderFieldValue(h.GetValue()) {
+		if !httpguts.ValidHeaderFieldValue(string(h.GetValue())) {
 			return nil, invalid("invalid value for header %q", h.GetName())
 		}
 		name := strings.ToLower(h.GetName())
 		if connectionLevel[name] || name == "host" || name == "content-length" {
 			continue
 		}
-		out.header.Add(name, h.GetValue())
+		out.header.Add(name, string(h.GetValue()))
 	}
 	if uint64(len(out.body)) > s.cfg.MaxRequestBody {
 		return nil, edgerun.NewError(commonv1.ErrorReason_ERROR_REASON_REQUEST_TOO_LARGE,
@@ -323,7 +323,7 @@ func (s *Server) Fetch(ctx context.Context, creq *connect.Request[egressv1.Fetch
 			continue
 		}
 		for _, v := range values {
-			head.Headers = append(head.Headers, &commonv1.Header{Name: ln, Value: v})
+			head.Headers = append(head.Headers, &commonv1.Header{Name: ln, Value: []byte(v)})
 		}
 	}
 	if err := stream.Send(&egressv1.FetchResponse{Part: &egressv1.FetchResponse_Head{Head: head}}); err != nil {

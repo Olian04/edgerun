@@ -60,7 +60,7 @@ func (f *fixture) run(t *testing.T, path, query string, body string, limits *com
 		Digest: digest, Wasm: f.wasm, Limits: limits,
 		Request: &commonv1.HttpRequest{
 			Method: "POST", Host: "h", Path: path, RawQuery: query, Body: []byte(body),
-			Headers: []*commonv1.Header{{Name: "content-type", Value: "text/x-test"}},
+			Headers: []*commonv1.Header{{Name: "content-type", Value: []byte("text/x-test")}},
 		},
 		Env: []*commonv1.EnvVar{{Name: "MY_VAR", Value: "v1"}},
 	})
@@ -87,7 +87,7 @@ func TestEcho(t *testing.T) {
 	if res.Head.Status != 200 || string(res.Body) != "hello" {
 		t.Errorf("status %d body %q", res.Head.Status, res.Body)
 	}
-	if got := res.Head.Headers[0]; got.Name != "content-type" || got.Value != "text/x-test" {
+	if got := res.Head.Headers[0]; got.Name != "content-type" || string(got.Value) != "text/x-test" {
 		t.Errorf("content-type header = %v", got)
 	}
 	if res.PeakMemoryBytes == 0 || res.Duration == 0 {
@@ -117,7 +117,7 @@ func TestEnvAndStatusAndHeaders(t *testing.T) {
 	var cookies []string
 	for _, h := range res.Head.Headers {
 		if h.Name == "set-cookie" {
-			cookies = append(cookies, h.Value)
+			cookies = append(cookies, string(h.Value))
 		}
 	}
 	if strings.Join(cookies, ",") != "a=1,b=2" {

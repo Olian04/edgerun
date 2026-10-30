@@ -28,6 +28,11 @@ func main() {
 	}
 	body, _ := io.ReadAll(os.Stdin)
 
+	if pi := os.Getenv("PATH_INFO"); strings.HasPrefix(pi, "/pathinfo") {
+		// What the worker made of the path, exactly.
+		fmt.Printf("Content-Type: text/plain\n\n%s", pi)
+		return
+	}
 	switch os.Getenv("PATH_INFO") {
 	case "/echo":
 		ct := os.Getenv("CONTENT_TYPE")
@@ -40,6 +45,12 @@ func main() {
 		env := os.Environ()
 		sort.Strings(env)
 		fmt.Printf("Content-Type: text/plain\n\n%s\n", strings.Join(env, "\n"))
+	case "/rawheaders":
+		// Header values are bytes, not text.
+		fmt.Print("Content-Type: text/plain\nX-Latin: caf\xe9\nX-Junk:  \xff\xfe\x80 \nX-Dup: one\nX-Dup: \xe9two\nX-Nbsp: \xc2\xa0v\xc2\xa0\n\nraw\n")
+	case "/ctlheader":
+		// ABI violation: a control character in a header value.
+		fmt.Print("Content-Type: text/plain\nX-Bad: a\x01b\n\nbody\n")
 	case "/status":
 		fmt.Printf("Status: %d Test\nX-Test: 1\nSet-Cookie: a=1\nSet-Cookie: b=2\nContent-Type: text/plain\n\nstatus\n", num("code", 200))
 	case "/stderr":

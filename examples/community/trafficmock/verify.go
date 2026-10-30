@@ -140,7 +140,7 @@ func checkHeader(hs []*commonv1.Header, name, requestID string) string {
 	var vals []string
 	for _, h := range hs {
 		if strings.EqualFold(h.GetName(), name) {
-			vals = append(vals, h.GetValue())
+			vals = append(vals, string(h.GetValue()))
 		}
 	}
 	switch {

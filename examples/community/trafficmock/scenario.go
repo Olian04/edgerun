@@ -522,7 +522,7 @@ func (t *tmpl) build(rng *rand.Rand, seq uint64, runID string, clients int) *Pla
 	ip := fmt.Sprintf("10.%d.%d.%d", (c>>16)&255, (c>>8)&255, c&255|1)
 	hs := make([]*commonv1.Header, 0, len(t.static)+4)
 	hs = append(hs, t.static...)
-	hs = append(hs, &commonv1.Header{Name: "x-request-id", Value: id})
+	hs = append(hs, &commonv1.Header{Name: "x-request-id", Value: []byte(id)})
 	hs = appendForwarded(hs, ip, "http", host)
 	return &Planned{
 		Seq: seq, RequestID: id, Template: t.name, Budget: t.budget, AllowOversize: t.allowOversize,

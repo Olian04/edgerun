@@ -8,7 +8,7 @@ import (
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
 )
 
-func hdr(n, v string) *commonv1.Header { return &commonv1.Header{Name: n, Value: v} }
+func hdr(n, v string) *commonv1.Header { return &commonv1.Header{Name: n, Value: []byte(v)} }
 
 func TestEnv(t *testing.T) {
 	req := &commonv1.HttpRequest{
@@ -94,7 +94,7 @@ func TestParseResponse(t *testing.T) {
 			}
 			var got []h
 			for _, x := range head.Headers {
-				got = append(got, h{x.Name, x.Value})
+				got = append(got, h{x.Name, string(x.Value)})
 			}
 			if !reflect.DeepEqual(got, tc.headers) {
 				t.Errorf("headers = %v, want %v", got, tc.headers)

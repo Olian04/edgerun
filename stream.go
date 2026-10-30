@@ -42,7 +42,7 @@ func (r *Response) Status() int { return int(r.Head.GetStatus()) }
 func (r *Response) Header() http.Header {
 	h := http.Header{}
 	for _, kv := range r.Head.GetHeaders() {
-		h.Add(kv.GetName(), kv.GetValue())
+		h.Add(kv.GetName(), string(kv.GetValue()))
 	}
 	return h
 }

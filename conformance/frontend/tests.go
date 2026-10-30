@@ -74,7 +74,7 @@ func headerValues(r *commonv1.HttpRequest, name string) []string {
 	var out []string
 	for _, h := range r.GetHeaders() {
 		if h.GetName() == name {
-			out = append(out, h.GetValue())
+			out = append(out, string(h.GetValue()))
 		}
 	}
 	return out

@@ -187,7 +187,7 @@ func TestRequestRules(t *testing.T) {
 	allowGood := []string{"good.test"}
 	// The request as the origin sees it.
 	_, body, err := r.fetch(&egressv1.FetchRequest{Method: "POST", Url: "http://good.test/echo?q=%20x#frag", Allow: allowGood, Body: []byte("hi"),
-		Headers: []*commonv1.Header{{Name: "Host", Value: "evil.test"}, {Name: "Connection", Value: "close"}, {Name: "Content-Length", Value: "1"}}})
+		Headers: []*commonv1.Header{{Name: "Host", Value: []byte("evil.test")}, {Name: "Connection", Value: []byte("close")}, {Name: "Content-Length", Value: []byte("1")}}})
 	if err != nil || !strings.Contains(body, `POST /echo?q=%20x host=good.test ua="" ae="" body="hi"`) {
 		t.Errorf("%q %v", body, err)
 	}

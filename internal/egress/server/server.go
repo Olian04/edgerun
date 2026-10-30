@@ -206,7 +206,7 @@ func (s *Service) fetch(ctx context.Context, r *egressv1.FetchRequest, st *conne
 		if hopByHop[n] || n == "host" || n == "content-length" {
 			continue
 		}
-		out.Header.Add(h.GetName(), h.GetValue())
+		out.Header.Add(h.GetName(), string(h.GetValue()))
 	}
 	// Without this Go would add its own Accept-Encoding and undo the encoding.
 	// An absent header means "no preference"; leave it so. The same goes for
@@ -251,7 +251,7 @@ func (s *Service) fetch(ctx context.Context, r *egressv1.FetchRequest, st *conne
 			continue
 		}
 		for _, v := range values {
-			head.Headers = append(head.Headers, &commonv1.Header{Name: n, Value: v})
+			head.Headers = append(head.Headers, &commonv1.Header{Name: n, Value: []byte(v)})
 		}
 	}
 	if err := st.Send(&egressv1.FetchResponse{Part: &egressv1.FetchResponse_Head{Head: head}}); err != nil {
@@ -302,7 +302,7 @@ func (s *Service) check(r *egressv1.FetchRequest) (*url.URL, policy.List, error)
 		return nil, nil, errs.Invalid("%v", err)
 	}
 	for _, h := range r.GetHeaders() {
-		if !token.MatchString(h.GetName()) || strings.ContainsAny(h.GetValue(), "\r\n\x00") {
+		if !token.MatchString(h.GetName()) || bytes.ContainsAny(h.GetValue(), "\r\n\x00") {
 			return nil, nil, errs.Invalid("header %q is malformed", h.GetName())
 		}
 	}

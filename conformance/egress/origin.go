@@ -113,6 +113,11 @@ func (o *origin) serve(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, q.Get("body"))
 	case "/redirect":
 		http.Redirect(w, r, "/echo", http.StatusFound)
+	case "/rawheaders": // header values are bytes
+		w.Header()["X-Latin"] = []string{"caf\xe9"}
+		w.Header()["X-Junk"] = []string{"\xff\xfe\x80"}
+		w.Header()["X-Dup"] = []string{"one", "\xe9two"}
+		io.WriteString(w, "raw")
 	case "/multi":
 		w.Header().Add("Set-Cookie", "a=1")
 		w.Header().Add("Set-Cookie", "b=2")

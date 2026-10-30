@@ -158,7 +158,7 @@ func TestListenerRequestRules(t *testing.T) {
 	r := got.Request
 	hdr := map[string][]string{}
 	for _, h := range r.Headers {
-		hdr[h.Name] = append(hdr[h.Name], h.Value)
+		hdr[h.Name] = append(hdr[h.Name], string(h.Value))
 	}
 	if r.Method != "POST" || r.Host != "Mixed.Example.com:8080" || r.Path != "/status/200" || r.RawQuery != "q=a%20b&z=1" || string(r.Body) != "hello" {
 		t.Errorf("request: %+v", r)

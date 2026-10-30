@@ -16,6 +16,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -157,6 +158,7 @@ func Run(t *testing.T, target Target) {
 	t.Run("ResponseLimit", h.responseLimit)
 	t.Run("ABIViolations", h.abiViolations)
 	t.Run("MalformedRequests", h.malformedRequests)
+	t.Run("HTTPMessages", h.httpMessages)
 	t.Run("TraceContext", h.traceContext)
 	t.Run("RealTimeAndEntropy", h.timeAndEntropy)
 	t.Run("Network", h.network)
@@ -243,7 +245,7 @@ func (o outcome) headers(name string) []string {
 	var out []string
 	for _, h := range o.head.GetHeaders() {
 		if h.Name == name {
-			out = append(out, h.Value)
+			out = append(out, string(h.Value))
 		}
 	}
 	return out
@@ -292,7 +294,7 @@ func (h *harness) call(t *testing.T, inv invocation) outcome {
 		Request: &commonv1.HttpRequest{
 			Method: inv.method, Host: "conformance.test", Path: inv.path, RawQuery: inv.query,
 			Body: []byte(inv.body), RemoteAddr: "192.0.2.1:1234",
-			Headers: append([]*commonv1.Header{{Name: "content-type", Value: "text/x-conformance"}, {Name: "x-multi", Value: "a"}, {Name: "x-multi", Value: "b"}}, inv.clientHeaders...),
+			Headers: append([]*commonv1.Header{{Name: "content-type", Value: []byte("text/x-conformance")}, {Name: "x-multi", Value: []byte("a")}, {Name: "x-multi", Value: []byte("b")}}, inv.clientHeaders...),
 		},
 	})
 	if inv.traceparent != "" {
@@ -673,14 +675,75 @@ func (h *harness) malformedRequests(t *testing.T) {
 	}
 }
 
+// httpMessages: the bytes of an HTTP message are carried as they are
+// (docs/protocol.md, "HTTP messages").
+func (h *harness) httpMessages(t *testing.T) {
+	t.Run("request header values reach the guest as bytes", func(t *testing.T) {
+		out := h.ok(t, invocation{path: "/env", clientHeaders: []*commonv1.Header{
+			{Name: "x-latin", Value: []byte("caf\xe9")}, {Name: "x-junk", Value: []byte("\xff\xfe\x80")},
+			{Name: "x-dup", Value: []byte("one")}, {Name: "x-dup", Value: []byte("\xe9two")}}})
+		for _, want := range []string{"HTTP_X_LATIN=caf\xe9\n", "HTTP_X_JUNK=\xff\xfe\x80\n", "HTTP_X_DUP=one, \xe9two\n"} {
+			if !bytes.Contains(out.body, []byte(want)) {
+				t.Errorf("the guest's environment lacks %q:\n%q", want, out.body)
+			}
+		}
+	})
+
+	t.Run("the path reaches the guest as given, decoded once", func(t *testing.T) {
+		// PATH_INFO is the path as the protocol carries it: decoded once, by the ingress, and not again.
+		for _, path := range []string{"/pathinfo/caf\u00e9/\u65e5\u672c", "/pathinfo/a b", "/pathinfo/a%b", "/pathinfo/a%2Fb", "/pathinfo/a/./b", "/pathinfo//x", "/pathinfo/%41", "/pathinfo/a?b#c"} {
+			if got := string(h.ok(t, invocation{path: path}).body); got != path {
+				t.Errorf("PATH_INFO = %q, want %q", got, path)
+			}
+		}
+	})
+
+	t.Run("response header values are bytes, with surrounding whitespace trimmed", func(t *testing.T) {
+		out := h.ok(t, invocation{path: "/rawheaders"})
+		got := map[string][]string{}
+		for _, hd := range out.head.GetHeaders() {
+			got[hd.GetName()] = append(got[hd.GetName()], string(hd.GetValue()))
+		}
+		for name, want := range map[string][]string{"x-latin": {"caf\xe9"}, "x-junk": {"\xff\xfe\x80"}, "x-dup": {"one", "\xe9two"}, "x-nbsp": {"\u00a0v\u00a0"}} {
+			if fmt.Sprintf("%q", got[name]) != fmt.Sprintf("%q", want) {
+				t.Errorf("%s = %q, want %q", name, got[name], want)
+			}
+		}
+	})
+
+	t.Run("a control character in a response header is an ABI violation", func(t *testing.T) {
+		wantReason(t, h.call(t, invocation{path: "/ctlheader"}).err, commonv1.ErrorReason_ERROR_REASON_ABI_MISMATCH)
+	})
+
+	t.Run("a request that is not well formed is invalid_argument", func(t *testing.T) {
+		for what, inv := range map[string]invocation{
+			"no path":                           {path: ""},
+			"a path without its slash":          {path: "echo"},
+			"a NUL in the path":                 {path: "/echo\x00"},
+			"a newline in the path":             {path: "/echo\n"},
+			"a newline in the query":            {path: "/echo", query: "a\nb"},
+			"a header with a space in its name": {path: "/echo", clientHeaders: []*commonv1.Header{{Name: "bad name", Value: []byte("x")}}},
+			"a header value with CRLF":          {path: "/echo", clientHeaders: []*commonv1.Header{{Name: "x-a", Value: []byte("a\r\nb: c")}}},
+			"a header value with NUL":           {path: "/echo", clientHeaders: []*commonv1.Header{{Name: "x-a", Value: []byte("a\x00b")}}},
+		} {
+			out := h.call(t, inv)
+			if out.err == nil || connect.CodeOf(out.err) != connect.CodeInvalidArgument {
+				t.Errorf("%s: %v, want invalid_argument", what, out.err)
+			} else if r, _ := reasonOf(out.err); r != commonv1.ErrorReason_ERROR_REASON_UNSPECIFIED {
+				t.Errorf("%s: carries reason %v, want none", what, r)
+			}
+		}
+	})
+}
+
 // traceContext: the guest is given the platform's trace context, never the
 // client's (docs/protocol.md, "Observability").
 func (h *harness) traceContext(t *testing.T) {
 	const callTrace, clientTrace = "4bf92f3577b34da6a3ce929d0e0e4736", "0af7651916cd43dd8448eb211c80319c"
 	client := []*commonv1.Header{
-		{Name: "traceparent", Value: "00-" + clientTrace + "-b7ad6b7169203331-01"},
-		{Name: "tracestate", Value: "vendor=client"},
-		{Name: "baggage", Value: "user=somebody"},
+		{Name: "traceparent", Value: []byte("00-" + clientTrace + "-b7ad6b7169203331-01")},
+		{Name: "tracestate", Value: []byte("vendor=client")},
+		{Name: "baggage", Value: []byte("user=somebody")},
 	}
 
 	// The call carries a trace: the guest is given that trace, with a span id of the worker's own.

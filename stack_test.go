@@ -144,7 +144,7 @@ func TestAnOperatorAndAFrontendOverTheLibrary(t *testing.T) {
 			c, cancel := context.WithTimeout(ctx, 5*time.Second)
 			res, err = ing.Invoke(c, &ingressv1.InvokeRequest{Request: &commonv1.HttpRequest{
 				Method: "POST", Host: "lib.test", Path: "/echo", Body: []byte("through the library"),
-				Headers: []*commonv1.Header{{Name: "Content-Type", Value: "text/plain"}}}})
+				Headers: []*commonv1.Header{{Name: "Content-Type", Value: []byte("text/plain")}}}})
 			if err == nil {
 				body, err = res.ReadAll()
 			}

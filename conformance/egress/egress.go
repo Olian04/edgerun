@@ -277,7 +277,9 @@ func (h *harness) fetchBudget(t testing.TB, req *egressv1.FetchRequest, budget t
 	return out
 }
 
-func hdr(name, value string) *commonv1.Header { return &commonv1.Header{Name: name, Value: value} }
+func hdr(name, value string) *commonv1.Header {
+	return &commonv1.Header{Name: name, Value: []byte(value)}
+}
 
 func (h *harness) describe(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), settle)

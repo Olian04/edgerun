@@ -105,6 +105,7 @@ func Run(t *testing.T, target Target) {
 	t.Run("RequestMapping", h.requestMapping)
 	t.Run("RequestIDs", h.requestIDs)
 	t.Run("TraceContext", h.traceContext)
+	t.Run("HTTPMessages", h.httpMessages)
 	t.Run("InvocationIDs", h.invocationIDs)
 	t.Run("BodyLimit", h.bodyLimit)
 	t.Run("BadRequests", h.badRequests)
@@ -180,7 +181,7 @@ func (o *fakeOrchestrator) invocationsWith(id string) []seen {
 	var out []seen
 	for _, s := range o.invocations() {
 		for _, h := range s.req.GetRequest().GetHeaders() {
-			if h.GetName() == "x-conformance-test" && h.GetValue() == id {
+			if h.GetName() == "x-conformance-test" && string(h.GetValue()) == id {
 				out = append(out, s)
 			}
 		}
@@ -226,7 +227,9 @@ func (i ingress) Invoke(ctx context.Context, req *connect.Request[ingressv1.Invo
 
 // --- scripted answers ------------------------------------------------------------------
 
-func hdr(name, value string) *commonv1.Header { return &commonv1.Header{Name: name, Value: value} }
+func hdr(name, value string) *commonv1.Header {
+	return &commonv1.Header{Name: name, Value: []byte(value)}
+}
 
 func sendHead(st *connect.ServerStream[ingressv1.InvokeResponse], status uint32, headers ...*commonv1.Header) error {
 	return st.Send(&ingressv1.InvokeResponse{Part: &ingressv1.InvokeResponse_Head{Head: &ingressv1.InvokeHead{

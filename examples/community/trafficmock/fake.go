@@ -91,7 +91,7 @@ func (f *FakeIngress) Invoke(ctx context.Context, req *connect.Request[ingressv1
 	head := func(status uint32, hs ...string) error {
 		h := &commonv1.HttpResponseHead{Status: status}
 		for i := 0; i+1 < len(hs); i += 2 {
-			h.Headers = append(h.Headers, &commonv1.Header{Name: hs[i], Value: hs[i+1]})
+			h.Headers = append(h.Headers, &commonv1.Header{Name: hs[i], Value: []byte(hs[i+1])})
 		}
 		return st.Send(&ingressv1.InvokeResponse{Part: &ingressv1.InvokeResponse_Head{
 			Head: &ingressv1.InvokeHead{Http: h, InvocationId: "fake-" + req.Msg.GetRequestId()}}})

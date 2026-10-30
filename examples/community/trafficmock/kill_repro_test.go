@@ -54,7 +54,7 @@ func TestWorkerKillUnderLoadRepro(t *testing.T) {
 				if u%2 == 0 { // ingress.v1
 					ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 					inv, err := s.Ing.Invoke(ctx, &ingressv1.InvokeRequest{RequestId: id, Request: &commonv1.HttpRequest{Method: "POST", Host: multiHost, Path: "/jitter/300",
-						Headers: []*commonv1.Header{{Name: "x-request-id", Value: id}}, Body: []byte("body of " + id)}})
+						Headers: []*commonv1.Header{{Name: "x-request-id", Value: []byte(id)}}, Body: []byte("body of " + id)}})
 					if err != nil {
 						k = "ingress.v1 " + fmt.Sprintf("%v/%v", connect.CodeOf(err), edgerun.Reason(err))
 					} else if b, err := io.ReadAll(inv.Body); err != nil || string(b) != want {

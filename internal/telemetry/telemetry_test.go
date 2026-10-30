@@ -81,16 +81,16 @@ func TestInjectHeadersReplacesWhatTheClientSent(t *testing.T) {
 	defer span.End()
 
 	in := []*commonv1.Header{
-		{Name: "Accept", Value: "*/*"},
-		{Name: "Traceparent", Value: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"},
-		{Name: "tracestate", Value: "vendor=client"},
-		{Name: "baggage", Value: "user=somebody"},
+		{Name: "Accept", Value: []byte("*/*")},
+		{Name: "Traceparent", Value: []byte("00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01")},
+		{Name: "tracestate", Value: []byte("vendor=client")},
+		{Name: "baggage", Value: []byte("user=somebody")},
 	}
 	out := telemetry.InjectHeaders(ctx, in)
 
 	got := map[string]string{}
 	for _, h := range out {
-		got[strings.ToLower(h.GetName())] = h.GetValue()
+		got[strings.ToLower(h.GetName())] = string(h.GetValue())
 	}
 	if got["accept"] != "*/*" {
 		t.Errorf("other headers were lost: %v", got)
@@ -111,7 +111,7 @@ func TestInjectHeadersReplacesWhatTheClientSent(t *testing.T) {
 }
 
 func TestInjectHeadersWithNoTraceJustRemovesTheClients(t *testing.T) {
-	out := telemetry.InjectHeaders(context.Background(), []*commonv1.Header{{Name: "traceparent", Value: "x"}, {Name: "a", Value: "b"}})
+	out := telemetry.InjectHeaders(context.Background(), []*commonv1.Header{{Name: "traceparent", Value: []byte("x")}, {Name: "a", Value: []byte("b")}})
 	if len(out) != 1 || out[0].GetName() != "a" {
 		t.Errorf("got %v", out)
 	}

@@ -8,7 +8,11 @@ package edgerun.common.v1;
 // their wire order and are not merged, so a hop never has to guess.
 message Header {
   string name = 1;
-  string value = 2;
+  // Opaque bytes, as they arrived: HTTP does not say a header value is text, and
+  // a hop that changed or refused the bytes it did not understand would not be
+  // forwarding the message unchanged. A value contains no control character
+  // other than horizontal tab (no NUL, CR or LF); see docs/protocol.md.
+  bytes value = 2;
 }
 
 // HttpRequest is the request as received at the edge, forwarded unchanged

@@ -190,7 +190,7 @@ func InjectHeaders(ctx context.Context, headers []*commonv1.Header) []*commonv1.
 	Propagator().Inject(ctx, carrier)
 	for _, name := range []string{"traceparent", "tracestate"} {
 		if v := carrier.Get(name); v != "" {
-			out = append(out, &commonv1.Header{Name: name, Value: v})
+			out = append(out, &commonv1.Header{Name: name, Value: []byte(v)})
 		}
 	}
 	return out

@@ -200,7 +200,7 @@ func (s *stack) call(r req) result {
 	res, err := s.ingress.Invoke(cctx, &ingressv1.InvokeRequest{
 		RequestId: "e2e-" + s.t.Name(),
 		Request: &commonv1.HttpRequest{Method: r.method, Host: r.host, Path: r.path, RawQuery: r.query, Body: []byte(r.body),
-			Headers: []*commonv1.Header{{Name: "content-type", Value: "text/x-e2e"}}},
+			Headers: []*commonv1.Header{{Name: "content-type", Value: []byte("text/x-e2e")}}},
 	})
 	if err != nil {
 		return result{err: err, elapsed: time.Since(start)}

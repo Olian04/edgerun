@@ -92,9 +92,9 @@ func (l *Listener) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				out = append(out, h)
 			}
 		}
-		hs = append(out, &commonv1.Header{Name: "x-forwarded-for", Value: xff})
+		hs = append(out, &commonv1.Header{Name: "x-forwarded-for", Value: []byte(xff)})
 		if r.Header.Get("X-Forwarded-Proto") == "" {
-			hs = append(hs, &commonv1.Header{Name: "x-forwarded-proto", Value: proto})
+			hs = append(hs, &commonv1.Header{Name: "x-forwarded-proto", Value: []byte(proto)})
 		}
 	} else {
 		hs = appendForwarded(hs, ip, proto, r.Host)
@@ -136,7 +136,7 @@ func (s *httpSink) Head(inv *edgerun.Invocation) error {
 		if hopByHop[n] || n == "content-length" {
 			continue
 		}
-		h.Add(n, hd.GetValue())
+		h.Add(n, string(hd.GetValue()))
 	}
 	h.Set("X-Request-Id", s.reqID)
 	s.wrote = true
@@ -198,7 +198,7 @@ func (t *TraceWriter) Add(r *http.Request, body []byte) {
 	}
 	hs := map[string][]string{}
 	for _, h := range filterHeaders(r.Header, false) {
-		hs[h.Name] = append(hs[h.Name], h.Value)
+		hs[h.Name] = append(hs[h.Name], string(h.Value))
 	}
 	if len(hs) > 0 {
 		e["headers"] = hs

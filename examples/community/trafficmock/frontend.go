@@ -46,7 +46,7 @@ func filterHeaders(h http.Header, trust bool) []*commonv1.Header {
 			continue
 		}
 		for _, v := range h[n] {
-			out = append(out, &commonv1.Header{Name: l, Value: v})
+			out = append(out, &commonv1.Header{Name: l, Value: []byte(v)})
 		}
 	}
 	return out
@@ -55,9 +55,9 @@ func filterHeaders(h http.Header, trust bool) []*commonv1.Header {
 // appendForwarded adds what the frontend sets itself from the connection.
 func appendForwarded(hs []*commonv1.Header, ip, proto, host string) []*commonv1.Header {
 	return append(hs,
-		&commonv1.Header{Name: "x-forwarded-for", Value: ip},
-		&commonv1.Header{Name: "x-forwarded-proto", Value: proto},
-		&commonv1.Header{Name: "x-forwarded-host", Value: host})
+		&commonv1.Header{Name: "x-forwarded-for", Value: []byte(ip)},
+		&commonv1.Header{Name: "x-forwarded-proto", Value: []byte(proto)},
+		&commonv1.Header{Name: "x-forwarded-host", Value: []byte(host)})
 }
 
 // Mapped is a platform error as a real frontend would show it.

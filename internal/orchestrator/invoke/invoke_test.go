@@ -40,7 +40,7 @@ type behaviour func(ctx context.Context, req *workerv1.ExecuteRequest, st *conne
 // okBehaviour answers 200 with "ok:<path>" and a summary.
 func okBehaviour(_ context.Context, req *workerv1.ExecuteRequest, st *connect.ServerStream[workerv1.ExecuteResponse]) error {
 	st.Send(&workerv1.ExecuteResponse{Part: &workerv1.ExecuteResponse_Head{Head: &commonv1.HttpResponseHead{
-		Status: 201, Headers: []*commonv1.Header{{Name: "x-from", Value: "worker"}}}}})
+		Status: 201, Headers: []*commonv1.Header{{Name: "x-from", Value: []byte("worker")}}}}})
 	st.Send(&workerv1.ExecuteResponse{Part: &workerv1.ExecuteResponse_Chunk{Chunk: []byte("ok:")}})
 	st.Send(&workerv1.ExecuteResponse{Part: &workerv1.ExecuteResponse_Chunk{Chunk: []byte(req.Request.Path)}})
 	return st.Send(&workerv1.ExecuteResponse{Part: &workerv1.ExecuteResponse_Summary{Summary: &workerv1.ExecutionSummary{
@@ -208,7 +208,7 @@ func (e *env) invoke(host, path string, body string, budget time.Duration) resul
 	res, err := e.client.Invoke(ctx, &ingressv1.InvokeRequest{
 		RequestId: "req-1",
 		Request: &commonv1.HttpRequest{Method: "POST", Host: host, Path: path, RawQuery: "q=1", Body: []byte(body),
-			Headers: []*commonv1.Header{{Name: "x-in", Value: "1"}}},
+			Headers: []*commonv1.Header{{Name: "x-in", Value: []byte("1")}}},
 	})
 	if err != nil {
 		return result{err: err}

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
+	"github.com/Olian04/edgerun/internal/httpmsg"
 	"github.com/Olian04/edgerun/internal/wagi"
 )
 
@@ -40,11 +41,11 @@ func Env(req *commonv1.HttpRequest, user []*commonv1.EnvVar) ([]KV, error) {
 		name := strings.ToLower(h.GetName())
 		switch name {
 		case "content-type":
-			contentType = h.GetValue()
+			contentType = string(h.GetValue())
 		case "content-length":
 			// Replaced by the measured CONTENT_LENGTH above.
 		default:
-			joined[name] = append(joined[name], h.GetValue())
+			joined[name] = append(joined[name], string(h.GetValue()))
 		}
 	}
 	if contentType != "" {
@@ -102,9 +103,11 @@ func ParseResponse(out []byte) (*commonv1.HttpResponseHead, []byte, error) {
 		if !validHeaderName(n) {
 			return nil, nil, fmt.Errorf("invalid header name %q", truncate(name))
 		}
-		v := strings.TrimSpace(string(value))
-		if strings.ContainsRune(v, 0) {
-			return nil, nil, fmt.Errorf("header %q contains NUL", n)
+		// Optional whitespace around a value is space and tab and nothing else (not
+		// the Unicode spaces TrimSpace knows), and the value is bytes, not text.
+		v := string(bytes.Trim(value, " \t"))
+		if !httpmsg.ValidHeaderValue([]byte(v)) {
+			return nil, nil, fmt.Errorf("header %q contains a control character", n)
 		}
 		if n == "status" {
 			code, err := parseStatus(v)
@@ -114,7 +117,7 @@ func ParseResponse(out []byte) (*commonv1.HttpResponseHead, []byte, error) {
 			head.Status = code
 			continue
 		}
-		head.Headers = append(head.Headers, &commonv1.Header{Name: n, Value: v})
+		head.Headers = append(head.Headers, &commonv1.Header{Name: n, Value: []byte(v)})
 	}
 }
 

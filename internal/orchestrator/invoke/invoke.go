@@ -32,6 +32,7 @@ import (
 	workerv1 "github.com/Olian04/edgerun/gen/edgerun/worker/v1"
 	"github.com/Olian04/edgerun/internal/authn"
 	"github.com/Olian04/edgerun/internal/errs"
+	"github.com/Olian04/edgerun/internal/httpmsg"
 	"github.com/Olian04/edgerun/internal/orchestrator/netroute"
 	"github.com/Olian04/edgerun/internal/orchestrator/sched"
 	"github.com/Olian04/edgerun/internal/orchestrator/snapshot"
@@ -122,6 +123,9 @@ func (s *Service) Invoke(ctx context.Context, req *connect.Request[ingressv1.Inv
 	r := req.Msg.GetRequest()
 	if r == nil {
 		return errs.Invalid("request is required")
+	}
+	if err := httpmsg.ValidateRequest(r); err != nil {
+		return errs.Invalid("%v", err)
 	}
 	if uint64(len(r.GetBody())) > s.cfg.MaxRequestBodyBytes {
 		return errs.New(commonv1.ErrorReason_ERROR_REASON_REQUEST_TOO_LARGE,

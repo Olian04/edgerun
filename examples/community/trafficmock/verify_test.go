@@ -343,10 +343,10 @@ func TestVerifyHeaderWrongValueAndBoth(t *testing.T) {
 		hs   []*commonv1.Header
 		want string
 	}{
-		"right":      {[]*commonv1.Header{{Name: "X-Echo", Value: "id1"}}, ""},
-		"wrong":      {[]*commonv1.Header{{Name: "x-echo", Value: "id2"}}, `header x-echo is ["id2"], want "id1"`},
-		"duplicated": {[]*commonv1.Header{{Name: "x-echo", Value: "id1"}, {Name: "x-echo", Value: "id1"}}, "want"},
-		"absent":     {[]*commonv1.Header{{Name: "other", Value: "id1"}}, "absent"},
+		"right":      {[]*commonv1.Header{{Name: "X-Echo", Value: []byte("id1")}}, ""},
+		"wrong":      {[]*commonv1.Header{{Name: "x-echo", Value: []byte("id2")}}, `header x-echo is ["id2"], want "id1"`},
+		"duplicated": {[]*commonv1.Header{{Name: "x-echo", Value: []byte("id1")}, {Name: "x-echo", Value: []byte("id1")}}, "want"},
+		"absent":     {[]*commonv1.Header{{Name: "other", Value: []byte("id1")}}, "absent"},
 	} {
 		if got := checkHeader(c.hs, "x-echo", "id1"); !strings.Contains(got, c.want) || (c.want == "") != (got == "") {
 			t.Errorf("%s: %q, want %q", name, got, c.want)

@@ -57,7 +57,7 @@ func (f *fakeOrchestrator) last() *ingressv1.InvokeRequest {
 func head(status uint32, headers ...string) *ingressv1.InvokeResponse {
 	h := &commonv1.HttpResponseHead{Status: status}
 	for i := 0; i+1 < len(headers); i += 2 {
-		h.Headers = append(h.Headers, &commonv1.Header{Name: headers[i], Value: headers[i+1]})
+		h.Headers = append(h.Headers, &commonv1.Header{Name: headers[i], Value: []byte(headers[i+1])})
 	}
 	return &ingressv1.InvokeResponse{Part: &ingressv1.InvokeResponse_Head{Head: &ingressv1.InvokeHead{Http: h, InvocationId: "inv-1"}}}
 }
@@ -132,7 +132,7 @@ func readAll(t *testing.T, resp *http.Response) string {
 func headerMap(req *ingressv1.InvokeRequest) map[string][]string {
 	m := map[string][]string{}
 	for _, h := range req.Request.Headers {
-		m[h.Name] = append(m[h.Name], h.Value)
+		m[h.Name] = append(m[h.Name], string(h.Value))
 	}
 	return m
 }

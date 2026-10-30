@@ -34,7 +34,7 @@ func TestDeployAndInvoke(t *testing.T) {
 		var ct string
 		for _, h := range res.head.Http.Headers {
 			if h.Name == "content-type" {
-				ct = h.Value
+				ct = string(h.Value)
 			}
 		}
 		if ct != "text/x-e2e" {

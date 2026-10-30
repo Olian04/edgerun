@@ -400,7 +400,7 @@ func (r *Runner) tracePlan(e *TraceEntry, intended time.Time) (*Planned, error) 
 	c := int(seq % uint64(max(r.Sc.Clients, 1)))
 	ip := fmt.Sprintf("10.%d.%d.%d", (c>>16)&255, (c>>8)&255, c&255|1)
 	hs := filterHeaders(h, false)
-	hs = append(hs, &commonv1.Header{Name: "x-request-id", Value: id})
+	hs = append(hs, &commonv1.Header{Name: "x-request-id", Value: []byte(id)})
 	hs = appendForwarded(hs, ip, "http", e.Host)
 	return &Planned{Seq: seq, RequestID: id, Template: "replay", Budget: budget, Intended: intended,
 		Req: &ingressv1.InvokeRequest{RequestId: id, Request: &commonv1.HttpRequest{

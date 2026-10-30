@@ -10,7 +10,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"net/url"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/tetratelabs/wazero"
@@ -296,7 +295,7 @@ func ParseFetchRequest(b []byte) (*NetRequest, error) {
 		if !ok || len(bytes.TrimSpace(name)) == 0 {
 			return nil, fmt.Errorf("malformed header line %q", truncate(l))
 		}
-		req.Headers = append(req.Headers, &commonv1.Header{Name: string(bytes.TrimSpace(name)), Value: strings.TrimSpace(string(value))})
+		req.Headers = append(req.Headers, &commonv1.Header{Name: string(bytes.TrimSpace(name)), Value: bytes.Trim(value, " \t")})
 	}
 	return req, nil
 }

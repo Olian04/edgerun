@@ -22,7 +22,7 @@ func headerValues(head *commonv1.HttpResponseHead, name string) []string {
 	var out []string
 	for _, h := range head.GetHeaders() {
 		if h.GetName() == name {
-			out = append(out, h.GetValue())
+			out = append(out, string(h.GetValue()))
 		}
 	}
 	return out
@@ -102,6 +102,21 @@ func (h *harness) requests(t *testing.T) {
 		}
 	})
 
+	t.Run("header values are bytes", func(t *testing.T) {
+		r := h.fetch(t, &egressv1.FetchRequest{Method: "GET", Url: h.origin.url("/echo"), Allow: allow, Headers: []*commonv1.Header{
+			{Name: "x-latin", Value: []byte("caf\xe9")}, {Name: "x-junk", Value: []byte("\xff\xfe\x80")},
+			{Name: "x-dup", Value: []byte("one")}, {Name: "x-dup", Value: []byte("\xe9two")}}}, 0)
+		if r.err != nil || r.head.GetStatus() != 200 {
+			t.Fatalf("%v %v", r.head, r.err)
+		}
+		got := h.origin.lastRequest("/echo").Header
+		if fmt.Sprintf("%q", got["X-Latin"]) != fmt.Sprintf("%q", []string{"caf\xe9"}) ||
+			fmt.Sprintf("%q", got["X-Junk"]) != fmt.Sprintf("%q", []string{"\xff\xfe\x80"}) ||
+			fmt.Sprintf("%q", got["X-Dup"]) != fmt.Sprintf("%q", []string{"one", "\xe9two"}) {
+			t.Errorf("the origin saw %q: a header value is opaque bytes, not text", got)
+		}
+	})
+
 	t.Run("encodings are the guest's business", func(t *testing.T) {
 		h.fetch(t, &egressv1.FetchRequest{Method: "GET", Url: h.origin.url("/echo"), Allow: allow}, 0)
 		if v := h.origin.lastRequest("/echo").Header.Get("Accept-Encoding"); v != "" {
@@ -131,6 +146,18 @@ func (h *harness) responses(t *testing.T) {
 		for _, name := range []string{"keep-alive", "proxy-authenticate", "connection", "transfer-encoding"} {
 			if v := headerValues(r.head, name); len(v) > 0 {
 				t.Errorf("connection-level header %q was forwarded: %v", name, v)
+			}
+		}
+	})
+
+	t.Run("response header values are bytes", func(t *testing.T) {
+		r := h.get(t, "/rawheaders")
+		if r.err != nil || r.head.GetStatus() != 200 {
+			t.Fatalf("%v %v", r.head, r.err)
+		}
+		for name, want := range map[string][]string{"x-latin": {"caf\xe9"}, "x-junk": {"\xff\xfe\x80"}, "x-dup": {"one", "\xe9two"}} {
+			if got := headerValues(r.head, name); fmt.Sprintf("%q", got) != fmt.Sprintf("%q", want) {
+				t.Errorf("%s = %q, want %q", name, got, want)
 			}
 		}
 	})
