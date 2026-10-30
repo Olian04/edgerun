@@ -179,6 +179,12 @@ func (f *Frontend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer res.Body.Close()
 
 	invocation = res.ID
+	if err := httpmsg.ValidateHeaders(res.Head.GetHeaders()); err != nil {
+		// The orchestrator broke the protocol: no part of the header reaches the client.
+		f.cfg.Log.WarnContext(r.Context(), "invalid response head", "request_id", reqID, "error", err)
+		http.Error(rec, "Bad Gateway", http.StatusBadGateway)
+		return
+	}
 	writeHead(rec, res, reqID)
 	rc := http.NewResponseController(rec)
 	buf := make([]byte, 64<<10)

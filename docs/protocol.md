@@ -170,7 +170,12 @@ what a hop may rely on.
    hosts. No match → `FUNCTION_NOT_FOUND`. The Host header is compared lower-cased, without
    port or trailing dot. Paths are matched as given, not cleaned.
 3. **Scheduling.** The orchestrator picks among workers that are alive, `READY`, and list the
-   module's ABI, preferring the same worker for the same module (warm cache).
+   module's ABI, preferring the same worker for the same module (warm cache). A worker's `in_flight` is
+   information for operators: the orchestrator does not use it to skip a worker, it asks and a full one answers
+   `NO_CAPACITY`. With no worker that is alive and `READY` the answer is `NO_CAPACITY`; with workers but none that
+   lists the ABI it is `ABI_MISMATCH`; when every worker that lists the ABI has been tried and refused or could not
+   be reached it is `NO_CAPACITY`. Which hash decides "the same worker" (and "the same service", for network
+   services) is the orchestrator's own: any stable choice conforms.
 4. **Retry rule.** The orchestrator retries on `NO_CAPACITY`, and when a worker could not be
    reached at all (the connection was never established, so the request cannot have run), on the
    next candidate, at most 3 attempts. It never retries after the response head was received,
@@ -201,7 +206,9 @@ forwarded verbatim. Platform errors (`common.v1.ErrorReason`) map as:
 | `ARTIFACT_NOT_FOUND` | 502 | |
 | `INTERNAL`, unknown | 500 | |
 
-Error messages are for operators. The frontend never forwards `ErrorInfo.message` to clients.
+Error messages are for operators. The frontend never forwards `ErrorInfo.message` to clients, and the orchestrator does
+not copy into its own messages what it cannot vouch for: an error from a worker that carries no `ErrorInfo` becomes
+`INTERNAL` with a generic message (the worker's text is for the orchestrator's own log).
 A `FUNCTION_TRAPPED` message SHOULD end with the tail of the guest's stderr (at most 4 KiB),
 because a failed invocation has no `ExecutionSummary` to carry logs.
 
@@ -250,14 +257,29 @@ makes one replaceable is that every frontend maps HTTP onto the protocol the sam
   discarded, and the frontend sets `x-forwarded-for` (the peer's IP), `x-forwarded-proto` and
   `x-forwarded-host` itself. A frontend may offer a mode for running behind a proxy it trusts, in
   which those headers are kept and appended to; that mode is off by default.
-- `request_id` is the client's `X-Request-Id` if it is printable ASCII of at most 128 characters,
-  otherwise a fresh unique value. It is echoed in the `X-Request-Id` header of every response,
-  successful or not.
+- `request_id` is the client's `X-Request-Id` if it is made of the bytes 0x21 to 0x7E (printable ASCII **without the
+  space**) and is at most 128 of them, otherwise a fresh unique value. If the request carries several `X-Request-Id`
+  headers the first is the one considered. It is echoed in the `X-Request-Id` header of every response, successful or
+  not, and it is the platform's: a function that writes its own `X-Request-Id` (or `X-Edgerun-Invocation-Id`) header
+  in its response does not get it through; the frontend's value replaces it. (A frontend built on an HTTP stack that
+  refuses some requests before application code sees them can only echo a fresh id for those: that is allowed.)
 - `Invoke` is called with the frontend's whole-request budget as its deadline, with the ingress
-  token, and is cancelled if the client goes away.
+  token, and is cancelled if the client goes away. The budget starts when the call is made, that is, once the
+  frontend has read the request (reading a slow upload is bounded by the frontend's own read timeouts, not by the
+  budget).
+- **Trace context** (see "Observability"): a `traceparent` the client sent is considered only if it is well formed (not
+  all zeros; when there are several, the first); the call to the orchestrator then continues its trace and may carry
+  `tracestate`. None of `traceparent`, `tracestate` and `baggage` is in `HttpRequest.headers`. A frontend that is
+  given no trace need not start one.
+- The `Host` header is carried in `host` and is **not repeated** in `headers`; every other header, `content-length`
+  included, is forwarded as received (a worker replaces it by the measured length). A request without a `Host` header
+  is answered 400 if it is HTTP/1.1 (RFC 9112); a frontend may forward an HTTP/1.0 one with `host` empty.
 
 **Response.**
 
+- A head with a header whose name is not a token or whose value has a control character other than tab (see "HTTP
+  messages") is a violation of the protocol by the orchestrator: it is answered 502 as a whole, and no part of the
+  offending header reaches the client.
 - The head's status must be 200–599; anything else is a platform fault and is answered 502. Headers
   are forwarded as given, repeated ones included, except the connection-level ones above and
   `content-length`: the frontend frames the response itself.
@@ -291,7 +313,7 @@ for invocations):
 
 | Code | When |
 |---|---|
-| `invalid_argument` | a field is malformed or out of range, or a page token is not one the server issued |
+| `invalid_argument` | a field is malformed or out of range (a limit that depends on what is stored too: more than 64 variables, more than 32 labels after a patch, a module over `max_module_bytes`), or a page token is not one the server issued, or is one issued for another list |
 | `not_found` | the function, version, route or environment variable does not exist. An id that is not a well-formed UUID names nothing, so it is `not_found` too, not `invalid_argument` |
 | `already_exists` | a function name, or a route's `(host_pattern, path_prefix)`, is taken |
 | `aborted` | the change conflicted with another one at the same moment and the database gave up on it; nothing was changed, ask again |
@@ -307,11 +329,16 @@ for invocations):
   `SetEnv` creates or replaces. `DeleteEnv` of a variable that is not set is `not_found`.
 - `ListEnv` returns variables ordered by name and returns **secret values empty**: secrets are
   write-only. A secret is still handed to the worker at invocation time, in clear.
-- A route's host pattern is lower-cased on write: an exact host, `*.suffix`, or `*`. Its path prefix
-  must start with `/`, may not contain `//`, `?`, `#` or whitespace, and loses a trailing `/` (so
+- A route's host pattern is lower-cased on write and is `*`, `*.suffix`, or an exact host: letters, digits, `.` and
+  `-`, starting and ending with a letter or digit (no port, no IPv6 literal, no underscore). A wildcard matches a
+  host of **any depth** below its suffix (`*.a.com` matches `x.y.a.com`), never the apex. Its path prefix
+  must start with `/`, may not contain `//`, `?`, `#`, whitespace or a control character, and loses a trailing `/` (so
   `/api` and `/api/` are one route; `/` stays). Routes are returned in the normalised form.
 - `module` must not be empty or exceed `max_module_bytes`, and `abi` is a short lower-case name
-  (`wagi-1`). Whether any worker supports the ABI is not checked here: that is a scheduling matter,
+  (1 to 32 characters of lower-case letters, digits, `.` and `-`, starting with a letter or digit; `wagi-1`). A single
+  call is bounded by the transport: a request larger than `max_module_bytes` plus 1 MiB is refused whole
+  (`resource_exhausted`), an `Invoke` larger than `max_request_body_bytes` plus 256 KiB likewise, and below those a
+  limit is judged by the call and answered as stated above. Whether any worker supports the ABI is not checked here: that is a scheduling matter,
   reported at invocation time as `ABI_MISMATCH`.
 
 **Versions** are immutable and numbered 1, 2, 3… per function, never reused. `CreateVersion` stores
@@ -366,12 +393,13 @@ They exist so that tools can mark what they own and find it again. A tool should
   list, and `PatchLabels` and `PatchRouteLabels` **change some and leave the rest**: they take labels to `set` and keys
   to `remove`, apply them to the labels as they are at that moment, atomically with respect to every other change of
   those labels, so that two tools that each patch their own keys never lose each other's changes (which two
-  replacements, each made from a read, would). A key that is not there is not an error to remove; a key both set
+  replacements, each made from a read, would). A well-formed key that is not there is not an error to remove (a malformed one is `invalid_argument`: it
+  could never be there); a key both set
   and removed is `invalid_argument`; the labels that result must be valid as a whole (so not more than 32). Nothing
   else of a route changes when its labels do: they are no part of what it routes, and a route is still not
   retargeted but deleted and created again.
 - A key is 1-63 characters of lower-case letters, digits and `.`, `_`, `/`, `-`, starting and ending with a
-  letter or digit. A value is at most 253 characters of printable ASCII and may be empty. At most 32 labels.
+  letter or digit. A value is at most 253 characters of printable ASCII (0x20 to 0x7E, the space included) and may be empty. At most 32 labels.
   Anything else is `invalid_argument`. Labels are stored and returned as given.
 - `ListFunctions`, `ListVersions` and `ListRoutes` take `match_labels`: only resources that carry **every** label
   named, **with exactly that value** (values compare exactly, case included, and a label with another value
@@ -389,6 +417,9 @@ They exist so that tools can mark what they own and find it again. A tool should
   one included, selects none). Both combine with the label filters. Like `match_labels` (and unlike
   `has_label_keys` and `lacks_label_keys`), neither is validated as to its form: a name or an id that is malformed
   names nothing, and the answer is an empty list, not `invalid_argument`.
+- `ListInvocations` with a `function_id` that names nothing (a malformed id included) is an empty list, while
+  `ListVersions` and `ListEnv` of a function that does not exist are `not_found`. The default page size is 50 and the
+  largest 500.
 - A page token continues a list after the last item of the page it came from. It is **not bound to the filters** of
   the request that issued it: use it only with that request. (A token the server never issued is
   `invalid_argument`; one it issued, used with other filters, merely continues where it stood and may answer an
@@ -633,7 +664,10 @@ Services register with the orchestrator, as workers do (`egress.v1` `RegistrySer
   than 64 entries, is `invalid_argument`, and leaves nothing registered. The orchestrator stores the coverage
   in canonical form (lower-cased, ranges as their networks, deduplicated, sorted) and returns a fresh
   `service_id` and the heartbeat interval. Registering an endpoint that is already known replaces the
-  earlier registration (the service restarted).
+  earlier registration (the service restarted). Endpoints are compared as the exact text given: `http://h:1` and
+  `http://h:1/` are two endpoints, so a restarted service must register with the same text it used before.
+  In a coverage an IPv6 address is written **bare**, as the canonical form stores it (`2001:db8::/32`, `::1`),
+  not in brackets: brackets belong to allow-list entries, where a port can follow.
 - `Heartbeat` states are `READY` or `DRAINING` (anything else is `invalid_argument`). For an unknown
   `service_id` it answers `reregister = true`, and the service registers again.
 - A service that has not heartbeated for three intervals is not alive and is given nothing; neither is

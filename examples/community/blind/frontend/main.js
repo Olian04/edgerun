@@ -208,6 +208,7 @@ async function serve(req, res, requestId, reply) {
     }
     if (TRACE.has(name)) continue;
     if (HOP.has(name)) continue;
+    if (name === "host") continue; // carried in HttpRequest.host, not repeated (docs/protocol.md)
     if (FORWARD_CLAIMS.has(name) && !TRUST_FORWARDED) continue;
     headers.push({ name, value: Buffer.from(value, "latin1") });
   }

@@ -32,8 +32,8 @@ func NormalizeRoute(host, prefix string) (string, string, error) {
 	if prefix == "" || prefix[0] != '/' {
 		return "", "", invalid("path prefix %q must start with '/'", prefix)
 	}
-	if strings.Contains(prefix, "//") || strings.ContainsAny(prefix, "?# \t\r\n\x00") {
-		return "", "", invalid("path prefix %q must not contain '//', '?', '#' or whitespace", prefix)
+	if strings.Contains(prefix, "//") || strings.ContainsAny(prefix, "?# ") || strings.IndexFunc(prefix, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
+		return "", "", invalid("path prefix %q must not contain '//', '?', '#', whitespace or a control character", prefix)
 	}
 	if len(prefix) > 1 {
 		prefix = strings.TrimSuffix(prefix, "/")

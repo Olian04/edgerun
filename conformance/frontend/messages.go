@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
 )
 
 // This file is the suite for what the frontend does with the bytes of an HTTP
@@ -150,14 +152,31 @@ func (h *harness) httpMessages(t *testing.T) {
 
 	t.Run("a response header cannot be used to split the response", func(t *testing.T) {
 		// The orchestrator is not meant to send these (a value has no control character), but an edge that
-		// believed it would let a function write headers the client takes for its own.
-		h.orch.script(answer(200, "ok", hdr("x-evil", "a\r\nSet-Cookie: injected=1"), hdr("x-evil2", "a\x00b")))
-		r := h.raw(t, "msg-resp-split", "GET / HTTP/1.1\r\n\r\n")
-		if _, ok := r.header["Set-Cookie"]; ok {
-			t.Errorf("a CRLF in a response header value split the response: %v", r.header)
+		// believed it would let a function write headers the client takes for its own: the whole response is a 502.
+		for i, bad := range []*commonv1.Header{hdr("x-evil", "a\r\nSet-Cookie: injected=1"), hdr("x-evil", "a\x00b"), hdr("bad name", "x")} {
+			h.orch.script(answer(200, "ok", bad))
+			r := h.raw(t, fmt.Sprintf("msg-resp-split-%d", i), "GET / HTTP/1.1\r\n\r\n")
+			if r.status != 502 {
+				t.Errorf("%q: status %d, want 502", bad.GetName(), r.status)
+			}
+			if _, ok := r.header["Set-Cookie"]; ok || r.header.Get("X-Evil") != "" {
+				t.Errorf("a part of the offending header reached the client: %v", r.header)
+			}
+			if bytes.Contains(r.body, []byte("injected")) {
+				t.Errorf("the body of a refused response reached the client: %q", r.body)
+			}
 		}
-		if bytes.Contains(r.body, []byte("injected")) && r.status == 200 {
-			t.Errorf("a CRLF in a response header value reached the body: %q", r.body)
+	})
+
+	t.Run("Host is not repeated in the headers, and content-length is forwarded as received", func(t *testing.T) {
+		h.orch.script(answer(200, "ok"))
+		h.send(t, "msg-host", "POST", "/", strings.NewReader("12345"), nil)
+		got := h.only(t, "msg-host").req.GetRequest()
+		if v := headerValues(got, "host"); len(v) != 0 {
+			t.Errorf("host = %q in headers: it is carried in the host field only", v)
+		}
+		if v := headerValues(got, "content-length"); fmt.Sprint(v) != "[5]" {
+			t.Errorf("content-length = %v, want it forwarded as received ([5])", v)
 		}
 	})
 
