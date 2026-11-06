@@ -14,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"io"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"strings"
@@ -161,7 +162,7 @@ func (f *Frontend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Bounded even when the length is not declared (chunked uploads).
-	body, err := io.ReadAll(http.MaxBytesReader(rec, r.Body, int64(limit)))
+	body, err := io.ReadAll(http.MaxBytesReader(rec, r.Body, int64(min(limit, math.MaxInt64))))
 	if err != nil {
 		var tooBig *http.MaxBytesError
 		if errors.As(err, &tooBig) {

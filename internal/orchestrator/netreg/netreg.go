@@ -62,7 +62,7 @@ func New(cfg Config) *Service {
 
 // Mount registers the service on mux, guarded by the network scope.
 func (s *Service) Mount(mux *http.ServeMux, v authn.Verifier) {
-	mux.Handle(egressv1connect.NewRegistryServiceHandler(s, connect.WithInterceptors(telemetry.ServerInterceptor(), authn.Server(v, Scope)), connect.WithCompressMinBytes(authn.CompressMinBytes)))
+	mux.Handle(egressv1connect.NewRegistryServiceHandler(s, connect.WithInterceptors(telemetry.ServerInterceptor(), authn.Server(v, Scope)), connect.WithReadMaxBytes(authn.SmallMessageBytes), connect.WithCompressMinBytes(authn.CompressMinBytes)))
 }
 
 func (s *Service) Register(ctx context.Context, req *connect.Request[egressv1.RegisterRequest]) (*connect.Response[egressv1.RegisterResponse], error) {

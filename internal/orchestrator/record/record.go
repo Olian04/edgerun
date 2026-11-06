@@ -86,15 +86,42 @@ func (r *Recorder) Close(ctx context.Context) error {
 	}
 }
 
+// maxRetained bounds the records kept in memory for a store that is failing: past it the
+// oldest are dropped (and counted as lost). A database outage of seconds loses nothing.
+const maxRetained = 100_000
+
 func (r *Recorder) loop() {
 	defer close(r.done)
 	t := time.NewTicker(r.opts.FlushInterval)
 	defer t.Stop()
 	batch := make([]*controlv1.Invocation, 0, r.opts.BatchSize)
+	var retained [][]*controlv1.Invocation // batches the store refused, oldest first
+	retainedN := 0
 	flush := func() {
-		if len(batch) > 0 {
-			r.write(batch)
+		// What the store refused earlier goes first, in order; while it keeps refusing, nothing newer is
+		// tried this round (it would only fail as well, and slowly).
+		for len(retained) > 0 {
+			if !r.tryWrite(retained[0]) {
+				break
+			}
+			retainedN -= len(retained[0])
+			retained = retained[1:]
+		}
+		if len(batch) == 0 {
+			return
+		}
+		if len(retained) == 0 && r.tryWrite(batch) {
 			batch = batch[:0]
+			return
+		}
+		retained = append(retained, append([]*controlv1.Invocation(nil), batch...))
+		retainedN += len(batch)
+		batch = batch[:0]
+		for retainedN > maxRetained && len(retained) > 0 {
+			r.lost.Add(uint64(len(retained[0])))
+			r.log.Error("dropping invocation records: the store keeps failing and the memory kept for them is full", "count", len(retained[0]))
+			retainedN -= len(retained[0])
+			retained = retained[1:]
 		}
 	}
 	for {
@@ -116,6 +143,10 @@ func (r *Recorder) loop() {
 					}
 				default:
 					flush()
+					if retainedN > 0 { // the store is still refusing at shutdown: this is the last chance
+						r.lost.Add(uint64(retainedN))
+						r.log.Error("dropping invocation records at shutdown: the store keeps failing", "count", retainedN)
+					}
 					return
 				}
 			}
@@ -123,20 +154,13 @@ func (r *Recorder) loop() {
 	}
 }
 
-// write tries a batch twice, then gives up on it.
-func (r *Recorder) write(batch []*controlv1.Invocation) {
-	var err error
-	for attempt := range 2 {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		err = r.sink.InsertInvocations(ctx, batch)
-		cancel()
-		if err == nil {
-			return
-		}
-		if attempt == 0 {
-			time.Sleep(100 * time.Millisecond)
-		}
+// tryWrite makes one attempt to store a batch.
+func (r *Recorder) tryWrite(batch []*controlv1.Invocation) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := r.sink.InsertInvocations(ctx, batch); err != nil {
+		r.log.Warn("could not store invocation records; keeping them to try again", "count", len(batch), "error", err)
+		return false
 	}
-	r.lost.Add(uint64(len(batch)))
-	r.log.Error("dropping invocation records: the store keeps failing", "count", len(batch), "error", err)
+	return true
 }

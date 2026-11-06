@@ -235,9 +235,33 @@ func NormalizeHost(host string) string {
 	host = strings.ToLower(strings.TrimSuffix(host, "."))
 	host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
 	if a, err := netip.ParseAddr(host); err == nil {
+		if a.Zone() != "" {
+			return host // an address with a zone names an interface: it is not the address an entry lists
+		}
 		return a.Unmap().String()
 	}
 	return host
+}
+
+// underWildcard reports whether host is a name under suffix: dot-separated labels of letters, digits and
+// hyphens, at least one, before ".suffix". "*.example.com" is names under example.com, not anything that ends
+// in it ("a..example.com", "a&b.example.com").
+func underWildcard(host, suffix string) bool {
+	if len(host) <= len(suffix)+1 || !strings.HasSuffix(host, "."+suffix) {
+		return false
+	}
+	for _, label := range strings.Split(host[:len(host)-len(suffix)-1], ".") {
+		if label == "" {
+			return false
+		}
+		for i := 0; i < len(label); i++ {
+			c := label[i]
+			if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-') {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // Allows reports whether a request to scheme://host:port may go ahead. host is
@@ -255,7 +279,7 @@ func (l List) Allows(scheme, host string, port int) bool {
 			continue
 		}
 		if r.Wildcard {
-			if len(host) > len(r.Host)+1 && strings.HasSuffix(host, "."+r.Host) {
+			if underWildcard(host, r.Host) {
 				return true
 			}
 		} else if host == r.Host {
@@ -403,7 +427,7 @@ func (c Cover) MatchesHost(host string) bool {
 		a, err := netip.ParseAddr(host)
 		return err == nil && c.Prefix.Contains(a.Unmap())
 	case CoverWildcard:
-		return len(host) > len(c.Host)+1 && strings.HasSuffix(host, "."+c.Host)
+		return underWildcard(host, c.Host)
 	}
 	return host == c.Host
 }

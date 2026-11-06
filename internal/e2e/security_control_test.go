@@ -650,7 +650,7 @@ func TestSecurityControlForgedPageTokens(t *testing.T) {
 			return
 		}
 		switch connect.CodeOf(err) {
-		case connect.CodeInvalidArgument, connect.CodeNotFound:
+		case connect.CodeInvalidArgument, connect.CodeNotFound, connect.CodeResourceExhausted: // the last: a token past the small-message cap
 			return
 		}
 		mu.Lock()
@@ -877,9 +877,7 @@ func TestSecurityCompressionBombsAreBounded(t *testing.T) {
 // unauthenticated caller who can reach the port makes the orchestrator
 // buffer whatever it sends, and a 100 KB gzip stream is 160 MiB (or a gigabyte).
 func TestSecurityPreAuthReadIsBounded(t *testing.T) {
-	if os.Getenv("EDGERUN_E2E_KNOWN_DEFECTS") == "" {
-		t.Skip("KNOWN DEFECT SEC-PREAUTH-UNBOUNDED-READ: RouteService, InspectionService, FleetService, ArtifactService, RegistryService read an unauthenticated message of any size (a compressed one expands without bound) before checking credentials")
-	}
+
 	s := newStack(t)
 	_, uncapped := secBombTargets(s, "", "")
 	bomb := secBomb(160 << 20)
@@ -928,7 +926,7 @@ func TestSecurityControlLongRoutePrefix(t *testing.T) {
 			fmt.Fprintf(&sb, "%x", sha256.Sum256([]byte(fmt.Sprint(n, i)))) // does not compress
 		}
 		err := rt(fmt.Sprintf("long%d.test", n), "/"+sb.String()[:n])
-		if err != nil && connect.CodeOf(err) != connect.CodeInvalidArgument {
+		if err != nil && connect.CodeOf(err) != connect.CodeInvalidArgument && connect.CodeOf(err) != connect.CodeResourceExhausted {
 			longBad = append(longBad, fmt.Sprintf("%d bytes: %v", n, err))
 		}
 	}

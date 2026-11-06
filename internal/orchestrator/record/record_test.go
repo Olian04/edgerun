@@ -3,6 +3,7 @@ package record
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"sync"
@@ -98,7 +99,7 @@ func TestRecordNeverBlocksAndCountsDrops(t *testing.T) {
 	r.Close(context.Background())
 }
 
-func TestRetriesOnceThenGivesUpAndCounts(t *testing.T) {
+func TestRetriesAndGivesUpOnlyAtShutdown(t *testing.T) {
 	s := &sink{}
 	s.failing.Store(1) // first attempt fails, the retry succeeds
 	r := New(s, quiet, Options{BatchSize: 1, FlushInterval: time.Hour})
@@ -114,8 +115,8 @@ func TestRetriesOnceThenGivesUpAndCounts(t *testing.T) {
 	r2.Record(inv("a"))
 	r2.Record(inv("b"))
 	r2.Close(context.Background())
-	if r2.Lost() != 2 || s2.calls.Load() != 2 {
-		t.Errorf("lost=%d calls=%d; want 2 lost after exactly 2 attempts", r2.Lost(), s2.calls.Load())
+	if r2.Lost() != 2 {
+		t.Errorf("lost=%d; want the 2 records counted as lost when the store is still failing at shutdown", r2.Lost())
 	}
 }
 
@@ -129,4 +130,34 @@ func TestCloseGivesUpWhenTheContextEnds(t *testing.T) {
 		t.Errorf("Close = %v, want the deadline error", err)
 	}
 	close(s.gate)
+}
+
+// An outage of the store does not lose records: they are kept and written, in order, when it is back.
+func TestRecordsSurviveAnOutageOfTheStore(t *testing.T) {
+	s := &sink{}
+	s.failing.Store(6)
+	r := New(s, quiet, Options{BatchSize: 2, FlushInterval: 10 * time.Millisecond})
+	for _, id := range []string{"a", "b", "c", "d", "e", "f", "g"} {
+		r.Record(inv(id))
+		time.Sleep(3 * time.Millisecond)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for s.total() < 7 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	r.Close(context.Background())
+	if s.total() != 7 || r.Lost() != 0 {
+		t.Fatalf("total=%d lost=%d: a store that failed for a while must not cost any record", s.total(), r.Lost())
+	}
+	var got []string
+	s.mu.Lock()
+	for _, b := range s.batches {
+		for _, v := range b {
+			got = append(got, v.Id)
+		}
+	}
+	s.mu.Unlock()
+	if want := "[a b c d e f g]"; fmt.Sprint(got) != want {
+		t.Errorf("written in the order %v, want %s", got, want)
+	}
 }

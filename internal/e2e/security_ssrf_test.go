@@ -682,9 +682,7 @@ var _ = controlv1.SetEgressRequest{}
 // reach hosts the entry never meant; the reference service's own resolver
 // rejects them, so here the damage is bounded. Low severity.
 func TestSecuritySSRFWildcardMatchesMalformedNames(t *testing.T) {
-	if os.Getenv("EDGERUN_E2E_KNOWN_DEFECTS") == "" {
-		t.Skip("KNOWN DEFECT SEC-HOST-GRAMMAR: allow-list wildcard matches hosts with empty labels or non-name characters (a..example.com, a&b.example.com, [::ffff:127.0.0.1%25lo] for 127.0.0.1)")
-	}
+
 	s := newStack(t)
 	s.secNetWorker(4)
 	o := secStartOrigin(t)

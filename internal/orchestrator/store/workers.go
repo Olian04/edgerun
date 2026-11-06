@@ -37,7 +37,7 @@ func (s *Store) RegisterWorker(ctx context.Context, endpoint string, info *worke
 			max_concurrency = EXCLUDED.max_concurrency, state = EXCLUDED.state,
 			in_flight = 0, registered_at = now(), last_heartbeat = now()
 		RETURNING id::text`,
-		endpoint, doc, info.GetAbis(), int32(info.GetMaxConcurrency()), int16(workerv1.WorkerState_WORKER_STATE_READY)).Scan(&id)
+		endpoint, doc, info.GetAbis(), clamp32(info.GetMaxConcurrency()), int16(workerv1.WorkerState_WORKER_STATE_READY)).Scan(&id)
 	return id, err
 }
 
@@ -50,7 +50,7 @@ func (s *Store) Heartbeat(ctx context.Context, id string, state workerv1.WorkerS
 		return false, nil
 	}
 	tag, err := s.q(ctx).Exec(ctx, `UPDATE workers SET state = $2, in_flight = $3, last_heartbeat = now() WHERE id = $1`,
-		wid, int16(state), int32(inFlight))
+		wid, int16(state), clamp32(inFlight))
 	if err != nil {
 		return false, err
 	}

@@ -5,6 +5,7 @@ package errs
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"connectrpc.com/connect"
 
@@ -38,7 +39,9 @@ func Code(reason commonv1.ErrorReason) connect.Code {
 
 // New returns a Connect error for reason, with the ErrorInfo detail attached.
 func New(reason commonv1.ErrorReason, format string, args ...any) *connect.Error {
-	msg := fmt.Sprintf(format, args...)
+	// ErrorInfo.message is a proto string: text. A message that carries bytes (the tail of a guest's stderr)
+	// would make the detail unmarshalable, and without it the reason, which is what peers branch on, is lost.
+	msg := strings.ToValidUTF8(fmt.Sprintf(format, args...), "\uFFFD")
 	err := connect.NewError(Code(reason), errors.New(msg))
 	if d, derr := connect.NewErrorDetail(&commonv1.ErrorInfo{Reason: reason, Message: msg}); derr == nil {
 		err.AddDetail(d)

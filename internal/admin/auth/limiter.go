@@ -43,6 +43,18 @@ func (l *limiter) allow(ip string) bool {
 	return len(l.prune(ip)) < l.max
 }
 
+// reserve is allow and fail in one step: it refuses if the address is over its limit and otherwise counts an
+// attempt now (reset forgets them again when the attempt turns out to be a good one).
+func (l *limiter) reserve(ip string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if len(l.prune(ip)) >= l.max {
+		return false
+	}
+	l.fails[ip] = append(l.fails[ip], l.now())
+	return true
+}
+
 func (l *limiter) fail(ip string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()

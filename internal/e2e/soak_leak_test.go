@@ -21,9 +21,7 @@ import (
 // freed. cmd/worker runs one worker per process, so only a process that starts
 // workers repeatedly (tests, an embedder) pays.
 func TestSoakWorkerStartStopDoesNotRetainMemory(t *testing.T) {
-	if os.Getenv("EDGERUN_E2E_KNOWN_DEFECTS") == "" {
-		t.Skip("KNOWN DEFECT MO-6: a stopped worker is retained by its never-unregistered metric callback (about 9 MiB per lifetime)")
-	}
+
 	c := newMoCluster(t, moOpts{n: 1})
 	ctl := c.A().control()
 	fid := moCreateFn(t, ctl, "leak")

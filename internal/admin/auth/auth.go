@@ -21,6 +21,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -126,6 +127,11 @@ type Authenticator struct {
 	dummy   []byte // compared against when the user is unknown, to hide that fact by timing
 	limiter *limiter
 	now     func() time.Time
+
+	// A session is a signed cookie with no state behind it, so signing out would only clear the browser's copy:
+	// the signatures of the cookies signed out are remembered until they would have expired anyway.
+	revokedMu sync.Mutex
+	revoked   map[string]time.Time
 }
 
 // New returns an Authenticator.
@@ -146,7 +152,7 @@ func New(cfg Config) (*Authenticator, error) {
 	if now == nil {
 		now = time.Now
 	}
-	a := &Authenticator{cfg: cfg, users: map[string]User{}, now: now, limiter: newLimiter(10, 5*time.Minute, now)}
+	a := &Authenticator{cfg: cfg, users: map[string]User{}, now: now, limiter: newLimiter(10, 5*time.Minute, now), revoked: map[string]time.Time{}}
 	for _, u := range cfg.Users {
 		a.users[u.Name] = u
 	}
@@ -170,6 +176,9 @@ func (a *Authenticator) issue(u User) string {
 // verify returns the identity a session cookie vouches for. The user must
 // still be configured with the same role.
 func (a *Authenticator) verify(token string) (Identity, bool) {
+	if a.isRevoked(token) {
+		return Identity{}, false
+	}
 	enc, sig, ok := strings.Cut(token, ".")
 	if !ok {
 		return Identity{}, false
@@ -195,6 +204,33 @@ func (a *Authenticator) verify(token string) (Identity, bool) {
 		return Identity{}, false
 	}
 	return Identity{Name: u.Name, Role: u.Role}, true
+}
+
+func (a *Authenticator) isRevoked(token string) bool {
+	a.revokedMu.Lock()
+	defer a.revokedMu.Unlock()
+	until, ok := a.revoked[token]
+	if ok && !a.now().Before(until) {
+		delete(a.revoked, token)
+		return false
+	}
+	return ok
+}
+
+// revoke makes token worth nothing from now on, for as long as it could otherwise have been used.
+func (a *Authenticator) revoke(token string) {
+	if token == "" {
+		return
+	}
+	a.revokedMu.Lock()
+	defer a.revokedMu.Unlock()
+	now := a.now()
+	for t, until := range a.revoked { // forget the ones that have expired by themselves
+		if !now.Before(until) {
+			delete(a.revoked, t)
+		}
+	}
+	a.revoked[token] = now.Add(a.cfg.SessionTTL)
 }
 
 func (a *Authenticator) setCookie(w http.ResponseWriter, token string, maxAge int) {
@@ -229,7 +265,8 @@ func (a *Authenticator) Require(next http.Handler) http.Handler {
 // SafeNext returns next if it is a path on this site, else fallback. A sign-in
 // that redirected anywhere would be an open redirect.
 func SafeNext(next, fallback string) string {
-	if next == "" || next[0] != '/' || strings.HasPrefix(next, "//") || strings.HasPrefix(next, "/\\") || strings.ContainsAny(next, "\r\n") {
+	// No control character at all: a browser drops a tab or a newline from a URL, so "/\t/evil.example" is "//evil.example".
+	if next == "" || next[0] != '/' || strings.HasPrefix(next, "//") || strings.HasPrefix(next, "/\\") || strings.IndexFunc(next, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
 		return fallback
 	}
 	return next
@@ -262,7 +299,7 @@ func (a *Authenticator) Login(home string) http.Handler {
 
 func (a *Authenticator) attempt(w http.ResponseWriter, r *http.Request, next string) {
 	ip := clientIP(r)
-	if !a.limiter.allow(ip) {
+	if !a.limiter.reserve(ip) { // counts this attempt before the slow check, so a burst cannot all get through
 		w.Header().Set("Retry-After", "300")
 		renderLogin(w, http.StatusTooManyRequests, next, "Too many attempts. Try again in a few minutes.")
 		return
@@ -275,7 +312,6 @@ func (a *Authenticator) attempt(w http.ResponseWriter, r *http.Request, next str
 	}
 	ok := bcrypt.CompareHashAndPassword(hash, []byte(password)) == nil && known
 	if !ok {
-		a.limiter.fail(ip)
 		renderLogin(w, http.StatusUnauthorized, next, "Wrong username or password.")
 		return
 	}
@@ -288,6 +324,9 @@ func (a *Authenticator) attempt(w http.ResponseWriter, r *http.Request, next str
 // that a plain link can sign out; signing someone out is harmless to forge.
 func (a *Authenticator) Logout() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if c, err := r.Cookie(cookieName); err == nil {
+			a.revoke(c.Value)
+		}
 		a.setCookie(w, "", -1)
 		http.Redirect(w, r, a.cfg.LoginPath, http.StatusSeeOther)
 	})

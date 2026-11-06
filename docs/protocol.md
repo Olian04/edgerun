@@ -385,7 +385,7 @@ come and go, and the list is the operator's intent.
 
 **Read your writes.** When a call that changes routing (a route, an activation, an environment
 variable, a deleted function) returns, an `Invoke` sent to *the same orchestrator endpoint* behaves
-as if the change had been made. Other orchestrator instances may take a few seconds to catch up.
+as if the change had been made. Other orchestrator instances catch up within their refresh interval (1 s by default; measured: uniformly between 0 and 1 s, worst case a little over the interval), and a worker or network service that registered at one becomes usable at the others about one interval later.
 
 **Invocation records** are written for every invocation that was routed to a function version, including
 ones that then failed (`NO_CAPACITY`, `ABI_MISMATCH`, …), but not for `FUNCTION_NOT_FOUND` (no route, or

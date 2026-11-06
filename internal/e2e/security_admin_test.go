@@ -301,9 +301,7 @@ func TestSecurityAdminForgedSessions(t *testing.T) {
 // makes it "//evil.example/": a phishing link on the real sign-in page sends the
 // operator, now signed in and trusting the page, to another site.
 func TestSecurityAdminOpenRedirect(t *testing.T) {
-	if os.Getenv("EDGERUN_E2E_KNOWN_DEFECTS") == "" {
-		t.Skip("KNOWN DEFECT SEC-ADMIN-OPEN-REDIRECT: /login?next=/%09/evil.example/ redirects to //evil.example/ after sign-in (SafeNext does not refuse a tab)")
-	}
+
 	s := newStack(t)
 	site := s.secAdmin(t, false)
 	targets := []string{
@@ -434,9 +432,7 @@ func TestSecurityAdminLoginBruteForce(t *testing.T) {
 // check before any is recorded, so the limit of 10 per window is a limit on
 // sequential guesses only.
 func TestSecurityAdminLoginBruteForceConcurrent(t *testing.T) {
-	if os.Getenv("EDGERUN_E2E_KNOWN_DEFECTS") == "" {
-		t.Skip("KNOWN DEFECT SEC-ADMIN-LIMITER-RACE: the sign-in rate limit is checked before and recorded after bcrypt, so concurrent guesses all get through")
-	}
+
 	s := newStack(t)
 	site := s.secAdmin(t, false)
 	var wg sync.WaitGroup
@@ -718,9 +714,7 @@ func TestSecurityAdminResponseHeaders(t *testing.T) {
 // The session is a stateless signed token, so a copy of the cookie (from a log,
 // a proxy, a stolen laptop) keeps working until it expires, 12 hours by default.
 func TestSecurityAdminLogoutEndsTheSession(t *testing.T) {
-	if os.Getenv("EDGERUN_E2E_KNOWN_DEFECTS") == "" {
-		t.Skip("KNOWN DEFECT SEC-ADMIN-LOGOUT: a session cookie stays valid after sign-out until it expires (stateless sessions, no revocation)")
-	}
+
 	s := newStack(t)
 	site := s.secAdmin(t, false)
 	b := site.browser(t, false)

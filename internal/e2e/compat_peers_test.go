@@ -276,7 +276,7 @@ func TestCompatFrontendAgainstScriptedOrchestrators(t *testing.T) {
 			})
 
 			t.Run("an unknown reason is a 500 when the code is no hint", func(t *testing.T) {
-				for _, reason := range []int{99, 77, 12, 1000, -5} {
+				for _, reason := range []int{99, 77, 13, 1000, -5} { // 12 is CANCELLED now
 					for _, code := range []connect.Code{connect.CodeUnknown, connect.CodeInternal} {
 						path := fmt.Sprintf("/err/%d/%d", reason, code)
 						resp, body, err := httpGet(t, base, "x.test", path, "")

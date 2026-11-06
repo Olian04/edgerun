@@ -29,6 +29,9 @@ func scanRoute(row pgx.Row) (*controlv1.Route, error) {
 // match on whole path segments, so "/api" and "/api/" are the same route.
 func NormalizeRoute(host, prefix string) (string, string, error) {
 	host = strings.ToLower(strings.TrimSpace(host))
+	if len(prefix) > 1024 || len(host) > 253 {
+		return "", "", invalid("a route's host is at most 253 characters and its path prefix at most 1024")
+	}
 	if prefix == "" || prefix[0] != '/' {
 		return "", "", invalid("path prefix %q must start with '/'", prefix)
 	}

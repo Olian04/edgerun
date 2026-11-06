@@ -175,6 +175,9 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 		return nil, err
 	}
 	st := store.New(pool, box)
+	if err := st.CheckSecretKey(ctx); err != nil {
+		return nil, err
+	}
 
 	cache := snapshot.New(st, 3*cfg.HeartbeatInterval, log)
 	if err := cache.Refresh(ctx); err != nil {
@@ -226,7 +229,7 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 	protocols.SetHTTP1(true)
 	protocols.SetUnencryptedHTTP2(true)
 	// No write timeout: responses stream, and the invocation deadline bounds them.
-	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute, Protocols: &protocols}
+	srv := &http.Server{Handler: verifier.GuardServices(mux), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute, Protocols: &protocols}
 
 	bgCtx, cancel := context.WithCancel(context.Background())
 	s := &Server{cfg: cfg, pool: pool, http: srv, ln: ln, rec: rec, cancel: cancel}

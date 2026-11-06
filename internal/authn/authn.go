@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
@@ -23,6 +24,9 @@ type Verifier map[string]string
 // scopeOf returns the scope of the presented token. It visits every known
 // token so that timing does not reveal which one matched.
 func (v Verifier) scopeOf(h http.Header) (string, bool) {
+	if len(h.Values("Authorization")) > 1 {
+		return "", false // an ambiguous credential is no credential: another hop may read the other one
+	}
 	auth := h.Get("Authorization")
 	if !strings.HasPrefix(auth, bearer) {
 		return "", false
@@ -117,3 +121,28 @@ func (c client) WrapStreamingHandler(next connect.StreamingHandlerFunc) connect.
 // (a response head, a heartbeat) costs more than it saves: it is the largest
 // allocator on the client and slows a megabyte response by a third.
 const CompressMinBytes = 1 << 10
+
+// SmallMessageBytes bounds the messages of the calls that carry nothing large
+// (a registration, a heartbeat, a list request). Connect decodes a message before
+// the interceptor that checks the credential runs, so a server that set no bound
+// would allocate whatever an unauthenticated caller sent before saying 401.
+const SmallMessageBytes = 1 << 20
+
+// GuardServices refuses, before a single byte of the body is read, a call to a
+// protocol service ("/edgerun.<package>.<Service>/<Method>") that does not
+// present a token this verifier knows. The scope of the token is still judged
+// per service by the interceptor; this is only the cheap, early "no".
+func (v Verifier) GuardServices(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/edgerun.") {
+			if _, ok := v.scopeOf(r.Header); !ok {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("WWW-Authenticate", "Bearer")
+				w.WriteHeader(http.StatusUnauthorized)
+				io.WriteString(w, `{"code":"unauthenticated","message":"missing or invalid bearer token"}`)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}

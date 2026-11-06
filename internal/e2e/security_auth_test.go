@@ -13,7 +13,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"sort"
 	"strings"
 	"testing"
@@ -499,9 +498,7 @@ func secGRPCStatus(r secResp) string {
 // appends, or one that keeps the last) can disagree with this server about
 // which header counts; the safe answer to an ambiguous credential is to refuse.
 func TestSecurityDuplicateAuthorizationIsRefused(t *testing.T) {
-	if os.Getenv("EDGERUN_E2E_KNOWN_DEFECTS") == "" {
-		t.Skip("KNOWN DEFECT SEC-AUTH-DUP-HEADER: a request with a valid Authorization header followed by another one is accepted (the first wins)")
-	}
+
 	s := newStack(t)
 	h := http.Header{"Authorization": {"Bearer " + adminToken, "Bearer something-else"}}
 	if got := secRPC("http://"+s.addr, ctlPkg+"FunctionService/ListFunctions", false, h, "").outcome(); got == "passed" {

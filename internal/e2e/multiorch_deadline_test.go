@@ -3,7 +3,6 @@ package e2e
 import (
 	"context"
 	"net/http"
-	"os"
 	"testing"
 	"time"
 
@@ -21,9 +20,7 @@ import (
 // "plain Connect codes", and the table lists none for "the budget ran out",
 // so an operator cannot tell a timeout from a bug.
 func TestMultiOrchControlDeadlineInDatabaseIsDeadlineExceeded(t *testing.T) {
-	if os.Getenv("EDGERUN_E2E_KNOWN_DEFECTS") == "" {
-		t.Skip("KNOWN DEFECT MO-4: a control call whose deadline expires waiting for the database answers internal, not deadline_exceeded")
-	}
+
 	c, proxy := moOutageCluster(t)
 	ctl := edgerun.NewControl(c.A().url(), adminToken, edgerun.WithHTTPClient(&http.Client{Transport: budgetTransport{}}))
 	proxy.Blackhole(true)

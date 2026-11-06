@@ -45,7 +45,7 @@ func (s *Store) InsertInvocations(ctx context.Context, invs []*controlv1.Invocat
 			VALUES ($1::uuid, $2, NULLIF($3, '')::uuid, NULLIF($4, '')::uuid, NULLIF($5, '')::uuid, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 			ON CONFLICT (id) DO NOTHING`,
 			v.GetId(), v.GetRequestId(), v.GetFunctionId(), v.GetVersionId(), v.GetWorkerId(), v.GetMethod(), path,
-			int32(v.GetStatus()), int32(v.GetErrorReason()), int64(v.GetDurationMicros()), int64(v.GetPeakMemoryBytes()),
+			clamp32(v.GetStatus()), int32(v.GetErrorReason()), clamp64(v.GetDurationMicros()), clamp64(v.GetPeakMemoryBytes()),
 			stderr, v.GetStartTime().AsTime(), v.GetTraceId())
 	}
 	br := s.pool.SendBatch(ctx, batch)

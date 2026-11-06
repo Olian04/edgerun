@@ -137,6 +137,7 @@ func Run(ctx context.Context, cfg Config) error {
 		Labels:         cfg.Labels,
 	}
 	srv := server.New(info, engine, artifacts, log)
+	defer srv.Close()
 
 	mux := http.NewServeMux()
 	mux.Handle(srv.Handler(authn.Verifier{cfg.ExecutionToken: server.ExecuteScope}))

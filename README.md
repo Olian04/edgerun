@@ -132,7 +132,25 @@ production: the tokens do not replace it.
 | `--max-request-bytes` | | `6 MiB` | Largest request body accepted; frontends learn it from `Describe`. |
 | `--invocation-retention` | | `336h` | Older invocation records are deleted. |
 
-The orchestrator is stateless: run as many as you like against one database.
+The orchestrator is stateless: run as many as you like against one database. What a deployment with several must know
+(measured by `internal/e2e/multiorch_*`):
+
+- **One key.** Every orchestrator needs the same `--secret-key`: the first one to start records a check value sealed
+  with its key, and an orchestrator whose key cannot open it (or the secrets already in the database) refuses to start.
+- **A stable URL for workers and network services.** Their `--orchestrator-url` should be a failover or load-balanced
+  endpoint, not one orchestrator's own address: a worker pointed at one is dropped from the fleet (for every
+  orchestrator) about three heartbeats after that orchestrator dies, though it is healthy, and it cannot fetch a module
+  it has not cached while the URL is dead. A restarted orchestrator at the same address gets its worker back with no
+  restart of the worker.
+- **Changes spread within the refresh interval** (1 s): a deploy, a route or an environment change made at one
+  orchestrator is served by the others within a second.
+- **A database outage** does not stop requests (invocations are served from memory), but control calls fail,
+  `/healthz` answers 503, and for some seconds after the database returns workers may look dead until their next
+  heartbeat (`NO_CAPACITY`, up to about one heartbeat interval). Invocation records written meanwhile are kept in memory
+  (up to 100,000) and stored when the database is back.
+- A control call that fails because the database refused or dropped a connection answers `internal`: nothing says
+  whether the write committed, so read before you repeat it (an `aborted` is the only answer that promises nothing was
+  changed).
 
 ### worker
 

@@ -1,6 +1,7 @@
 package apierr
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -24,8 +25,13 @@ func TestFromStore(t *testing.T) {
 		{fmt.Errorf("%w: route y", store.ErrAlreadyExists), connect.CodeAlreadyExists},
 		{fmt.Errorf("%w: bad name", store.ErrInvalid), connect.CodeInvalidArgument},
 		{errors.New("pq: connection refused to 10.1.2.3:5432"), connect.CodeInternal},
+		{fmt.Errorf("query: %w", context.DeadlineExceeded), connect.CodeDeadlineExceeded},
+		{fmt.Errorf("query: %w", context.Canceled), connect.CodeCanceled},
 		{fmt.Errorf("tx: %w", &pgconn.PgError{Code: "40P01", Message: "deadlock detected: relation env_vars"}), connect.CodeAborted},
 		{&pgconn.PgError{Code: "40001"}, connect.CodeAborted},
+		{&pgconn.PgError{Code: "22021", Message: "invalid byte sequence for encoding UTF8: 0x00"}, connect.CodeInvalidArgument},
+		{&pgconn.PgError{Code: "22008"}, connect.CodeInvalidArgument},
+		{&pgconn.PgError{Code: "54000", Message: "index row size exceeds maximum"}, connect.CodeInvalidArgument},
 		{&pgconn.PgError{Code: "23505"}, connect.CodeInternal}, // anything else the store did not classify
 	} {
 		got := FromStore(log, tc.err)

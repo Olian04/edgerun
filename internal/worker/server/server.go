@@ -55,6 +55,16 @@ type Server struct {
 	inFlight int
 	draining bool
 	idle     chan struct{} // closed once draining and nothing is in flight
+
+	reg metric.Registration // the callback that reports in_flight and slots
+}
+
+// Close ends what the server registered outside itself (its metrics callback), so that a stopped
+// server can be freed: a process that starts workers repeatedly would otherwise keep every one.
+func (s *Server) Close() {
+	if s.reg != nil {
+		_ = s.reg.Unregister()
+	}
 }
 
 // New creates a server. info.MaxConcurrency must be positive.
@@ -71,7 +81,7 @@ func New(info *workerv1.WorkerInfo, engine *runtime.Engine, artifacts *cache.Sto
 	refused, _ := m.Int64Counter("edgerun.worker.refused", metric.WithUnit("{invocation}"),
 		metric.WithDescription("Invocations this worker turned away, because it had no free slot or was draining."))
 	s.refused = refused
-	_, _ = m.RegisterCallback(func(_ context.Context, o metric.Observer) error {
+	s.reg, _ = m.RegisterCallback(func(_ context.Context, o metric.Observer) error {
 		o.ObserveInt64(inFlight, int64(s.InFlight()))
 		o.ObserveInt64(slots, int64(s.info.GetMaxConcurrency()))
 		return nil

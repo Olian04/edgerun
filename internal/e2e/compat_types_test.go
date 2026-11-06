@@ -108,25 +108,8 @@ func TestCompatEveryNumericFieldIsAccountedFor(t *testing.T) {
 	t.Logf("%d numeric fields", len(found))
 }
 
-// stringsThatMustCarryBytes are string fields whose documented content is not
-// necessarily UTF-8: a proto3 string must be, so a message that does not
-// satisfy it cannot be encoded at all, and the information is lost.
-var stringsThatMustCarryBytes = map[string]string{
-	"edgerun.common.v1.ErrorInfo.message": `docs: "A FUNCTION_TRAPPED message SHOULD end with the tail of the guest's stderr (at most 4 KiB)"; stderr is arbitrary bytes, and a 4 KiB tail cuts through a character`,
-}
-
-func TestCompatKnownDefectErrorInfoMessageIsAStringButCarriesStderrBytes(t *testing.T) {
-	knownDefect(t, "COMPAT-2", "ErrorInfo.message is a proto3 string but the docs have it carry the tail of the guest's stderr, which is bytes: see TestCompatTrappedGuestWithStderrThatIsNotUTF8")
-	for name, why := range stringsThatMustCarryBytes {
-		d, err := protoregistry.GlobalFiles.FindDescriptorByName(protoreflect.FullName(name))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if k := d.(protoreflect.FieldDescriptor).Kind(); k != protoreflect.BytesKind {
-			t.Errorf("%s is %s, but %s", name, k, why)
-		}
-	}
-}
+// ErrorInfo.message is text: the tail of a guest's stderr that goes into it is made valid UTF-8 (see
+// TestCompatTrappedGuestWithStderrThatIsNotUTF8), so the reason, which peers branch on, is never lost with it.
 
 // Text a peer sends in a string field that is not UTF-8 is refused as a
 // malformed request (invalid_argument), whatever the field and the RPC; never a
@@ -330,7 +313,9 @@ func TestCompatNumbersFromWorkers(t *testing.T) {
 		})
 		r, _ := s.ctl.GetInvocation(ctx, &controlv1.GetInvocationRequest{InvocationId: id})
 		inv := r.Invocation
-		if inv.Status != c.status || inv.DurationMicros != c.dur || inv.PeakMemoryBytes != c.peak {
+		// A value the column cannot hold is clamped to the largest it can, never wrapped.
+		wantStatus, wantDur, wantPeak := min(c.status, uint32(math.MaxInt32)), min(c.dur, uint64(math.MaxInt64)), min(c.peak, uint64(math.MaxInt64))
+		if inv.Status != wantStatus || inv.DurationMicros != wantDur || inv.PeakMemoryBytes != wantPeak {
 			t.Errorf("the worker said status=%d duration=%d peak=%d; the record says status=%d duration=%d peak=%d",
 				c.status, c.dur, c.peak, inv.Status, inv.DurationMicros, inv.PeakMemoryBytes)
 		}
@@ -369,14 +354,18 @@ func TestCompatNumbersFromWorkerRegistration(t *testing.T) {
 	var bad []string
 	for _, mc := range []uint32{1, math.MaxInt32, math.MaxInt32 + 1, math.MaxUint32} {
 		id, err := register(mc)
-		switch connect.CodeOf(err) {
+		code := codeOK
+		if err != nil {
+			code = connect.CodeOf(err)
+		}
+		switch code {
 		case codeOK:
 			ws, _ := s.ctl.ListWorkers(ctx, &controlv1.ListWorkersRequest{})
 			found := false
 			for _, w := range ws.Workers {
 				if w.Id == id {
 					found = true
-					if w.Info.MaxConcurrency != mc {
+					if w.Info.MaxConcurrency != mc { // the document the worker sent is kept as sent
 						t.Errorf("max_concurrency %d is listed as %d", mc, w.Info.MaxConcurrency)
 					}
 				}
@@ -388,6 +377,7 @@ func TestCompatNumbersFromWorkerRegistration(t *testing.T) {
 		default:
 			bad = append(bad, fmt.Sprintf("max_concurrency=%d: %v", mc, err))
 		}
+
 	}
 	t.Run("a max_concurrency the database cannot hold is refused, not an internal error", func(t *testing.T) {
 		if len(bad) > 0 {
@@ -412,7 +402,7 @@ func TestCompatNumbersFromWorkerRegistration(t *testing.T) {
 		}
 		ws, _ := s.ctl.ListWorkers(ctx, &controlv1.ListWorkersRequest{})
 		for _, w := range ws.Workers {
-			if w.Id == id && w.InFlight != inflight {
+			if w.Id == id && w.InFlight != min(inflight, uint32(math.MaxInt32)) { // clamped to what the column holds
 				t.Errorf("in_flight %d is listed as %d", inflight, w.InFlight)
 			}
 		}

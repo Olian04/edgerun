@@ -446,9 +446,7 @@ func TestMultiOrchDatabaseOutage(t *testing.T) {
 // KNOWN DEFECT (same as MO-1): records of the invocations served while the
 // database is away are lost.
 func TestMultiOrchRecordsSurviveDatabaseOutage(t *testing.T) {
-	if os.Getenv("EDGERUN_E2E_KNOWN_DEFECTS") == "" {
-		t.Skip("KNOWN DEFECT MO-1: invocation records are dropped after two failed attempts 100ms apart, so a database outage loses every record written during it")
-	}
+
 	c, proxy := moOutageCluster(t)
 	moStartRecWorker(t, c.A().url())
 	moRecFn(t, c, "outage", "outage.test")
@@ -652,9 +650,7 @@ func TestMultiOrchSecretsAndRevisionsAgreeAcrossOrchestrators(t *testing.T) {
 // variables" and that the orchestrator is stateless: nothing says every instance
 // must be given the same key, and nothing checks it.
 func TestMultiOrchWrongSecretKeyIsRefusedAtStart(t *testing.T) {
-	if os.Getenv("EDGERUN_E2E_KNOWN_DEFECTS") == "" {
-		t.Skip("KNOWN DEFECT MO-2: an orchestrator with a different --secret-key than the data's starts silently and then fails every function that has a secret, on that instance only")
-	}
+
 	c := newMoCluster(t, moOpts{n: 2, refresh: moRefresh})
 	moStartRecWorker(t, c.A().url())
 	fid := moRecFn(t, c, "sec", "sec.test")
