@@ -6,19 +6,18 @@ import http from "node:http";
 import { randomUUID } from "node:crypto";
 import { create } from "@bufbuild/protobuf";
 import { DurationSchema, timestampFromDate } from "@bufbuild/protobuf/wkt";
-import { Code, ConnectError, createClient } from "@connectrpc/connect";
+import { Code, ConnectError, createClient, createContextKey } from "@connectrpc/connect";
 import { connectNodeAdapter, createConnectTransport } from "@connectrpc/connect-node";
 import { IngressService, DescribeResponseSchema as IngressDescribeResponseSchema, InvokeResponseSchema, InvokeHeadSchema } from "../gen/edgerun/ingress/v1/ingress_pb.js";
 import { ExecutionService, ExecuteRequestSchema, EgressGrantSchema } from "../gen/edgerun/worker/v1/execution_pb.js";
-import { FleetService, RegisterResponseSchema, HeartbeatResponseSchema, DeregisterResponseSchema } from "../gen/edgerun/worker/v1/fleet_pb.js";
+import { MembershipService, MemberKind, MemberState, MemberSchema, RegisterResponseSchema, HeartbeatResponseSchema, DeregisterResponseSchema, ListMembersResponseSchema } from "../gen/edgerun/membership/v1/membership_pb.js";
 import { ArtifactService, GetArtifactResponseSchema } from "../gen/edgerun/worker/v1/artifact_pb.js";
-import { WorkerState } from "../gen/edgerun/worker/v1/worker_pb.js";
-import { ServiceState, RegistryService, RegisterResponseSchema as RegRegisterResponseSchema, HeartbeatResponseSchema as RegHeartbeatResponseSchema, DeregisterResponseSchema as RegDeregisterResponseSchema, ServiceInfoSchema } from "../gen/edgerun/egress/v1/registry_pb.js";
-import { FunctionService } from "../gen/edgerun/control/v1/function_pb.js";
+import { ServiceInfoSchema } from "../gen/edgerun/egress/v1/egress_pb.js";
+import { FunctionService, DescribeResponseSchema as ControlDescribeResponseSchema } from "../gen/edgerun/control/v1/function_pb.js";
 import { RouteService } from "../gen/edgerun/control/v1/route_pb.js";
 import { PlanService } from "../gen/edgerun/control/v1/plan_pb.js";
-import { InspectionService, DescribeResponseSchema as ControlDescribeResponseSchema, ListWorkersResponseSchema, GetInvocationResponseSchema, ListInvocationsResponseSchema, ListNetworkServicesResponseSchema } from "../gen/edgerun/control/v1/inspection_pb.js";
-import { InvocationSchema, NetworkServiceStatusSchema, WorkerStatusSchema } from "../gen/edgerun/control/v1/model_pb.js";
+import { RecordsService, GetInvocationResponseSchema, ListInvocationsResponseSchema } from "../gen/edgerun/control/v1/records_pb.js";
+import { InvocationSchema } from "../gen/edgerun/control/v1/model_pb.js";
 import { EnvVarSchema, ErrorReason, ImplementationSchema } from "../gen/edgerun/common/v1/common_pb.js";
 import { authInterceptor, bearer, errorInfo, invalidArgument, notFound, parseDuration, parseFlags, platformError } from "../lib/common.js";
 import { canonicalCovers, carryRank, parseAllow, parseCover, rendezvous } from "../lib/egressgrammar.js";
@@ -43,7 +42,7 @@ const unreachable = new Map(); // endpoint -> until (ms)
 
 const impl = create(ImplementationSchema, {
   name: "edgerun-orchestrator-blind", version: "0.1.0",
-  protocols: ["edgerun.ingress.v1", "edgerun.worker.v1", "edgerun.control.v1", "edgerun.egress.v1"],
+  protocols: ["edgerun.ingress.v1", "edgerun.worker.v1", "edgerun.control.v1", "edgerun.egress.v1", "edgerun.membership.v1"],
 });
 const durationMsg = () => create(DurationSchema, { seconds: BigInt(Math.floor(HEARTBEAT_MS / 1000)), nanos: Math.round((HEARTBEAT_MS % 1000) * 1e6) });
 const alive = (x) => Date.now() - x.lastHeartbeat <= 3 * HEARTBEAT_MS;
@@ -61,31 +60,111 @@ function checkEndpoint(ep) {
 }
 
 // =====================================================================================================
-// Fleet
+// Membership: workers and network services register, heartbeat and leave through one service.
+// A token's scope decides which kind of member it may manage (see memberAuth in "Wiring").
 // =====================================================================================================
-const fleetImpl = {
-  register(req) {
-    checkEndpoint(req.endpoint);
+const SCOPE_KIND = { worker: MemberKind.WORKER, network: MemberKind.NETWORK_SERVICE };
+const scopeKey = createContextKey("", { description: "scope of the caller's token" });
+const checkState = (state) => {
+  if (state !== MemberState.READY && state !== MemberState.DRAINING) throw invalidArgument("state must be READY or DRAINING");
+};
+/** A token may touch only members of its own kind. */
+const mayManage = (scope, kind) => {
+  if (SCOPE_KIND[scope] !== kind) throw new ConnectError("this token's scope does not manage this kind of member", Code.PermissionDenied);
+};
+/** The member of that id (of either kind), or undefined. */
+function findMember(id) {
+  for (const [kind, map] of [[MemberKind.WORKER, workers], [MemberKind.NETWORK_SERVICE, services]]) {
+    const m = map.get(id);
+    if (m) return { kind, map, m };
+  }
+  return undefined;
+}
+/** Who may call about a member that is not known: any member scope (an admin may only list). */
+const requireMemberScope = (scope) => {
+  if (!(scope in SCOPE_KIND)) throw new ConnectError("this token's scope does not manage members", Code.PermissionDenied);
+};
+
+const membershipImpl = {
+  register(req, ctx) {
+    const scope = ctx.values.get(scopeKey);
     const info = req.info;
-    if (!info || info.abis.length === 0 || info.maxConcurrency <= 0) throw invalidArgument("a worker needs at least one ABI and a positive max_concurrency");
-    for (const [id, w] of workers) if (w.endpoint === req.endpoint) workers.delete(id);
-    const w = { id: randomUUID(), endpoint: req.endpoint, info, state: WorkerState.READY, inFlight: 0, lastHeartbeat: Date.now() };
-    workers.set(w.id, w);
-    unreachable.delete(req.endpoint);
-    return create(RegisterResponseSchema, { workerId: w.id, heartbeatInterval: durationMsg() });
+    if (info.case === "worker") mayManage(scope, MemberKind.WORKER);
+    else if (info.case === "networkService") mayManage(scope, MemberKind.NETWORK_SERVICE);
+    else {
+      requireMemberScope(scope);
+      throw invalidArgument("a registration says what it registers: worker or network_service");
+    }
+    checkEndpoint(req.endpoint);
+    if (info.case === "worker") {
+      const wi = info.value;
+      if (wi.abis.length === 0 || wi.maxConcurrency <= 0) throw invalidArgument("a worker needs at least one ABI and a positive max_concurrency");
+      for (const [id, w] of workers) if (w.endpoint === req.endpoint) workers.delete(id);
+      const w = { id: randomUUID(), endpoint: req.endpoint, info: wi, state: MemberState.READY, inFlight: 0, lastHeartbeat: Date.now() };
+      workers.set(w.id, w);
+      unreachable.delete(req.endpoint);
+      return create(RegisterResponseSchema, { memberId: w.id, heartbeatInterval: durationMsg() });
+    }
+    let covers;
+    try {
+      covers = canonicalCovers(info.value.covers ?? []);
+    } catch (e) {
+      throw invalidArgument(e.message);
+    }
+    for (const [id, s] of services) if (s.endpoint === req.endpoint) services.delete(id);
+    const s = {
+      id: randomUUID(), endpoint: req.endpoint, covers, parsed: covers.map(parseCover),
+      implementation: info.value.implementation, state: MemberState.READY, lastHeartbeat: Date.now(),
+    };
+    services.set(s.id, s);
+    return create(RegisterResponseSchema, { memberId: s.id, heartbeatInterval: durationMsg() });
   },
-  heartbeat(req) {
-    if (req.state !== WorkerState.READY && req.state !== WorkerState.DRAINING) throw invalidArgument("state must be READY or DRAINING");
-    const w = workers.get(req.workerId);
-    if (!w) return create(HeartbeatResponseSchema, { reregister: true });
-    w.state = req.state;
-    w.inFlight = req.inFlight;
-    w.lastHeartbeat = Date.now();
+  heartbeat(req, ctx) {
+    const scope = ctx.values.get(scopeKey);
+    const f = findMember(req.memberId);
+    if (f) mayManage(scope, f.kind);
+    else requireMemberScope(scope);
+    checkState(req.state);
+    if (!f) return create(HeartbeatResponseSchema, { reregister: true });
+    f.m.state = req.state;
+    if (f.kind === MemberKind.WORKER) f.m.inFlight = req.inFlight;
+    f.m.lastHeartbeat = Date.now();
     return create(HeartbeatResponseSchema, { reregister: false });
   },
-  deregister(req) {
-    workers.delete(req.workerId);
+  deregister(req, ctx) {
+    const scope = ctx.values.get(scopeKey);
+    const f = findMember(req.memberId);
+    if (f) {
+      mayManage(scope, f.kind);
+      f.map.delete(req.memberId);
+    } else {
+      requireMemberScope(scope);
+    }
     return create(DeregisterResponseSchema, {});
+  },
+  listMembers(req, ctx) {
+    if (ctx.values.get(scopeKey) !== "admin") throw new ConnectError("only an admin token lists members", Code.PermissionDenied);
+    const byEndpoint = (a, b) => Buffer.compare(Buffer.from(a.endpoint), Buffer.from(b.endpoint));
+    const out = [];
+    if (req.kind === MemberKind.UNSPECIFIED || req.kind === MemberKind.WORKER) {
+      for (const w of [...workers.values()].sort(byEndpoint)) {
+        out.push(create(MemberSchema, {
+          id: w.id, kind: MemberKind.WORKER, endpoint: w.endpoint, state: w.state, alive: alive(w),
+          lastHeartbeatTime: timestampFromDate(new Date(w.lastHeartbeat)), inFlight: w.inFlight,
+          info: { case: "worker", value: w.info },
+        }));
+      }
+    }
+    if (req.kind === MemberKind.UNSPECIFIED || req.kind === MemberKind.NETWORK_SERVICE) {
+      for (const s of [...services.values()].sort(byEndpoint)) {
+        out.push(create(MemberSchema, {
+          id: s.id, kind: MemberKind.NETWORK_SERVICE, endpoint: s.endpoint, state: s.state, alive: alive(s),
+          lastHeartbeatTime: timestampFromDate(new Date(s.lastHeartbeat)),
+          info: { case: "networkService", value: create(ServiceInfoSchema, { implementation: s.implementation, covers: s.covers }) },
+        }));
+      }
+    }
+    return create(ListMembersResponseSchema, { members: out });
   },
 };
 
@@ -97,43 +176,9 @@ const artifactImpl = {
   },
 };
 
-// =====================================================================================================
-// Network service registry
-// =====================================================================================================
-const registryImpl = {
-  register(req) {
-    checkEndpoint(req.endpoint);
-    let covers;
-    try {
-      covers = canonicalCovers(req.info?.covers ?? []);
-    } catch (e) {
-      throw invalidArgument(e.message);
-    }
-    for (const [id, s] of services) if (s.endpoint === req.endpoint) services.delete(id);
-    const s = {
-      id: randomUUID(), endpoint: req.endpoint, covers, parsed: covers.map(parseCover),
-      implementation: req.info?.implementation, state: ServiceState.READY, lastHeartbeat: Date.now(),
-    };
-    services.set(s.id, s);
-    return create(RegRegisterResponseSchema, { serviceId: s.id, heartbeatInterval: durationMsg() });
-  },
-  heartbeat(req) {
-    if (req.state !== ServiceState.READY && req.state !== ServiceState.DRAINING) throw invalidArgument("state must be READY or DRAINING");
-    const s = services.get(req.serviceId);
-    if (!s) return create(RegHeartbeatResponseSchema, { reregister: true });
-    s.state = req.state;
-    s.lastHeartbeat = Date.now();
-    return create(RegHeartbeatResponseSchema, { reregister: false });
-  },
-  deregister(req) {
-    services.delete(req.serviceId);
-    return create(RegDeregisterResponseSchema, {});
-  },
-};
-
 /** The grants of an invocation: each allow entry with the live, ready service that carries it most specifically. */
 function grantsFor(fn) {
-  const live = [...services.values()].filter((s) => alive(s) && s.state === ServiceState.READY);
+  const live = [...services.values()].filter((s) => alive(s) && s.state === MemberState.READY);
   const out = [];
   for (const entry of fn.egressAllow) {
     const a = parseAllow(entry);
@@ -216,7 +261,7 @@ function causeCode(e) {
 }
 
 function candidates(version, digest) {
-  const live = [...workers.values()].filter((w) => alive(w) && w.state === WorkerState.READY);
+  const live = [...workers.values()].filter((w) => alive(w) && w.state === MemberState.READY);
   const able = live.filter((w) => w.info.abis.includes(version.abi));
   return { live, able };
 }
@@ -345,6 +390,7 @@ const ingressImpl = {
 // =====================================================================================================
 const mutating = (name) => (req) => control.mutate(name, req);
 const functionImpl = {
+  describe: () => create(ControlDescribeResponseSchema, { implementation: impl, maxModuleBytes: BigInt(MAX_MODULE) }),
   createFunction: mutating("createFunction"), deleteFunction: mutating("deleteFunction"), createVersion: mutating("createVersion"),
   activateVersion: mutating("activateVersion"), setEnv: mutating("setEnv"), deleteEnv: mutating("deleteEnv"),
   setEgress: mutating("setEgress"), setLabels: mutating("setLabels"), patchLabels: mutating("patchLabels"),
@@ -361,13 +407,7 @@ const planImpl = {
 };
 
 const invMsg = (i) => create(InvocationSchema, { ...i, startTime: timestampFromDate(i.startTime) });
-const inspectionImpl = {
-  describe: () => create(ControlDescribeResponseSchema, { implementation: impl, maxModuleBytes: BigInt(MAX_MODULE) }),
-  listWorkers: () =>
-    create(ListWorkersResponseSchema, {
-      workers: [...workers.values()].map((w) =>
-        create(WorkerStatusSchema, { id: w.id, endpoint: w.endpoint, info: w.info, state: w.state, inFlight: w.inFlight, lastHeartbeatTime: timestampFromDate(new Date(w.lastHeartbeat)), alive: alive(w) })),
-    }),
+const recordsImpl = {
   getInvocation(req) {
     const i = invocations.find((x) => x.id === req.invocationId);
     if (!i) throw notFound("no such invocation record");
@@ -388,16 +428,6 @@ const inspectionImpl = {
     const more = start + size < items.length;
     return create(ListInvocationsResponseSchema, { invocations: slice.map(invMsg), nextPageToken: more && slice.length ? `inv.${slice[slice.length - 1].seq}` : "" });
   },
-  listNetworkServices() {
-    const list = [...services.values()].sort((a, b) => Buffer.compare(Buffer.from(a.endpoint), Buffer.from(b.endpoint)));
-    return create(ListNetworkServicesResponseSchema, {
-      services: list.map((s) =>
-        create(NetworkServiceStatusSchema, {
-          id: s.id, endpoint: s.endpoint, info: create(ServiceInfoSchema, { implementation: s.implementation, covers: s.covers }),
-          state: s.state, lastHeartbeatTime: timestampFromDate(new Date(s.lastHeartbeat)), alive: alive(s),
-        })),
-    });
-  },
 };
 
 // =====================================================================================================
@@ -406,6 +436,18 @@ const inspectionImpl = {
 const tokens = new Map([
   [flags["ingress-token"], "ingress"], [flags["worker-token"], "worker"], [flags["admin-token"], "admin"], [flags["network-token"], "network"],
 ]);
+// Membership is authorized per call, by what the call concerns: here a token only has to be known; each
+// handler then checks the scope against the kind of member (a worker token manages workers only, a network
+// token network services only, only an admin lists).
+const memberAuth = {
+  interceptors: [(next) => async (req) => {
+    const h = req.header.get("authorization") ?? "";
+    const m = /^Bearer (.+)$/i.exec(h.trim());
+    if (!m || !tokens.has(m[1])) throw new ConnectError("unauthenticated", Code.Unauthenticated);
+    req.contextValues.set(scopeKey, tokens.get(m[1]));
+    return next(req);
+  }],
+};
 const guard = (scope) => ({ interceptors: [authInterceptor(tokens, [scope])] });
 
 const margin = 1 * MiB;
@@ -420,15 +462,14 @@ const handlers = {
       r.service(FunctionService, functionImpl, guard("admin"));
       r.service(RouteService, routeImpl, guard("admin"));
       r.service(PlanService, planImpl, guard("admin"));
-      r.service(InspectionService, inspectionImpl, guard("admin"));
+      r.service(RecordsService, recordsImpl, guard("admin"));
     },
   }),
   other: connectNodeAdapter({
     readMaxBytes: 1 * MiB,
     routes: (r) => {
-      r.service(FleetService, fleetImpl, guard("worker"));
+      r.service(MembershipService, membershipImpl, memberAuth);
       r.service(ArtifactService, artifactImpl, guard("worker"));
-      r.service(RegistryService, registryImpl, guard("network"));
     },
   }),
 };

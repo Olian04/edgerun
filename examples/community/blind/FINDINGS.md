@@ -48,3 +48,31 @@ implementation could satisfy them either way. Each point is marked with what was
 
 The conclusion the agent drew, which I agree with after reading the list: the documents plus the protos were unusually
 sufficient for an independent implementation. The holes were edge conventions, not structure.
+
+## Migration to `membership.v1` (services refactor)
+
+Moving the orchestrator from `FleetService` + `RegistryService` to `MembershipService`, and `InspectionService` to
+`RecordsService` + `FunctionService.Describe` + `MembershipService.ListMembers`, was done from the protos alone because
+`docs/protocol.md` had not been updated yet (it still describes the two old services, their scopes and `WorkerStatus`).
+The port was mechanical in code, but it surfaced points the protos do not settle and a document that should say them:
+
+- **`docs/protocol.md` does not mention membership.** The seam table, the scope table (`worker` allows `FleetService`,
+  `network` allows `RegistryService`) and the heartbeat/liveness rows are the old ones. The scopes now apply *per call*,
+  not per service: the document should say so, because a service-level auth guard (what every other service here uses)
+  cannot implement it; the blind orchestrator needed a second kind of interceptor that only authenticates and lets the
+  handler decide.
+- **Which scope may call `Heartbeat` / `Deregister` for an id nobody knows?** The proto says an unknown id answers
+  `reregister` (and that deregistering one is not an error), but not whose token may ask. Chosen here: a worker or a
+  network token (the caller could be either kind that lost its registration), never admin or ingress (`PERMISSION_DENIED`).
+  For a known id the token must match the member's kind. Needs one sentence in the document.
+- **Order of checks in `Register`.** Scope against the kind in `info` first (so a worker token registering a network
+  service is `PERMISSION_DENIED` even if the endpoint is malformed), then validation. Not stated; a suite could probe it.
+- **A `RegisterRequest` with no `info`.** `INVALID_ARGUMENT`, after the scope check that any member token passes.
+  Not stated.
+- **Does "registering an endpoint that is already known replaces the earlier registration" cross kinds?** Implemented
+  per kind (a worker and a network service may share an endpoint string). The proto comment is silent.
+- **`ListMembers` order.** "By kind and then endpoint": implemented as workers before network services, endpoints
+  compared bytewise (as the old network-service listing was). The comparison is not stated.
+- The conformance suites that exercised the old services do not compile against the new protos yet, so this
+  orchestrator has been checked only by its own `e2e.mjs` (extended with membership scope checks), not by the
+  orchestrator conformance suite.
