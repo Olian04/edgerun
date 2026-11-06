@@ -14,6 +14,7 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	egressv1 "github.com/Olian04/edgerun/gen/edgerun/egress/v1"
+	membershipv1 "github.com/Olian04/edgerun/gen/edgerun/membership/v1"
 )
 
 type fake struct {
@@ -34,7 +35,7 @@ func (f *fake) log() []string {
 	return append([]string(nil), f.events...)
 }
 
-func (f *fake) Register(context.Context, *egressv1.RegisterRequest) (*egressv1.RegisterResponse, error) {
+func (f *fake) Register(context.Context, *membershipv1.RegisterRequest) (*membershipv1.RegisterResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.failReg > 0 {
@@ -47,23 +48,23 @@ func (f *fake) Register(context.Context, *egressv1.RegisterRequest) (*egressv1.R
 	}
 	f.nextID++
 	f.events = append(f.events, "register")
-	return &egressv1.RegisterResponse{ServiceId: string(rune('a' + f.nextID)), HeartbeatInterval: durationpb.New(20 * time.Millisecond)}, nil
+	return &membershipv1.RegisterResponse{MemberId: string(rune('a' + f.nextID)), HeartbeatInterval: durationpb.New(20 * time.Millisecond)}, nil
 }
 
-func (f *fake) Heartbeat(_ context.Context, r *egressv1.HeartbeatRequest) (*egressv1.HeartbeatResponse, error) {
+func (f *fake) Heartbeat(_ context.Context, r *membershipv1.HeartbeatRequest) (*membershipv1.HeartbeatResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.events = append(f.events, "heartbeat:"+r.State.String()[len("SERVICE_STATE_"):])
+	f.events = append(f.events, "heartbeat:"+r.State.String()[len("MEMBER_STATE_"):])
 	if f.forget {
 		f.forget = false
-		return &egressv1.HeartbeatResponse{Reregister: true}, nil
+		return &membershipv1.HeartbeatResponse{Reregister: true}, nil
 	}
-	return &egressv1.HeartbeatResponse{}, nil
+	return &membershipv1.HeartbeatResponse{}, nil
 }
 
-func (f *fake) Deregister(context.Context, *egressv1.DeregisterRequest) (*egressv1.DeregisterResponse, error) {
+func (f *fake) Deregister(context.Context, *membershipv1.DeregisterRequest) (*membershipv1.DeregisterResponse, error) {
 	f.rec("deregister")
-	return &egressv1.DeregisterResponse{}, nil
+	return &membershipv1.DeregisterResponse{}, nil
 }
 
 func count(ev []string, s string) (n int) {

@@ -182,7 +182,7 @@ func run() error {
 
 	loopCtx, stopLoop := context.WithCancel(context.Background())
 	loop := &lifecycle.Loop{
-		Reg:      edgerun.NewRegistry(*orchURL, *networkToken),
+		Reg:      edgerun.NewMembership(*orchURL, *networkToken),
 		Endpoint: endpoint,
 		Info:     &egressv1.ServiceInfo{Implementation: service.Implementation(version), Covers: covText},
 		Log:      log, InFlight: srv.InFlight, DrainTimeout: *drainTimeout,

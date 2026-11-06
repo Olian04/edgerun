@@ -1,8 +1,8 @@
 // Package lifecycle is the registration loop of a network service: register
 // (until it succeeds), heartbeat, register again when the orchestrator has
 // forgotten us, and, when asked to stop, report DRAINING, wait, and deregister.
-// docs/protocol.md specifies the rules; the edgerun library offers only the
-// three calls.
+// membership.v1 (docs/protocol.md) specifies the rules; the edgerun
+// library offers only the calls.
 package lifecycle
 
 import (
@@ -16,17 +16,18 @@ import (
 
 	"github.com/Olian04/edgerun"
 	egressv1 "github.com/Olian04/edgerun/gen/edgerun/egress/v1"
+	membershipv1 "github.com/Olian04/edgerun/gen/edgerun/membership/v1"
 )
 
-// Registrar is what the loop needs of the library's Registry (an interface so
+// Registrar is what the loop needs of the library's Membership (an interface so
 // that tests can substitute a fake).
 type Registrar interface {
-	Register(context.Context, *egressv1.RegisterRequest) (*egressv1.RegisterResponse, error)
-	Heartbeat(context.Context, *egressv1.HeartbeatRequest) (*egressv1.HeartbeatResponse, error)
-	Deregister(context.Context, *egressv1.DeregisterRequest) (*egressv1.DeregisterResponse, error)
+	Register(context.Context, *membershipv1.RegisterRequest) (*membershipv1.RegisterResponse, error)
+	Heartbeat(context.Context, *membershipv1.HeartbeatRequest) (*membershipv1.HeartbeatResponse, error)
+	Deregister(context.Context, *membershipv1.DeregisterRequest) (*membershipv1.DeregisterResponse, error)
 }
 
-var _ Registrar = (*edgerun.Registry)(nil)
+var _ Registrar = (*edgerun.Membership)(nil)
 
 // Loop keeps one service registered.
 type Loop struct {
@@ -58,7 +59,7 @@ func (l *Loop) log() *slog.Logger {
 	return l.Log
 }
 
-// ID is the current service id ("" before the first registration).
+// ID is the current member id ("" before the first registration).
 func (l *Loop) ID() string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -83,7 +84,7 @@ func (l *Loop) Start(ctx context.Context) {
 
 func (l *Loop) run(ctx context.Context) {
 	for ctx.Err() == nil {
-		if l.state() == egressv1.ServiceState_SERVICE_STATE_DRAINING {
+		if l.state() == membershipv1.MemberState_MEMBER_STATE_DRAINING {
 			return // asked to stop: never announce ourselves again
 		}
 		if !l.register(ctx) {
@@ -97,16 +98,16 @@ func (l *Loop) run(ctx context.Context) {
 func (l *Loop) register(ctx context.Context) bool {
 	delay := l.MinRetry
 	for {
-		res, err := l.Reg.Register(ctx, &egressv1.RegisterRequest{Endpoint: l.Endpoint, Info: l.Info})
+		res, err := l.Reg.Register(ctx, &membershipv1.RegisterRequest{Endpoint: l.Endpoint, Info: &membershipv1.RegisterRequest_NetworkService{NetworkService: l.Info}})
 		if err == nil {
 			iv := res.GetHeartbeatInterval().AsDuration()
 			if iv <= 0 {
 				iv = 5 * time.Second
 			}
 			l.mu.Lock()
-			l.id, l.interval = res.GetServiceId(), iv
+			l.id, l.interval = res.GetMemberId(), iv
 			l.mu.Unlock()
-			l.log().Info("registered", "service_id", res.GetServiceId(), "heartbeat", iv)
+			l.log().Info("registered", "member_id", res.GetMemberId(), "heartbeat", iv)
 			return true
 		}
 		if ctx.Err() != nil {
@@ -137,13 +138,13 @@ func (l *Loop) register(ctx context.Context) bool {
 	}
 }
 
-func (l *Loop) state() egressv1.ServiceState {
+func (l *Loop) state() membershipv1.MemberState {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.draining {
-		return egressv1.ServiceState_SERVICE_STATE_DRAINING
+		return membershipv1.MemberState_MEMBER_STATE_DRAINING
 	}
-	return egressv1.ServiceState_SERVICE_STATE_READY
+	return membershipv1.MemberState_MEMBER_STATE_READY
 }
 
 // heartbeats beats until ctx ends or the orchestrator asks us to register again.
@@ -160,7 +161,7 @@ func (l *Loop) heartbeats(ctx context.Context) {
 		case <-t.C:
 		}
 		hctx, cancel := context.WithTimeout(ctx, iv*2)
-		res, err := l.Reg.Heartbeat(hctx, &egressv1.HeartbeatRequest{ServiceId: l.ID(), State: l.state()})
+		res, err := l.Reg.Heartbeat(hctx, &membershipv1.HeartbeatRequest{MemberId: l.ID(), State: l.state()})
 		cancel()
 		if err != nil {
 			if ctx.Err() != nil {
@@ -201,7 +202,7 @@ func (l *Loop) Drain(stop context.CancelFunc) {
 	defer cancel()
 
 	// Tell it now, not at the next tick: the beat that matters is this one.
-	if res, err := l.Reg.Heartbeat(ctx, &egressv1.HeartbeatRequest{ServiceId: id, State: egressv1.ServiceState_SERVICE_STATE_DRAINING}); err != nil {
+	if res, err := l.Reg.Heartbeat(ctx, &membershipv1.HeartbeatRequest{MemberId: id, State: membershipv1.MemberState_MEMBER_STATE_DRAINING}); err != nil {
 		l.log().Warn("could not report draining", "err", err)
 	} else if res.GetReregister() {
 		return // it has forgotten us already: nothing to deregister
@@ -238,9 +239,9 @@ func (l *Loop) inflight() int {
 }
 
 func (l *Loop) deregister(ctx context.Context, id string) {
-	if _, err := l.Reg.Deregister(ctx, &egressv1.DeregisterRequest{ServiceId: id}); err != nil && !errors.Is(err, context.Canceled) {
+	if _, err := l.Reg.Deregister(ctx, &membershipv1.DeregisterRequest{MemberId: id}); err != nil && !errors.Is(err, context.Canceled) {
 		l.log().Warn("deregister failed", "err", err)
 		return
 	}
-	l.log().Info("deregistered", "service_id", id)
+	l.log().Info("deregistered", "member_id", id)
 }

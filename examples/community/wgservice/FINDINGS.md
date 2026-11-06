@@ -15,7 +15,7 @@ worker, the wagi-2 `examples/fetch` guest: closed by default, allow-list denial,
 drain and deregister), and the conformance executable against the service (`--role egress`): all cases pass but one
 that the suite skips unless its origin is on the service's loopback. Re-verified after the changes below.
 
-**Library verdict.** `Authenticate`, `NewError`, `InvalidArgument`, the `Scope*` constants, `Registry` and `NewEgress`
+**Library verdict.** `Authenticate`, `NewError`, `InvalidArgument`, the `Scope*` constants, `Membership` (it was `Registry` before the services refactor) and `NewEgress`
 worked first time with no gap. Everything the library does not do is where the work and the risk were, and all of it is
 protocol obligation, not local policy: the grammars, the forbidden classes, pinning, bounding, error classification
 and the lifecycle. The probe's advice, which I follow: do not add a lifecycle helper or stream helpers; put the rules

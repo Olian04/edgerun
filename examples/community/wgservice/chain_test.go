@@ -15,8 +15,8 @@ import (
 	"github.com/Olian04/edgerun"
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
 	controlv1 "github.com/Olian04/edgerun/gen/edgerun/control/v1"
-	egressv1 "github.com/Olian04/edgerun/gen/edgerun/egress/v1"
 	ingressv1 "github.com/Olian04/edgerun/gen/edgerun/ingress/v1"
+	membershipv1 "github.com/Olian04/edgerun/gen/edgerun/membership/v1"
 
 	"example.com/edgerun-wgservice/internal/wgtest"
 )
@@ -65,6 +65,12 @@ func TestChain(t *testing.T) {
 	})
 	ctl := edgerun.NewControl(orchURL, tAdmin)
 	ing := edgerun.NewIngress(orchURL, tIngress)
+	mem := edgerun.NewMembership(orchURL, tAdmin)
+	members := func(t *testing.T, kind membershipv1.MemberKind) ([]*membershipv1.Member, error) {
+		t.Helper()
+		r, err := mem.ListMembers(ctx10(t), &membershipv1.ListMembersRequest{Kind: kind})
+		return r.GetMembers(), err
+	}
 
 	svc := start(t, "chain-wgservice", nil, wgserviceBin(t),
 		"--listen", fmt.Sprintf("127.0.0.1:%d", portChainSvc), "--advertise-url", svcURL, "--orchestrator-url", orchURL,
@@ -76,13 +82,13 @@ func TestChain(t *testing.T) {
 
 	t.Run("registration", func(t *testing.T) {
 		eventually(t, "the service and the worker to register", 30*time.Second, func() bool {
-			ns, err := ctl.ListNetworkServices(ctx10(t), &controlv1.ListNetworkServicesRequest{})
-			ws, err2 := ctl.ListWorkers(ctx10(t), &controlv1.ListWorkersRequest{})
-			return err == nil && err2 == nil && len(ns.Services) == 1 && ns.Services[0].Alive && len(ws.Workers) == 1 && ws.Workers[0].Alive
+			ns, err := members(t, membershipv1.MemberKind_MEMBER_KIND_NETWORK_SERVICE)
+			ws, err2 := members(t, membershipv1.MemberKind_MEMBER_KIND_WORKER)
+			return err == nil && err2 == nil && len(ns) == 1 && ns[0].Alive && len(ws) == 1 && ws[0].Alive
 		})
-		ns, _ := ctl.ListNetworkServices(ctx10(t), &controlv1.ListNetworkServicesRequest{})
-		got := ns.Services[0]
-		if got.Endpoint != svcURL || fmt.Sprint(got.Info.Covers) != "[*.corp.internal 10.20.0.0/16]" || got.State != egressv1.ServiceState_SERVICE_STATE_READY {
+		ns, _ := members(t, membershipv1.MemberKind_MEMBER_KIND_NETWORK_SERVICE)
+		got := ns[0]
+		if got.Endpoint != svcURL || fmt.Sprint(got.GetNetworkService().GetCovers()) != "[*.corp.internal 10.20.0.0/16]" || got.State != membershipv1.MemberState_MEMBER_STATE_READY {
 			t.Errorf("registered as %+v", got)
 		}
 	})
@@ -212,9 +218,9 @@ func TestChain(t *testing.T) {
 	t.Run("stopping the service drains and deregisters; nothing is routed to it afterwards", func(t *testing.T) {
 		setAllow("10.20.0.2")
 		svc.stop()
-		ns, err := ctl.ListNetworkServices(ctx10(t), &controlv1.ListNetworkServicesRequest{})
-		if err != nil || len(ns.Services) != 0 {
-			t.Errorf("after SIGTERM the orchestrator still lists %v (%v)", ns.GetServices(), err)
+		ns, err := members(t, membershipv1.MemberKind_MEMBER_KIND_NETWORK_SERVICE)
+		if err != nil || len(ns) != 0 {
+			t.Errorf("after SIGTERM the orchestrator still lists %v (%v)", ns, err)
 		}
 		before := len(site.Seen())
 		if st, body := invoke("http://10.20.0.2/hello"); st != 403 {
