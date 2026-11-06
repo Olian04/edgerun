@@ -26,6 +26,7 @@ import (
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
 	controlv1 "github.com/Olian04/edgerun/gen/edgerun/control/v1"
 	ingressv1 "github.com/Olian04/edgerun/gen/edgerun/ingress/v1"
+	membershipv1 "github.com/Olian04/edgerun/gen/edgerun/membership/v1"
 )
 
 // Three ingress instances at the same time against one orchestrator, and a
@@ -653,13 +654,13 @@ func warmOne(ctx context.Context, s *Stack) {
 func killBusiestWorker(t *testing.T, s *Stack) (id string, inFlight int) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	ws, err := s.Ctl.ListWorkers(ctx, &controlv1.ListWorkersRequest{})
+	ws, err := s.Mem.ListMembers(ctx, &membershipv1.ListMembersRequest{Kind: membershipv1.MemberKind_MEMBER_KIND_WORKER})
 	if err != nil {
-		t.Errorf("ListWorkers: %v", err)
+		t.Errorf("ListMembers: %v", err)
 		return "", 0
 	}
-	var best *controlv1.WorkerStatus
-	for _, w := range ws.Workers {
+	var best *membershipv1.Member
+	for _, w := range ws.Members {
 		if w.Alive && (best == nil || w.InFlight > best.InFlight) {
 			best = w
 		}

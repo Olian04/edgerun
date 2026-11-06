@@ -21,6 +21,7 @@ import (
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
 	controlv1 "github.com/Olian04/edgerun/gen/edgerun/control/v1"
 	ingressv1 "github.com/Olian04/edgerun/gen/edgerun/ingress/v1"
+	membershipv1 "github.com/Olian04/edgerun/gen/edgerun/membership/v1"
 )
 
 // This file builds a real edgerun stack out of real processes: a private
@@ -189,6 +190,7 @@ func freePort(t testing.TB) int {
 type Stack struct {
 	URL string
 	Ctl *edgerun.Control
+	Mem *edgerun.Membership
 	Ing *edgerun.Ingress
 	dir string
 }
@@ -265,14 +267,14 @@ func newStack(t *testing.T) *Stack {
 		fmt.Sprintf("EDGERUN_WORKER_LISTEN=127.0.0.1:%d", wp), fmt.Sprintf("EDGERUN_WORKER_ADVERTISE_URL=http://127.0.0.1:%d", wp),
 	}, "worker", "--drain-timeout", "2s")
 
-	s := &Stack{URL: orchURL, dir: dir, Ctl: edgerun.NewControl(orchURL, adminToken), Ing: edgerun.NewIngress(orchURL, ingressToken)}
+	s := &Stack{URL: orchURL, dir: dir, Ctl: edgerun.NewControl(orchURL, adminToken), Mem: edgerun.NewMembership(orchURL, adminToken), Ing: edgerun.NewIngress(orchURL, ingressToken)}
 	// Wait until the worker has registered and is alive.
 	deadline := time.Now().Add(20 * time.Second)
 	for {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		res, err := s.Ctl.ListWorkers(ctx, &controlv1.ListWorkersRequest{})
+		res, err := s.Mem.ListMembers(ctx, &membershipv1.ListMembersRequest{Kind: membershipv1.MemberKind_MEMBER_KIND_WORKER})
 		cancel()
-		if err == nil && len(res.Workers) > 0 && res.Workers[0].Alive {
+		if err == nil && len(res.Members) > 0 && res.Members[0].Alive {
 			break
 		}
 		if time.Now().After(deadline) {
