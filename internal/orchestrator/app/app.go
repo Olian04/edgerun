@@ -17,12 +17,12 @@ import (
 
 	"github.com/Olian04/edgerun"
 	"github.com/Olian04/edgerun/internal/authn"
+	"github.com/Olian04/edgerun/internal/orchestrator/artifacts"
 	"github.com/Olian04/edgerun/internal/orchestrator/control"
-	"github.com/Olian04/edgerun/internal/orchestrator/fleet"
 	"github.com/Olian04/edgerun/internal/orchestrator/invoke"
 	"github.com/Olian04/edgerun/internal/orchestrator/janitor"
+	"github.com/Olian04/edgerun/internal/orchestrator/membership"
 	"github.com/Olian04/edgerun/internal/orchestrator/migrate"
-	"github.com/Olian04/edgerun/internal/orchestrator/netreg"
 	"github.com/Olian04/edgerun/internal/orchestrator/record"
 	"github.com/Olian04/edgerun/internal/orchestrator/secrets"
 	"github.com/Olian04/edgerun/internal/orchestrator/snapshot"
@@ -187,11 +187,11 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 
 	verifier := authn.Verifier{
 		cfg.IngressToken: invoke.IngressScope,
-		cfg.WorkerToken:  fleet.WorkerScope,
+		cfg.WorkerToken:  membership.WorkerScope,
 		cfg.AdminToken:   control.AdminScope,
 	}
 	if cfg.NetworkToken != "" {
-		verifier[cfg.NetworkToken] = netreg.Scope
+		verifier[cfg.NetworkToken] = membership.NetworkScope
 	}
 	mux := http.NewServeMux()
 	ingress := invoke.New(invoke.Config{
@@ -199,12 +199,10 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 		MaxRequestBodyBytes: cfg.MaxRequestBodyBytes, Version: cfg.Version, Log: log,
 	})
 	mux.Handle(ingress.Handler(verifier))
-	fleet.New(fleet.Config{Store: st, HeartbeatInterval: cfg.HeartbeatInterval, OnChange: cache.Poke, Log: log}).Mount(mux, verifier)
-	if cfg.NetworkToken != "" {
-		netreg.New(netreg.Config{Store: st, HeartbeatInterval: cfg.HeartbeatInterval, OnChange: cache.Poke, Log: log}).Mount(mux, verifier)
-	}
+	membership.New(membership.Config{Store: st, HeartbeatInterval: cfg.HeartbeatInterval, OnChange: cache.Poke, Log: log}).Mount(mux, verifier)
+	artifacts.New(artifacts.Config{Store: st, Log: log}).Mount(mux, verifier)
 	control.New(control.Config{
-		Store: st, MaxModuleBytes: cfg.MaxModuleBytes, AliveWithin: 3 * cfg.HeartbeatInterval, Version: cfg.Version, Log: log,
+		Store: st, MaxModuleBytes: cfg.MaxModuleBytes, Version: cfg.Version, Log: log,
 		Refresh: func(ctx context.Context) {
 			if err := cache.Refresh(ctx); err != nil {
 				log.Warn("refresh after a write failed; other readers will catch up", "error", err)

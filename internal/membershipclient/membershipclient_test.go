@@ -1,4 +1,4 @@
-package fleetclient
+package membershipclient
 
 import (
 	"context"
@@ -15,23 +15,24 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/Olian04/edgerun"
+	membershipv1 "github.com/Olian04/edgerun/gen/edgerun/membership/v1"
+	"github.com/Olian04/edgerun/gen/edgerun/membership/v1/membershipv1connect"
 	workerv1 "github.com/Olian04/edgerun/gen/edgerun/worker/v1"
-	"github.com/Olian04/edgerun/gen/edgerun/worker/v1/workerv1connect"
 )
 
-type fakeFleet struct {
-	workerv1connect.UnimplementedFleetServiceHandler
+type fakeMembership struct {
+	membershipv1connect.UnimplementedMembershipServiceHandler
 	interval time.Duration
 
 	mu           sync.Mutex
 	failRegister int // fail this many Register calls first
 	registers    int
-	heartbeats   []*workerv1.HeartbeatRequest
+	heartbeats   []*membershipv1.HeartbeatRequest
 	forget       string // heartbeats for this id get reregister=true, once
 	deregistered []string
 }
 
-func (f *fakeFleet) Register(context.Context, *connect.Request[workerv1.RegisterRequest]) (*connect.Response[workerv1.RegisterResponse], error) {
+func (f *fakeMembership) Register(context.Context, *connect.Request[membershipv1.RegisterRequest]) (*connect.Response[membershipv1.RegisterResponse], error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.failRegister > 0 {
@@ -39,55 +40,55 @@ func (f *fakeFleet) Register(context.Context, *connect.Request[workerv1.Register
 		return nil, connect.NewError(connect.CodeUnavailable, errors.New("not yet"))
 	}
 	f.registers++
-	return connect.NewResponse(&workerv1.RegisterResponse{
-		WorkerId:          "w" + string(rune('0'+f.registers)),
+	return connect.NewResponse(&membershipv1.RegisterResponse{
+		MemberId:          "w" + string(rune('0'+f.registers)),
 		HeartbeatInterval: durationpb.New(f.interval),
 	}), nil
 }
 
-func (f *fakeFleet) Heartbeat(_ context.Context, r *connect.Request[workerv1.HeartbeatRequest]) (*connect.Response[workerv1.HeartbeatResponse], error) {
+func (f *fakeMembership) Heartbeat(_ context.Context, r *connect.Request[membershipv1.HeartbeatRequest]) (*connect.Response[membershipv1.HeartbeatResponse], error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.heartbeats = append(f.heartbeats, r.Msg)
-	re := f.forget != "" && r.Msg.WorkerId == f.forget
+	re := f.forget != "" && r.Msg.MemberId == f.forget
 	if re {
 		f.forget = ""
 	}
-	return connect.NewResponse(&workerv1.HeartbeatResponse{Reregister: re}), nil
+	return connect.NewResponse(&membershipv1.HeartbeatResponse{Reregister: re}), nil
 }
 
-func (f *fakeFleet) Deregister(_ context.Context, r *connect.Request[workerv1.DeregisterRequest]) (*connect.Response[workerv1.DeregisterResponse], error) {
+func (f *fakeMembership) Deregister(_ context.Context, r *connect.Request[membershipv1.DeregisterRequest]) (*connect.Response[membershipv1.DeregisterResponse], error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.deregistered = append(f.deregistered, r.Msg.WorkerId)
-	return connect.NewResponse(&workerv1.DeregisterResponse{}), nil
+	f.deregistered = append(f.deregistered, r.Msg.MemberId)
+	return connect.NewResponse(&membershipv1.DeregisterResponse{}), nil
 }
 
-func (f *fakeFleet) snapshot() (registers int, hbs []*workerv1.HeartbeatRequest) {
+func (f *fakeMembership) snapshot() (registers int, hbs []*membershipv1.HeartbeatRequest) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.registers, append([]*workerv1.HeartbeatRequest(nil), f.heartbeats...)
+	return f.registers, append([]*membershipv1.HeartbeatRequest(nil), f.heartbeats...)
 }
 
 type source struct {
 	mu    sync.Mutex
-	state workerv1.WorkerState
+	state membershipv1.MemberState
 	n     uint32
 }
 
-func (s *source) State() workerv1.WorkerState { s.mu.Lock(); defer s.mu.Unlock(); return s.state }
-func (s *source) InFlight() uint32            { s.mu.Lock(); defer s.mu.Unlock(); return s.n }
+func (s *source) State() membershipv1.MemberState { s.mu.Lock(); defer s.mu.Unlock(); return s.state }
+func (s *source) InFlight() uint32                { s.mu.Lock(); defer s.mu.Unlock(); return s.n }
 
-func setup(t *testing.T, f *fakeFleet, src *source) (*Client, context.CancelFunc, <-chan error) {
+func setup(t *testing.T, f *fakeMembership, src *source) (*Client, context.CancelFunc, <-chan error) {
 	t.Helper()
 	mux := http.NewServeMux()
-	mux.Handle(workerv1connect.NewFleetServiceHandler(f))
+	mux.Handle(membershipv1connect.NewMembershipServiceHandler(f))
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	c := New(Config{
-		Endpoint: "http://worker.test", Info: &workerv1.WorkerInfo{},
-		Fleet:  edgerun.NewFleet(srv.URL, "", edgerun.WithHTTPClient(srv.Client())),
-		Source: src, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Endpoint: "http://worker.test", Worker: &workerv1.WorkerInfo{},
+		Membership: edgerun.NewMembership(srv.URL, "", edgerun.WithHTTPClient(srv.Client())),
+		State:      src.State, InFlight: src.InFlight, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		RetryMin: 5 * time.Millisecond, RetryMax: 20 * time.Millisecond,
 	})
 	ctx, cancel := context.WithCancel(context.Background())
@@ -110,14 +111,14 @@ func eventually(t *testing.T, what string, cond func() bool) {
 }
 
 func TestRegistersRetriesAndHeartbeatsWithLoad(t *testing.T) {
-	f := &fakeFleet{interval: 10 * time.Millisecond, failRegister: 3}
-	src := &source{state: workerv1.WorkerState_WORKER_STATE_READY, n: 2}
+	f := &fakeMembership{interval: 10 * time.Millisecond, failRegister: 3}
+	src := &source{state: membershipv1.MemberState_MEMBER_STATE_READY, n: 2}
 	_, cancel, done := setup(t, f, src)
 
 	eventually(t, "registration after retries", func() bool { r, _ := f.snapshot(); return r == 1 })
 	eventually(t, "heartbeats", func() bool { _, h := f.snapshot(); return len(h) >= 2 })
 	_, hbs := f.snapshot()
-	if hbs[0].WorkerId != "w1" || hbs[0].InFlight != 2 || hbs[0].State != workerv1.WorkerState_WORKER_STATE_READY {
+	if hbs[0].MemberId != "w1" || hbs[0].InFlight != 2 || hbs[0].State != membershipv1.MemberState_MEMBER_STATE_READY {
 		t.Errorf("heartbeat = %v", hbs[0])
 	}
 	cancel()
@@ -127,13 +128,13 @@ func TestRegistersRetriesAndHeartbeatsWithLoad(t *testing.T) {
 }
 
 func TestReregistersWhenForgotten(t *testing.T) {
-	f := &fakeFleet{interval: 10 * time.Millisecond, forget: "w1"}
+	f := &fakeMembership{interval: 10 * time.Millisecond, forget: "w1"}
 	_, _, _ = setup(t, f, &source{})
 	eventually(t, "second registration", func() bool { r, _ := f.snapshot(); return r == 2 })
 	eventually(t, "heartbeats under the new id", func() bool {
 		_, h := f.snapshot()
 		for _, x := range h {
-			if x.WorkerId == "w2" {
+			if x.MemberId == "w2" {
 				return true
 			}
 		}
@@ -144,8 +145,8 @@ func TestReregistersWhenForgotten(t *testing.T) {
 // A draining worker that the orchestrator has forgotten does not register
 // again: it would be listed as ready and given work it is trying to refuse.
 func TestADrainingWorkerDoesNotReregister(t *testing.T) {
-	f := &fakeFleet{interval: 10 * time.Millisecond, forget: "w1"}
-	_, _, _ = setup(t, f, &source{state: workerv1.WorkerState_WORKER_STATE_DRAINING})
+	f := &fakeMembership{interval: 10 * time.Millisecond, forget: "w1"}
+	_, _, _ = setup(t, f, &source{state: membershipv1.MemberState_MEMBER_STATE_DRAINING})
 	eventually(t, "several heartbeats, the first of them answered reregister", func() bool { _, h := f.snapshot(); return len(h) >= 4 })
 	if r, _ := f.snapshot(); r != 1 {
 		t.Errorf("%d registrations: a draining worker must not register again", r)
@@ -153,8 +154,8 @@ func TestADrainingWorkerDoesNotReregister(t *testing.T) {
 }
 
 func TestPokeHeartbeatsImmediately(t *testing.T) {
-	f := &fakeFleet{interval: time.Hour}
-	src := &source{state: workerv1.WorkerState_WORKER_STATE_READY}
+	f := &fakeMembership{interval: time.Hour}
+	src := &source{state: membershipv1.MemberState_MEMBER_STATE_READY}
 	c, _, _ := setup(t, f, src)
 	eventually(t, "registration", func() bool { r, _ := f.snapshot(); return r == 1 })
 	time.Sleep(50 * time.Millisecond)
@@ -163,23 +164,23 @@ func TestPokeHeartbeatsImmediately(t *testing.T) {
 	}
 
 	src.mu.Lock()
-	src.state = workerv1.WorkerState_WORKER_STATE_DRAINING
+	src.state = membershipv1.MemberState_MEMBER_STATE_DRAINING
 	src.mu.Unlock()
 	c.Poke()
 	c.Poke() // coalesces; must not block
 	eventually(t, "poked heartbeat", func() bool { _, h := f.snapshot(); return len(h) >= 1 })
 	_, h := f.snapshot()
-	if h[0].State != workerv1.WorkerState_WORKER_STATE_DRAINING {
+	if h[0].State != membershipv1.MemberState_MEMBER_STATE_DRAINING {
 		t.Errorf("poked heartbeat state = %v", h[0].State)
 	}
 }
 
 func TestDeregister(t *testing.T) {
-	f := &fakeFleet{interval: time.Hour}
+	f := &fakeMembership{interval: time.Hour}
 	c, _, _ := setup(t, f, &source{})
 	// Wait for the client's own view: the server counting a registration does
 	// not mean the client has received its id yet.
-	eventually(t, "the client to hold its worker id", func() bool { return c.WorkerID() == "w1" })
+	eventually(t, "the client to hold its worker id", func() bool { return c.MemberID() == "w1" })
 	if err := c.Deregister(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -191,9 +192,9 @@ func TestDeregister(t *testing.T) {
 }
 
 func TestDeregisterBeforeRegistrationIsANoOp(t *testing.T) {
-	f := &fakeFleet{interval: time.Hour}
-	c := New(Config{Fleet: nil, Source: &source{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}) // never started
-	if c.WorkerID() != "" {
+	f := &fakeMembership{interval: time.Hour}
+	c := New(Config{Log: slog.New(slog.NewTextHandler(io.Discard, nil))}) // never started
+	if c.MemberID() != "" {
 		t.Error("a client that never registered has no id")
 	}
 	if err := c.Deregister(context.Background()); err != nil {

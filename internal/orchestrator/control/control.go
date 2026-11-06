@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
-	"time"
 
 	"connectrpc.com/connect"
 
@@ -38,10 +37,8 @@ type Config struct {
 	Refresh func(ctx context.Context)
 	// MaxModuleBytes bounds an uploaded module. Default 32 MiB.
 	MaxModuleBytes uint64
-	// AliveWithin is how recently a worker must have heartbeated to be alive.
-	AliveWithin time.Duration
-	Version     string
-	Log         *slog.Logger
+	Version        string
+	Log            *slog.Logger
 }
 
 // Service implements the control.v1 services.
@@ -51,9 +48,6 @@ type Service struct{ cfg Config }
 func New(cfg Config) *Service {
 	if cfg.MaxModuleBytes == 0 {
 		cfg.MaxModuleBytes = 32 << 20
-	}
-	if cfg.AliveWithin == 0 {
-		cfg.AliveWithin = 15 * time.Second
 	}
 	if cfg.Refresh == nil {
 		cfg.Refresh = func(context.Context) {}
@@ -71,7 +65,7 @@ func (s *Service) Mount(mux *http.ServeMux, v authn.Verifier) {
 	mux.Handle(controlv1connect.NewFunctionServiceHandler(functions{s}, upload...))
 	mux.Handle(controlv1connect.NewRouteServiceHandler(routes{s}, small))
 	mux.Handle(controlv1connect.NewPlanServiceHandler(plans{s}, upload...))
-	mux.Handle(controlv1connect.NewInspectionServiceHandler(inspection{s}, small))
+	mux.Handle(controlv1connect.NewRecordsServiceHandler(records{s}, small))
 }
 
 func (s *Service) fail(err error) error { return apierr.FromStore(s.cfg.Log, err) }
@@ -191,6 +185,15 @@ func change[Req, Resp any](ctx context.Context, s *Service, m Req, validateOnly,
 // --- FunctionService ---------------------------------------------------------
 
 type functions struct{ s *Service }
+
+func (f functions) Describe(context.Context, *connect.Request[controlv1.DescribeRequest]) (*connect.Response[controlv1.DescribeResponse], error) {
+	return connect.NewResponse(&controlv1.DescribeResponse{
+		Implementation: &commonv1.Implementation{
+			Name: "edgerun-orchestrator", Version: f.s.cfg.Version, Protocols: []string{"edgerun.control.v1"},
+		},
+		MaxModuleBytes: f.s.cfg.MaxModuleBytes,
+	}), nil
+}
 
 func (f functions) CreateFunction(ctx context.Context, r *connect.Request[controlv1.CreateFunctionRequest]) (*connect.Response[controlv1.CreateFunctionResponse], error) {
 	resp, err := change(ctx, f.s, r.Msg, r.Msg.GetValidateOnly(), false, f.s.createFunction)
@@ -356,36 +359,11 @@ func (r routes) PatchRouteLabels(ctx context.Context, req *connect.Request[contr
 	return connect.NewResponse(resp), nil
 }
 
-// --- InspectionService ---------------------------------------------------------
+// --- RecordsService ------------------------------------------------------------
 
-type inspection struct{ s *Service }
+type records struct{ s *Service }
 
-func (i inspection) Describe(context.Context, *connect.Request[controlv1.DescribeRequest]) (*connect.Response[controlv1.DescribeResponse], error) {
-	return connect.NewResponse(&controlv1.DescribeResponse{
-		Implementation: &commonv1.Implementation{
-			Name: "edgerun-orchestrator", Version: i.s.cfg.Version, Protocols: []string{"edgerun.control.v1"},
-		},
-		MaxModuleBytes: i.s.cfg.MaxModuleBytes,
-	}), nil
-}
-
-func (i inspection) ListWorkers(ctx context.Context, _ *connect.Request[controlv1.ListWorkersRequest]) (*connect.Response[controlv1.ListWorkersResponse], error) {
-	ws, err := i.s.cfg.Store.ListWorkers(ctx, i.s.cfg.AliveWithin)
-	if err != nil {
-		return nil, i.s.fail(err)
-	}
-	return connect.NewResponse(&controlv1.ListWorkersResponse{Workers: ws}), nil
-}
-
-func (i inspection) ListNetworkServices(ctx context.Context, _ *connect.Request[controlv1.ListNetworkServicesRequest]) (*connect.Response[controlv1.ListNetworkServicesResponse], error) {
-	ns, err := i.s.cfg.Store.ListNetworkServices(ctx, i.s.cfg.AliveWithin)
-	if err != nil {
-		return nil, i.s.fail(err)
-	}
-	return connect.NewResponse(&controlv1.ListNetworkServicesResponse{Services: ns}), nil
-}
-
-func (i inspection) ListInvocations(ctx context.Context, r *connect.Request[controlv1.ListInvocationsRequest]) (*connect.Response[controlv1.ListInvocationsResponse], error) {
+func (i records) ListInvocations(ctx context.Context, r *connect.Request[controlv1.ListInvocationsRequest]) (*connect.Response[controlv1.ListInvocationsResponse], error) {
 	vs, next, err := i.s.cfg.Store.ListInvocations(ctx, r.Msg.GetFunctionId(), r.Msg.GetRequestId(), r.Msg.GetPageSize(), r.Msg.GetPageToken())
 	if err != nil {
 		return nil, i.s.fail(err)
@@ -393,7 +371,7 @@ func (i inspection) ListInvocations(ctx context.Context, r *connect.Request[cont
 	return connect.NewResponse(&controlv1.ListInvocationsResponse{Invocations: vs, NextPageToken: next}), nil
 }
 
-func (i inspection) GetInvocation(ctx context.Context, r *connect.Request[controlv1.GetInvocationRequest]) (*connect.Response[controlv1.GetInvocationResponse], error) {
+func (i records) GetInvocation(ctx context.Context, r *connect.Request[controlv1.GetInvocationRequest]) (*connect.Response[controlv1.GetInvocationResponse], error) {
 	v, err := i.s.cfg.Store.GetInvocation(ctx, r.Msg.GetInvocationId())
 	if err != nil {
 		return nil, i.s.fail(err)

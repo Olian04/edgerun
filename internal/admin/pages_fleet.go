@@ -6,9 +6,7 @@ import (
 	"strings"
 	"time"
 
-	controlv1 "github.com/Olian04/edgerun/gen/edgerun/control/v1"
-	egressv1 "github.com/Olian04/edgerun/gen/edgerun/egress/v1"
-	workerv1 "github.com/Olian04/edgerun/gen/edgerun/worker/v1"
+	membershipv1 "github.com/Olian04/edgerun/gen/edgerun/membership/v1"
 	"github.com/Olian04/webui/pkg/webui"
 )
 
@@ -33,11 +31,11 @@ var (
 	workerHeartbeat = webui.Time[workerRow]{Label: "Last heartbeat", Load: func(r workerRow) time.Time { return r.Heartbeat }, Format: when}
 )
 
-func workerState_(w *controlv1.WorkerStatus) string {
+func workerState_(w *membershipv1.Member) string {
 	switch {
 	case !w.Alive:
 		return "unresponsive"
-	case w.State == workerv1.WorkerState_WORKER_STATE_DRAINING:
+	case w.State == membershipv1.MemberState_MEMBER_STATE_DRAINING:
 		return "draining"
 	}
 	return "ready"
@@ -54,17 +52,17 @@ func (u *ui) workersTable(title string) webui.Table[workerRow] {
 			}
 			rows := make([]workerRow, len(ws))
 			for i, w := range ws {
-				impl := w.GetInfo().GetImplementation().GetName()
-				if v := w.GetInfo().GetImplementation().GetVersion(); v != "" {
+				impl := w.GetWorker().GetImplementation().GetName()
+				if v := w.GetWorker().GetImplementation().GetVersion(); v != "" {
 					impl += " " + v
 				}
 				var labels []string
-				for k, v := range w.GetInfo().GetLabels() {
+				for k, v := range w.GetWorker().GetLabels() {
 					labels = append(labels, k+"="+v)
 				}
 				rows[i] = workerRow{ID: w.Id, Endpoint: w.Endpoint, Implementation: impl, State: workerState_(w),
-					ABIs: strings.Join(w.GetInfo().GetAbis(), ", "), Labels: strings.Join(labels, ", "),
-					Load:      fmt.Sprintf("%d / %d", w.InFlight, w.GetInfo().GetMaxConcurrency()),
+					ABIs: strings.Join(w.GetWorker().GetAbis(), ", "), Labels: strings.Join(labels, ", "),
+					Load:      fmt.Sprintf("%d / %d", w.InFlight, w.GetWorker().GetMaxConcurrency()),
 					Heartbeat: w.LastHeartbeatTime.AsTime()}
 			}
 			return rows, u.live()
@@ -100,11 +98,11 @@ var (
 	netHeartbeat = webui.Time[netRow]{Label: "Last heartbeat", Load: func(r netRow) time.Time { return r.Heartbeat }, Format: when}
 )
 
-func netServiceState(n *controlv1.NetworkServiceStatus) string {
+func netServiceState(n *membershipv1.Member) string {
 	switch {
 	case !n.Alive:
 		return "unresponsive"
-	case n.State == egressv1.ServiceState_SERVICE_STATE_DRAINING:
+	case n.State == membershipv1.MemberState_MEMBER_STATE_DRAINING:
 		return "draining"
 	}
 	return "ready"
@@ -123,12 +121,12 @@ func (u *ui) networkTable(title string) webui.Table[netRow] {
 			}
 			rows := make([]netRow, len(ns))
 			for i, n := range ns {
-				impl := n.GetInfo().GetImplementation().GetName()
-				if v := n.GetInfo().GetImplementation().GetVersion(); v != "" {
+				impl := n.GetNetworkService().GetImplementation().GetName()
+				if v := n.GetNetworkService().GetImplementation().GetVersion(); v != "" {
 					impl += " " + v
 				}
 				rows[i] = netRow{Endpoint: n.Endpoint, Implementation: impl, State: netServiceState(n),
-					Covers: strings.Join(n.GetInfo().GetCovers(), ", "), Heartbeat: n.LastHeartbeatTime.AsTime()}
+					Covers: strings.Join(n.GetNetworkService().GetCovers(), ", "), Heartbeat: n.LastHeartbeatTime.AsTime()}
 			}
 			return rows, webui.Ready()
 		}},

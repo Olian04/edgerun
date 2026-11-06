@@ -14,7 +14,7 @@ import (
 
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
 	controlv1 "github.com/Olian04/edgerun/gen/edgerun/control/v1"
-	egressv1 "github.com/Olian04/edgerun/gen/edgerun/egress/v1"
+	membershipv1 "github.com/Olian04/edgerun/gen/edgerun/membership/v1"
 	"github.com/Olian04/edgerun/internal/egress/policy"
 	"github.com/Olian04/edgerun/internal/wagi"
 	"github.com/Olian04/webui/pkg/webui"
@@ -499,7 +499,7 @@ func describeRule(entry string) egressRow {
 // of those alive and ready whose coverage names all of it, the most specific
 // ones (the same choice the orchestrator makes; among equals it spreads the
 // load, so several may be named).
-func carriers(entry string, services []*controlv1.NetworkServiceStatus) string {
+func carriers(entry string, services []*membershipv1.Member) string {
 	rule, err := policy.ParseRule(entry)
 	if err != nil {
 		return "?"
@@ -507,10 +507,10 @@ func carriers(entry string, services []*controlv1.NetworkServiceStatus) string {
 	var best []string
 	var bestRank [2]int
 	for _, n := range services {
-		if !n.Alive || n.State != egressv1.ServiceState_SERVICE_STATE_READY {
+		if !n.Alive || n.State != membershipv1.MemberState_MEMBER_STATE_READY {
 			continue
 		}
-		covers, err := policy.ParseCovers(n.GetInfo().GetCovers())
+		covers, err := policy.ParseCovers(n.GetNetworkService().GetCovers())
 		if err != nil {
 			continue
 		}

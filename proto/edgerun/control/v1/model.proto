@@ -5,8 +5,6 @@ package edgerun.control.v1;
 
 import "google/protobuf/timestamp.proto";
 import "edgerun/common/v1/common.proto";
-import "edgerun/egress/v1/registry.proto";
-import "edgerun/worker/v1/worker.proto";
 
 message Function {
   string id = 1;
@@ -83,18 +81,6 @@ message EnvEntry {
   string revision = 4;
 }
 
-// WorkerStatus is the orchestrator's current view of one registered worker.
-message WorkerStatus {
-  string id = 1;
-  string endpoint = 2;
-  edgerun.worker.v1.WorkerInfo info = 3;
-  edgerun.worker.v1.WorkerState state = 4;
-  uint32 in_flight = 5;
-  google.protobuf.Timestamp last_heartbeat_time = 6;
-  // Whether the worker has heartbeated recently enough to be scheduled onto.
-  bool alive = 7;
-}
-
 // Invocation is the persisted record of one routed request.
 message Invocation {
   string id = 1;
@@ -121,16 +107,4 @@ message Invocation {
   // digits), if the request arrived carrying one: the way from a record to its
   // trace in whatever the deployment collects traces in. Empty otherwise.
   string trace_id = 14;
-}
-
-// NetworkServiceStatus is a registered network service as the orchestrator
-// sees it.
-message NetworkServiceStatus {
-  string id = 1;
-  string endpoint = 2;
-  edgerun.egress.v1.ServiceInfo info = 3;
-  edgerun.egress.v1.ServiceState state = 4;
-  google.protobuf.Timestamp last_heartbeat_time = 5;
-  // Whether it has heartbeated recently enough to be given work.
-  bool alive = 6;
 }

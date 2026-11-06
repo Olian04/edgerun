@@ -8,8 +8,8 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	controlv1 "github.com/Olian04/edgerun/gen/edgerun/control/v1"
 	egressv1 "github.com/Olian04/edgerun/gen/edgerun/egress/v1"
+	membershipv1 "github.com/Olian04/edgerun/gen/edgerun/membership/v1"
 	"github.com/Olian04/edgerun/internal/egress/policy"
 )
 
@@ -37,13 +37,13 @@ func (s *Store) RegisterNetworkService(ctx context.Context, endpoint string, inf
 			id = gen_random_uuid(), info = EXCLUDED.info, covers = EXCLUDED.covers, state = EXCLUDED.state,
 			registered_at = now(), last_heartbeat = now()
 		RETURNING id::text`,
-		endpoint, doc, covers, int16(egressv1.ServiceState_SERVICE_STATE_READY)).Scan(&id)
+		endpoint, doc, covers, int16(membershipv1.MemberState_MEMBER_STATE_READY)).Scan(&id)
 	return id, err
 }
 
 // HeartbeatNetworkService records liveness and state. known is false if no
 // such service is registered, in which case it must register again.
-func (s *Store) HeartbeatNetworkService(ctx context.Context, id string, state egressv1.ServiceState) (known bool, err error) {
+func (s *Store) HeartbeatNetworkService(ctx context.Context, id string, state membershipv1.MemberState) (known bool, err error) {
 	sid, perr := parseID("network service", id)
 	if perr != nil {
 		return false, nil
@@ -74,7 +74,7 @@ func (s *Store) PruneNetworkServices(ctx context.Context, olderThan time.Duratio
 
 // ListNetworkServices returns every registered service. One is alive if it
 // heartbeated within aliveWithin, by the database's clock.
-func (s *Store) ListNetworkServices(ctx context.Context, aliveWithin time.Duration) ([]*controlv1.NetworkServiceStatus, error) {
+func (s *Store) ListNetworkServices(ctx context.Context, aliveWithin time.Duration) ([]*membershipv1.Member, error) {
 	rows, err := s.q(ctx).Query(ctx, `SELECT id::text, endpoint, info, state, last_heartbeat,
 			last_heartbeat > now() - make_interval(secs => $1)
 		FROM network_services ORDER BY endpoint`, aliveWithin.Seconds())
@@ -82,22 +82,23 @@ func (s *Store) ListNetworkServices(ctx context.Context, aliveWithin time.Durati
 		return nil, err
 	}
 	defer rows.Close()
-	var out []*controlv1.NetworkServiceStatus
+	var out []*membershipv1.Member
 	for rows.Next() {
-		var n controlv1.NetworkServiceStatus
+		n := &membershipv1.Member{Kind: membershipv1.MemberKind_MEMBER_KIND_NETWORK_SERVICE}
 		var doc []byte
 		var state int16
 		var hb time.Time
 		if err := rows.Scan(&n.Id, &n.Endpoint, &doc, &state, &hb, &n.Alive); err != nil {
 			return nil, err
 		}
-		n.Info = &egressv1.ServiceInfo{}
-		if err := protojson.Unmarshal(doc, n.Info); err != nil {
+		info := &egressv1.ServiceInfo{}
+		if err := protojson.Unmarshal(doc, info); err != nil {
 			return nil, err
 		}
-		n.State = egressv1.ServiceState(state)
+		n.Info = &membershipv1.Member_NetworkService{NetworkService: info}
+		n.State = membershipv1.MemberState(state)
 		n.LastHeartbeatTime = timestamppb.New(hb)
-		out = append(out, &n)
+		out = append(out, n)
 	}
 	return out, rows.Err()
 }
@@ -114,7 +115,7 @@ func (s *Store) ReadyNetworkServices(ctx context.Context, aliveWithin time.Durat
 	rows, err := s.q(ctx).Query(ctx, `SELECT id::text, endpoint, covers FROM network_services
 		WHERE state = $1 AND last_heartbeat > now() - make_interval(secs => $2)
 		ORDER BY endpoint`,
-		int16(egressv1.ServiceState_SERVICE_STATE_READY), aliveWithin.Seconds())
+		int16(membershipv1.MemberState_MEMBER_STATE_READY), aliveWithin.Seconds())
 	if err != nil {
 		return nil, err
 	}

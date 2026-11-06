@@ -1,0 +1,119 @@
+// Membership service: how the parts of a deployment that the orchestrator does
+// not host (workers, network services) join it, stay in it and leave it, and
+// how an operator sees who is in it. Host: orchestrator. Clients: workers and
+// network services (the first three calls), operators (ListMembers).
+//
+// Members dial the orchestrator (any instance; it is stateless), never the
+// other way round, so a member can sit behind NAT or a firewall and an
+// orchestrator needs no inventory of them in its configuration. What a member
+// *is* decides what it is given: a worker is given invocations to execute, a
+// network service the outbound requests of guests it carries. Both have the same
+// life: register, heartbeat, drain, leave.
+syntax = "proto3";
+
+package edgerun.membership.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+import "edgerun/egress/v1/egress.proto";
+import "edgerun/worker/v1/worker.proto";
+
+service MembershipService {
+  // Register announces a member and the endpoint at which it serves what it
+  // serves (a worker's ExecutionService, a network service's EgressService).
+  // Registering an endpoint that is already known replaces the earlier
+  // registration and returns a fresh member_id (the member restarted).
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+
+  // Heartbeat keeps the registration alive and reports state. A member that
+  // misses three consecutive intervals is considered dead and is given
+  // nothing. For a member the orchestrator does not know it answers
+  // reregister, and the member must register again (unless it is draining).
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+
+  // Deregister removes a member immediately (graceful shutdown). An unknown id
+  // is not an error.
+  rpc Deregister(DeregisterRequest) returns (DeregisterResponse);
+
+  // ListMembers shows an operator who has registered, with state and liveness,
+  // ordered by kind and then endpoint.
+  rpc ListMembers(ListMembersRequest) returns (ListMembersResponse);
+}
+
+enum MemberKind {
+  MEMBER_KIND_UNSPECIFIED = 0;
+  MEMBER_KIND_WORKER = 1;
+  MEMBER_KIND_NETWORK_SERVICE = 2;
+}
+
+enum MemberState {
+  MEMBER_STATE_UNSPECIFIED = 0;
+  // Accepting new work.
+  MEMBER_STATE_READY = 1;
+  // Finishing what it has; it must not be given anything new.
+  MEMBER_STATE_DRAINING = 2;
+}
+
+message RegisterRequest {
+  // Base URL at which the orchestrator (for a worker) or workers (for a
+  // network service) reach this member, e.g. "http://10.0.0.7:9000".
+  string endpoint = 1;
+  // What the member is, and what it declares about itself; exactly one. Its
+  // kind decides which credential may register it (a worker's, a network
+  // service's) and what it is scheduled for.
+  oneof info {
+    edgerun.worker.v1.WorkerInfo worker = 2;
+    edgerun.egress.v1.ServiceInfo network_service = 3;
+  }
+}
+
+message RegisterResponse {
+  string member_id = 1;
+  // How often the member must heartbeat.
+  google.protobuf.Duration heartbeat_interval = 2;
+}
+
+message HeartbeatRequest {
+  string member_id = 1;
+  MemberState state = 2;
+  // Workers only: invocations currently executing. Information for operators;
+  // the orchestrator does not schedule by it.
+  uint32 in_flight = 3;
+}
+
+message HeartbeatResponse {
+  // True if the orchestrator no longer knows this member_id.
+  bool reregister = 1;
+}
+
+message DeregisterRequest {
+  string member_id = 1;
+}
+
+message DeregisterResponse {}
+
+message ListMembersRequest {
+  // Only members of this kind; unspecified for all.
+  MemberKind kind = 1;
+}
+
+message ListMembersResponse {
+  repeated Member members = 1;
+}
+
+// Member is the orchestrator's current view of one registered member.
+message Member {
+  string id = 1;
+  MemberKind kind = 2;
+  string endpoint = 3;
+  MemberState state = 4;
+  // Whether it has heartbeated recently enough to be given work.
+  bool alive = 5;
+  google.protobuf.Timestamp last_heartbeat_time = 6;
+  // Workers only.
+  uint32 in_flight = 7;
+  oneof info {
+    edgerun.worker.v1.WorkerInfo worker = 8;
+    edgerun.egress.v1.ServiceInfo network_service = 9;
+  }
+}

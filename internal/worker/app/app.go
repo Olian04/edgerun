@@ -14,11 +14,12 @@ import (
 
 	"github.com/Olian04/edgerun"
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
+	membershipv1 "github.com/Olian04/edgerun/gen/edgerun/membership/v1"
 	workerv1 "github.com/Olian04/edgerun/gen/edgerun/worker/v1"
 	"github.com/Olian04/edgerun/internal/authn"
+	"github.com/Olian04/edgerun/internal/membershipclient"
 	"github.com/Olian04/edgerun/internal/worker/cache"
 	"github.com/Olian04/edgerun/internal/worker/egressclient"
-	"github.com/Olian04/edgerun/internal/worker/fleetclient"
 	"github.com/Olian04/edgerun/internal/worker/runtime"
 	"github.com/Olian04/edgerun/internal/worker/server"
 )
@@ -142,7 +143,7 @@ func Run(ctx context.Context, cfg Config) error {
 	mux := http.NewServeMux()
 	mux.Handle(srv.Handler(authn.Verifier{cfg.ExecutionToken: server.ExecuteScope}))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		if srv.State() == workerv1.WorkerState_WORKER_STATE_DRAINING {
+		if srv.State() == membershipv1.MemberState_MEMBER_STATE_DRAINING {
 			http.Error(w, "draining", http.StatusServiceUnavailable)
 			return
 		}
@@ -157,9 +158,9 @@ func Run(ctx context.Context, cfg Config) error {
 	go func() { serveErr <- httpSrv.Serve(ln) }()
 	log.Info("worker listening", "addr", ln.Addr().String(), "advertise", advertise, "max_concurrency", cfg.MaxConcurrency)
 
-	fleet := fleetclient.New(fleetclient.Config{
-		Endpoint: advertise, Info: info, Source: srv, Log: log,
-		Fleet: edgerun.NewFleet(cfg.OrchestratorURL, cfg.WorkerToken, edgerun.WithHTTPClient(hc)),
+	fleet := membershipclient.New(membershipclient.Config{
+		Endpoint: advertise, Worker: info, State: srv.State, InFlight: srv.InFlight, Log: log,
+		Membership: edgerun.NewMembership(cfg.OrchestratorURL, cfg.WorkerToken, edgerun.WithHTTPClient(hc)),
 	})
 	// Heartbeats must outlive ctx: they keep reporting DRAINING while we wait.
 	hbCtx, stopHeartbeats := context.WithCancel(context.Background())

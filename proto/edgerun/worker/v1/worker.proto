@@ -20,11 +20,3 @@ message WorkerInfo {
   // Free-form scheduling hints, e.g. region. Not interpreted by the protocol.
   map<string, string> labels = 4;
 }
-
-enum WorkerState {
-  WORKER_STATE_UNSPECIFIED = 0;
-  // Accepting new invocations.
-  WORKER_STATE_READY = 1;
-  // Finishing in-flight invocations; must not be sent new ones.
-  WORKER_STATE_DRAINING = 2;
-}

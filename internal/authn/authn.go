@@ -45,17 +45,27 @@ func (v Verifier) scopeOf(h http.Header) (string, bool) {
 	return scope, found
 }
 
-func (v Verifier) check(h http.Header, allow []string) error {
+func (v Verifier) check(h http.Header, allow []string) (string, error) {
 	scope, ok := v.scopeOf(h)
 	if !ok {
-		return connect.NewError(connect.CodeUnauthenticated, errors.New("missing or invalid bearer token"))
+		return "", connect.NewError(connect.CodeUnauthenticated, errors.New("missing or invalid bearer token"))
 	}
 	for _, a := range allow {
 		if a == scope {
-			return nil
+			return scope, nil
 		}
 	}
-	return connect.NewError(connect.CodePermissionDenied, errors.New("token scope not allowed here"))
+	return "", connect.NewError(connect.CodePermissionDenied, errors.New("token scope not allowed here"))
+}
+
+type scopeKey struct{}
+
+// ScopeFrom returns the scope of the token a call was admitted with, for a
+// handler that serves callers of more than one scope and must tell them apart
+// (it is only set in a handler behind Server).
+func ScopeFrom(ctx context.Context) string {
+	s, _ := ctx.Value(scopeKey{}).(string)
+	return s
 }
 
 // Server returns an interceptor for a handler that admits the given scopes.
@@ -70,10 +80,11 @@ type server struct {
 
 func (s server) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
-		if err := s.v.check(req.Header(), s.allow); err != nil {
+		scope, err := s.v.check(req.Header(), s.allow)
+		if err != nil {
 			return nil, err
 		}
-		return next(ctx, req)
+		return next(context.WithValue(ctx, scopeKey{}, scope), req)
 	}
 }
 
@@ -83,10 +94,11 @@ func (s server) WrapStreamingClient(next connect.StreamingClientFunc) connect.St
 
 func (s server) WrapStreamingHandler(next connect.StreamingHandlerFunc) connect.StreamingHandlerFunc {
 	return func(ctx context.Context, conn connect.StreamingHandlerConn) error {
-		if err := s.v.check(conn.RequestHeader(), s.allow); err != nil {
+		scope, err := s.v.check(conn.RequestHeader(), s.allow)
+		if err != nil {
 			return err
 		}
-		return next(ctx, conn)
+		return next(context.WithValue(ctx, scopeKey{}, scope), conn)
 	}
 }
 

@@ -25,57 +25,6 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-type WorkerState int32
-
-const (
-	WorkerState_WORKER_STATE_UNSPECIFIED WorkerState = 0
-	// Accepting new invocations.
-	WorkerState_WORKER_STATE_READY WorkerState = 1
-	// Finishing in-flight invocations; must not be sent new ones.
-	WorkerState_WORKER_STATE_DRAINING WorkerState = 2
-)
-
-// Enum value maps for WorkerState.
-var (
-	WorkerState_name = map[int32]string{
-		0: "WORKER_STATE_UNSPECIFIED",
-		1: "WORKER_STATE_READY",
-		2: "WORKER_STATE_DRAINING",
-	}
-	WorkerState_value = map[string]int32{
-		"WORKER_STATE_UNSPECIFIED": 0,
-		"WORKER_STATE_READY":       1,
-		"WORKER_STATE_DRAINING":    2,
-	}
-)
-
-func (x WorkerState) Enum() *WorkerState {
-	p := new(WorkerState)
-	*p = x
-	return p
-}
-
-func (x WorkerState) String() string {
-	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
-}
-
-func (WorkerState) Descriptor() protoreflect.EnumDescriptor {
-	return file_edgerun_worker_v1_worker_proto_enumTypes[0].Descriptor()
-}
-
-func (WorkerState) Type() protoreflect.EnumType {
-	return &file_edgerun_worker_v1_worker_proto_enumTypes[0]
-}
-
-func (x WorkerState) Number() protoreflect.EnumNumber {
-	return protoreflect.EnumNumber(x)
-}
-
-// Deprecated: Use WorkerState.Descriptor instead.
-func (WorkerState) EnumDescriptor() ([]byte, []int) {
-	return file_edgerun_worker_v1_worker_proto_rawDescGZIP(), []int{0}
-}
-
 // WorkerInfo is everything the orchestrator may use to decide whether and how
 // to schedule onto a worker. Scheduling is driven by these declared
 // capabilities, never by Implementation.name.
@@ -165,11 +114,7 @@ const file_edgerun_worker_v1_worker_proto_rawDesc = "" +
 	"\x06labels\x18\x04 \x03(\v2).edgerun.worker.v1.WorkerInfo.LabelsEntryR\x06labels\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01*^\n" +
-	"\vWorkerState\x12\x1c\n" +
-	"\x18WORKER_STATE_UNSPECIFIED\x10\x00\x12\x16\n" +
-	"\x12WORKER_STATE_READY\x10\x01\x12\x19\n" +
-	"\x15WORKER_STATE_DRAINING\x10\x02B\xc5\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\xc5\x01\n" +
 	"\x15com.edgerun.worker.v1B\vWorkerProtoP\x01Z9github.com/Olian04/edgerun/gen/edgerun/worker/v1;workerv1\xa2\x02\x03EWX\xaa\x02\x11Edgerun.Worker.V1\xca\x02\x11Edgerun\\Worker\\V1\xe2\x02\x1dEdgerun\\Worker\\V1\\GPBMetadata\xea\x02\x13Edgerun::Worker::V1b\x06proto3"
 
 var (
@@ -184,17 +129,15 @@ func file_edgerun_worker_v1_worker_proto_rawDescGZIP() []byte {
 	return file_edgerun_worker_v1_worker_proto_rawDescData
 }
 
-var file_edgerun_worker_v1_worker_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
 var file_edgerun_worker_v1_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
 var file_edgerun_worker_v1_worker_proto_goTypes = []any{
-	(WorkerState)(0),          // 0: edgerun.worker.v1.WorkerState
-	(*WorkerInfo)(nil),        // 1: edgerun.worker.v1.WorkerInfo
-	nil,                       // 2: edgerun.worker.v1.WorkerInfo.LabelsEntry
-	(*v1.Implementation)(nil), // 3: edgerun.common.v1.Implementation
+	(*WorkerInfo)(nil),        // 0: edgerun.worker.v1.WorkerInfo
+	nil,                       // 1: edgerun.worker.v1.WorkerInfo.LabelsEntry
+	(*v1.Implementation)(nil), // 2: edgerun.common.v1.Implementation
 }
 var file_edgerun_worker_v1_worker_proto_depIdxs = []int32{
-	3, // 0: edgerun.worker.v1.WorkerInfo.implementation:type_name -> edgerun.common.v1.Implementation
-	2, // 1: edgerun.worker.v1.WorkerInfo.labels:type_name -> edgerun.worker.v1.WorkerInfo.LabelsEntry
+	2, // 0: edgerun.worker.v1.WorkerInfo.implementation:type_name -> edgerun.common.v1.Implementation
+	1, // 1: edgerun.worker.v1.WorkerInfo.labels:type_name -> edgerun.worker.v1.WorkerInfo.LabelsEntry
 	2, // [2:2] is the sub-list for method output_type
 	2, // [2:2] is the sub-list for method input_type
 	2, // [2:2] is the sub-list for extension type_name
@@ -212,14 +155,13 @@ func file_edgerun_worker_v1_worker_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_edgerun_worker_v1_worker_proto_rawDesc), len(file_edgerun_worker_v1_worker_proto_rawDesc)),
-			NumEnums:      1,
+			NumEnums:      0,
 			NumMessages:   2,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
 		GoTypes:           file_edgerun_worker_v1_worker_proto_goTypes,
 		DependencyIndexes: file_edgerun_worker_v1_worker_proto_depIdxs,
-		EnumInfos:         file_edgerun_worker_v1_worker_proto_enumTypes,
 		MessageInfos:      file_edgerun_worker_v1_worker_proto_msgTypes,
 	}.Build()
 	File_edgerun_worker_v1_worker_proto = out.File

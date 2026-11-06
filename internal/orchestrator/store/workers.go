@@ -8,7 +8,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	controlv1 "github.com/Olian04/edgerun/gen/edgerun/control/v1"
+	membershipv1 "github.com/Olian04/edgerun/gen/edgerun/membership/v1"
 	workerv1 "github.com/Olian04/edgerun/gen/edgerun/worker/v1"
 )
 
@@ -37,14 +37,14 @@ func (s *Store) RegisterWorker(ctx context.Context, endpoint string, info *worke
 			max_concurrency = EXCLUDED.max_concurrency, state = EXCLUDED.state,
 			in_flight = 0, registered_at = now(), last_heartbeat = now()
 		RETURNING id::text`,
-		endpoint, doc, info.GetAbis(), clamp32(info.GetMaxConcurrency()), int16(workerv1.WorkerState_WORKER_STATE_READY)).Scan(&id)
+		endpoint, doc, info.GetAbis(), clamp32(info.GetMaxConcurrency()), int16(membershipv1.MemberState_MEMBER_STATE_READY)).Scan(&id)
 	return id, err
 }
 
 // Heartbeat records liveness and load. known is false if no such worker is
 // registered (it was deregistered or replaced), in which case the worker must
 // register again.
-func (s *Store) Heartbeat(ctx context.Context, id string, state workerv1.WorkerState, inFlight uint32) (known bool, err error) {
+func (s *Store) Heartbeat(ctx context.Context, id string, state membershipv1.MemberState, inFlight uint32) (known bool, err error) {
 	wid, perr := parseID("worker", id)
 	if perr != nil {
 		return false, nil
@@ -76,7 +76,7 @@ func (s *Store) PruneWorkers(ctx context.Context, olderThan time.Duration) (int,
 
 // ListWorkers returns every registered worker. A worker is alive if it
 // heartbeated within aliveWithin, by the database's clock.
-func (s *Store) ListWorkers(ctx context.Context, aliveWithin time.Duration) ([]*controlv1.WorkerStatus, error) {
+func (s *Store) ListWorkers(ctx context.Context, aliveWithin time.Duration) ([]*membershipv1.Member, error) {
 	rows, err := s.q(ctx).Query(ctx, `SELECT id::text, endpoint, info, state, in_flight, last_heartbeat,
 			last_heartbeat > now() - make_interval(secs => $1)
 		FROM workers ORDER BY endpoint`, aliveWithin.Seconds())
@@ -84,9 +84,9 @@ func (s *Store) ListWorkers(ctx context.Context, aliveWithin time.Duration) ([]*
 		return nil, err
 	}
 	defer rows.Close()
-	var out []*controlv1.WorkerStatus
+	var out []*membershipv1.Member
 	for rows.Next() {
-		var w controlv1.WorkerStatus
+		w := &membershipv1.Member{Kind: membershipv1.MemberKind_MEMBER_KIND_WORKER}
 		var doc []byte
 		var state int16
 		var inFlight int32
@@ -94,13 +94,14 @@ func (s *Store) ListWorkers(ctx context.Context, aliveWithin time.Duration) ([]*
 		if err := rows.Scan(&w.Id, &w.Endpoint, &doc, &state, &inFlight, &hb, &w.Alive); err != nil {
 			return nil, err
 		}
-		w.Info = &workerv1.WorkerInfo{}
-		if err := protojson.Unmarshal(doc, w.Info); err != nil {
+		info := &workerv1.WorkerInfo{}
+		if err := protojson.Unmarshal(doc, info); err != nil {
 			return nil, err
 		}
-		w.State, w.InFlight = workerv1.WorkerState(state), uint32(inFlight)
+		w.Info = &membershipv1.Member_Worker{Worker: info}
+		w.State, w.InFlight = membershipv1.MemberState(state), uint32(inFlight)
 		w.LastHeartbeatTime = timestamppb.New(hb)
-		out = append(out, &w)
+		out = append(out, w)
 	}
 	return out, rows.Err()
 }
@@ -131,7 +132,7 @@ func (s *Store) ReadyWorkers(ctx context.Context, aliveWithin time.Duration) ([]
 	rows, err := s.q(ctx).Query(ctx, `SELECT id::text, endpoint, abis, max_concurrency, in_flight FROM workers
 		WHERE state = $1 AND last_heartbeat > now() - make_interval(secs => $2)
 		ORDER BY endpoint`,
-		int16(workerv1.WorkerState_WORKER_STATE_READY), aliveWithin.Seconds())
+		int16(membershipv1.MemberState_MEMBER_STATE_READY), aliveWithin.Seconds())
 	if err != nil {
 		return nil, err
 	}

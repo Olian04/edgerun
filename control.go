@@ -14,13 +14,13 @@ import (
 // operator can do. It needs a token of ScopeAdmin.
 //
 // Every method is one RPC of control.v1 (FunctionService, RouteService,
-// PlanService and InspectionService), taking and returning its messages. The All* methods
+// PlanService and RecordsService), taking and returning its messages. The All* methods
 // iterate over a paged list.
 type Control struct {
 	fn   controlv1connect.FunctionServiceClient
 	rt   controlv1connect.RouteServiceClient
 	plan controlv1connect.PlanServiceClient
-	insp controlv1connect.InspectionServiceClient
+	rec  controlv1connect.RecordsServiceClient
 }
 
 // NewControl returns a client for the orchestrator at baseURL.
@@ -30,7 +30,7 @@ func NewControl(baseURL, token string, opts ...Option) *Control {
 		fn:   controlv1connect.NewFunctionServiceClient(h, baseURL, co...),
 		rt:   controlv1connect.NewRouteServiceClient(h, baseURL, co...),
 		plan: controlv1connect.NewPlanServiceClient(h, baseURL, co...),
-		insp: controlv1connect.NewInspectionServiceClient(h, baseURL, co...),
+		rec:  controlv1connect.NewRecordsServiceClient(h, baseURL, co...),
 	}
 }
 
@@ -211,26 +211,18 @@ func (c *Control) Apply(ctx context.Context, req *controlv1.ApplyRequest) (*cont
 	return call(ctx, c.plan.Apply, req)
 }
 
-// Inspection.
+// Describe, and the records of invocations.
 
 func (c *Control) Describe(ctx context.Context, req *controlv1.DescribeRequest) (*controlv1.DescribeResponse, error) {
-	return call(ctx, c.insp.Describe, req)
-}
-
-func (c *Control) ListWorkers(ctx context.Context, req *controlv1.ListWorkersRequest) (*controlv1.ListWorkersResponse, error) {
-	return call(ctx, c.insp.ListWorkers, req)
-}
-
-func (c *Control) ListNetworkServices(ctx context.Context, req *controlv1.ListNetworkServicesRequest) (*controlv1.ListNetworkServicesResponse, error) {
-	return call(ctx, c.insp.ListNetworkServices, req)
+	return call(ctx, c.fn.Describe, req)
 }
 
 func (c *Control) GetInvocation(ctx context.Context, req *controlv1.GetInvocationRequest) (*controlv1.GetInvocationResponse, error) {
-	return call(ctx, c.insp.GetInvocation, req)
+	return call(ctx, c.rec.GetInvocation, req)
 }
 
 func (c *Control) ListInvocations(ctx context.Context, req *controlv1.ListInvocationsRequest) (*controlv1.ListInvocationsResponse, error) {
-	return call(ctx, c.insp.ListInvocations, req)
+	return call(ctx, c.rec.ListInvocations, req)
 }
 
 // AllInvocations iterates over invocation records, newest first, of one

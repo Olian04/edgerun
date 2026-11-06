@@ -25,6 +25,95 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type DescribeRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DescribeRequest) Reset() {
+	*x = DescribeRequest{}
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DescribeRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DescribeRequest) ProtoMessage() {}
+
+func (x *DescribeRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DescribeRequest.ProtoReflect.Descriptor instead.
+func (*DescribeRequest) Descriptor() ([]byte, []int) {
+	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{0}
+}
+
+type DescribeResponse struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Implementation *v1.Implementation     `protobuf:"bytes,1,opt,name=implementation,proto3" json:"implementation,omitempty"`
+	// Upper bound for CreateVersionRequest.module.
+	MaxModuleBytes uint64 `protobuf:"varint,2,opt,name=max_module_bytes,json=maxModuleBytes,proto3" json:"max_module_bytes,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *DescribeResponse) Reset() {
+	*x = DescribeResponse{}
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DescribeResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DescribeResponse) ProtoMessage() {}
+
+func (x *DescribeResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DescribeResponse.ProtoReflect.Descriptor instead.
+func (*DescribeResponse) Descriptor() ([]byte, []int) {
+	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *DescribeResponse) GetImplementation() *v1.Implementation {
+	if x != nil {
+		return x.Implementation
+	}
+	return nil
+}
+
+func (x *DescribeResponse) GetMaxModuleBytes() uint64 {
+	if x != nil {
+		return x.MaxModuleBytes
+	}
+	return 0
+}
+
 type CreateFunctionRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
@@ -36,7 +125,7 @@ type CreateFunctionRequest struct {
 
 func (x *CreateFunctionRequest) Reset() {
 	*x = CreateFunctionRequest{}
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[0]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -48,7 +137,7 @@ func (x *CreateFunctionRequest) String() string {
 func (*CreateFunctionRequest) ProtoMessage() {}
 
 func (x *CreateFunctionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[0]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -61,7 +150,7 @@ func (x *CreateFunctionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateFunctionRequest.ProtoReflect.Descriptor instead.
 func (*CreateFunctionRequest) Descriptor() ([]byte, []int) {
-	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{0}
+	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *CreateFunctionRequest) GetName() string {
@@ -94,7 +183,7 @@ type CreateFunctionResponse struct {
 
 func (x *CreateFunctionResponse) Reset() {
 	*x = CreateFunctionResponse{}
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[1]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -106,7 +195,7 @@ func (x *CreateFunctionResponse) String() string {
 func (*CreateFunctionResponse) ProtoMessage() {}
 
 func (x *CreateFunctionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[1]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -119,7 +208,7 @@ func (x *CreateFunctionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateFunctionResponse.ProtoReflect.Descriptor instead.
 func (*CreateFunctionResponse) Descriptor() ([]byte, []int) {
-	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{1}
+	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *CreateFunctionResponse) GetFunction() *Function {
@@ -138,7 +227,7 @@ type GetFunctionRequest struct {
 
 func (x *GetFunctionRequest) Reset() {
 	*x = GetFunctionRequest{}
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[2]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -150,7 +239,7 @@ func (x *GetFunctionRequest) String() string {
 func (*GetFunctionRequest) ProtoMessage() {}
 
 func (x *GetFunctionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[2]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -163,7 +252,7 @@ func (x *GetFunctionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetFunctionRequest.ProtoReflect.Descriptor instead.
 func (*GetFunctionRequest) Descriptor() ([]byte, []int) {
-	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{2}
+	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *GetFunctionRequest) GetFunctionId() string {
@@ -182,7 +271,7 @@ type GetFunctionResponse struct {
 
 func (x *GetFunctionResponse) Reset() {
 	*x = GetFunctionResponse{}
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[3]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -194,7 +283,7 @@ func (x *GetFunctionResponse) String() string {
 func (*GetFunctionResponse) ProtoMessage() {}
 
 func (x *GetFunctionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[3]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -207,7 +296,7 @@ func (x *GetFunctionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetFunctionResponse.ProtoReflect.Descriptor instead.
 func (*GetFunctionResponse) Descriptor() ([]byte, []int) {
-	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{3}
+	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *GetFunctionResponse) GetFunction() *Function {
@@ -242,7 +331,7 @@ type ListFunctionsRequest struct {
 
 func (x *ListFunctionsRequest) Reset() {
 	*x = ListFunctionsRequest{}
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[4]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -254,7 +343,7 @@ func (x *ListFunctionsRequest) String() string {
 func (*ListFunctionsRequest) ProtoMessage() {}
 
 func (x *ListFunctionsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[4]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -267,7 +356,7 @@ func (x *ListFunctionsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFunctionsRequest.ProtoReflect.Descriptor instead.
 func (*ListFunctionsRequest) Descriptor() ([]byte, []int) {
-	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{4}
+	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *ListFunctionsRequest) GetPageSize() uint32 {
@@ -323,7 +412,7 @@ type ListFunctionsResponse struct {
 
 func (x *ListFunctionsResponse) Reset() {
 	*x = ListFunctionsResponse{}
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[5]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -335,7 +424,7 @@ func (x *ListFunctionsResponse) String() string {
 func (*ListFunctionsResponse) ProtoMessage() {}
 
 func (x *ListFunctionsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[5]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -348,7 +437,7 @@ func (x *ListFunctionsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFunctionsResponse.ProtoReflect.Descriptor instead.
 func (*ListFunctionsResponse) Descriptor() ([]byte, []int) {
-	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{5}
+	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ListFunctionsResponse) GetFunctions() []*Function {
@@ -375,7 +464,7 @@ type DeleteFunctionRequest struct {
 
 func (x *DeleteFunctionRequest) Reset() {
 	*x = DeleteFunctionRequest{}
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[6]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -387,7 +476,7 @@ func (x *DeleteFunctionRequest) String() string {
 func (*DeleteFunctionRequest) ProtoMessage() {}
 
 func (x *DeleteFunctionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[6]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -400,7 +489,7 @@ func (x *DeleteFunctionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteFunctionRequest.ProtoReflect.Descriptor instead.
 func (*DeleteFunctionRequest) Descriptor() ([]byte, []int) {
-	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{6}
+	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *DeleteFunctionRequest) GetFunctionId() string {
@@ -425,7 +514,7 @@ type DeleteFunctionResponse struct {
 
 func (x *DeleteFunctionResponse) Reset() {
 	*x = DeleteFunctionResponse{}
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[7]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -437,7 +526,7 @@ func (x *DeleteFunctionResponse) String() string {
 func (*DeleteFunctionResponse) ProtoMessage() {}
 
 func (x *DeleteFunctionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[7]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -450,7 +539,7 @@ func (x *DeleteFunctionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteFunctionResponse.ProtoReflect.Descriptor instead.
 func (*DeleteFunctionResponse) Descriptor() ([]byte, []int) {
-	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{7}
+	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{9}
 }
 
 type CreateVersionRequest struct {
@@ -471,7 +560,7 @@ type CreateVersionRequest struct {
 
 func (x *CreateVersionRequest) Reset() {
 	*x = CreateVersionRequest{}
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[8]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -483,7 +572,7 @@ func (x *CreateVersionRequest) String() string {
 func (*CreateVersionRequest) ProtoMessage() {}
 
 func (x *CreateVersionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[8]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -496,7 +585,7 @@ func (x *CreateVersionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateVersionRequest.ProtoReflect.Descriptor instead.
 func (*CreateVersionRequest) Descriptor() ([]byte, []int) {
-	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{8}
+	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *CreateVersionRequest) GetFunctionId() string {
@@ -557,7 +646,7 @@ type CreateVersionResponse struct {
 
 func (x *CreateVersionResponse) Reset() {
 	*x = CreateVersionResponse{}
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[9]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -569,7 +658,7 @@ func (x *CreateVersionResponse) String() string {
 func (*CreateVersionResponse) ProtoMessage() {}
 
 func (x *CreateVersionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[9]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -582,7 +671,7 @@ func (x *CreateVersionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateVersionResponse.ProtoReflect.Descriptor instead.
 func (*CreateVersionResponse) Descriptor() ([]byte, []int) {
-	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{9}
+	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *CreateVersionResponse) GetVersion() *FunctionVersion {
@@ -608,7 +697,7 @@ type ListVersionsRequest struct {
 
 func (x *ListVersionsRequest) Reset() {
 	*x = ListVersionsRequest{}
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[10]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -620,7 +709,7 @@ func (x *ListVersionsRequest) String() string {
 func (*ListVersionsRequest) ProtoMessage() {}
 
 func (x *ListVersionsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[10]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -633,7 +722,7 @@ func (x *ListVersionsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListVersionsRequest.ProtoReflect.Descriptor instead.
 func (*ListVersionsRequest) Descriptor() ([]byte, []int) {
-	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{10}
+	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ListVersionsRequest) GetFunctionId() string {
@@ -689,7 +778,7 @@ type ListVersionsResponse struct {
 
 func (x *ListVersionsResponse) Reset() {
 	*x = ListVersionsResponse{}
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[11]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -701,7 +790,7 @@ func (x *ListVersionsResponse) String() string {
 func (*ListVersionsResponse) ProtoMessage() {}
 
 func (x *ListVersionsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[11]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -714,7 +803,7 @@ func (x *ListVersionsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListVersionsResponse.ProtoReflect.Descriptor instead.
 func (*ListVersionsResponse) Descriptor() ([]byte, []int) {
-	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{11}
+	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ListVersionsResponse) GetVersions() []*FunctionVersion {
@@ -742,7 +831,7 @@ type ActivateVersionRequest struct {
 
 func (x *ActivateVersionRequest) Reset() {
 	*x = ActivateVersionRequest{}
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[12]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -754,7 +843,7 @@ func (x *ActivateVersionRequest) String() string {
 func (*ActivateVersionRequest) ProtoMessage() {}
 
 func (x *ActivateVersionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[12]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -767,7 +856,7 @@ func (x *ActivateVersionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ActivateVersionRequest.ProtoReflect.Descriptor instead.
 func (*ActivateVersionRequest) Descriptor() ([]byte, []int) {
-	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{12}
+	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ActivateVersionRequest) GetFunctionId() string {
@@ -800,7 +889,7 @@ type ActivateVersionResponse struct {
 
 func (x *ActivateVersionResponse) Reset() {
 	*x = ActivateVersionResponse{}
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[13]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -812,7 +901,7 @@ func (x *ActivateVersionResponse) String() string {
 func (*ActivateVersionResponse) ProtoMessage() {}
 
 func (x *ActivateVersionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[13]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -825,7 +914,7 @@ func (x *ActivateVersionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ActivateVersionResponse.ProtoReflect.Descriptor instead.
 func (*ActivateVersionResponse) Descriptor() ([]byte, []int) {
-	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{13}
+	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *ActivateVersionResponse) GetFunction() *Function {
@@ -846,7 +935,7 @@ type SetEnvRequest struct {
 
 func (x *SetEnvRequest) Reset() {
 	*x = SetEnvRequest{}
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[14]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -858,7 +947,7 @@ func (x *SetEnvRequest) String() string {
 func (*SetEnvRequest) ProtoMessage() {}
 
 func (x *SetEnvRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[14]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -871,7 +960,7 @@ func (x *SetEnvRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetEnvRequest.ProtoReflect.Descriptor instead.
 func (*SetEnvRequest) Descriptor() ([]byte, []int) {
-	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{14}
+	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *SetEnvRequest) GetFunctionId() string {
@@ -906,7 +995,7 @@ type SetEnvResponse struct {
 
 func (x *SetEnvResponse) Reset() {
 	*x = SetEnvResponse{}
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[15]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -918,7 +1007,7 @@ func (x *SetEnvResponse) String() string {
 func (*SetEnvResponse) ProtoMessage() {}
 
 func (x *SetEnvResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[15]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -931,7 +1020,7 @@ func (x *SetEnvResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetEnvResponse.ProtoReflect.Descriptor instead.
 func (*SetEnvResponse) Descriptor() ([]byte, []int) {
-	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{15}
+	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *SetEnvResponse) GetEntry() *EnvEntry {
@@ -952,7 +1041,7 @@ type DeleteEnvRequest struct {
 
 func (x *DeleteEnvRequest) Reset() {
 	*x = DeleteEnvRequest{}
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[16]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -964,7 +1053,7 @@ func (x *DeleteEnvRequest) String() string {
 func (*DeleteEnvRequest) ProtoMessage() {}
 
 func (x *DeleteEnvRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[16]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -977,7 +1066,7 @@ func (x *DeleteEnvRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteEnvRequest.ProtoReflect.Descriptor instead.
 func (*DeleteEnvRequest) Descriptor() ([]byte, []int) {
-	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{16}
+	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *DeleteEnvRequest) GetFunctionId() string {
@@ -1009,7 +1098,7 @@ type DeleteEnvResponse struct {
 
 func (x *DeleteEnvResponse) Reset() {
 	*x = DeleteEnvResponse{}
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[17]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1021,7 +1110,7 @@ func (x *DeleteEnvResponse) String() string {
 func (*DeleteEnvResponse) ProtoMessage() {}
 
 func (x *DeleteEnvResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[17]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1034,7 +1123,7 @@ func (x *DeleteEnvResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteEnvResponse.ProtoReflect.Descriptor instead.
 func (*DeleteEnvResponse) Descriptor() ([]byte, []int) {
-	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{17}
+	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{19}
 }
 
 type ListEnvRequest struct {
@@ -1046,7 +1135,7 @@ type ListEnvRequest struct {
 
 func (x *ListEnvRequest) Reset() {
 	*x = ListEnvRequest{}
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[18]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1058,7 +1147,7 @@ func (x *ListEnvRequest) String() string {
 func (*ListEnvRequest) ProtoMessage() {}
 
 func (x *ListEnvRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[18]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1071,7 +1160,7 @@ func (x *ListEnvRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListEnvRequest.ProtoReflect.Descriptor instead.
 func (*ListEnvRequest) Descriptor() ([]byte, []int) {
-	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{18}
+	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *ListEnvRequest) GetFunctionId() string {
@@ -1092,7 +1181,7 @@ type SetEgressRequest struct {
 
 func (x *SetEgressRequest) Reset() {
 	*x = SetEgressRequest{}
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[19]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1104,7 +1193,7 @@ func (x *SetEgressRequest) String() string {
 func (*SetEgressRequest) ProtoMessage() {}
 
 func (x *SetEgressRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[19]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1117,7 +1206,7 @@ func (x *SetEgressRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetEgressRequest.ProtoReflect.Descriptor instead.
 func (*SetEgressRequest) Descriptor() ([]byte, []int) {
-	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{19}
+	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *SetEgressRequest) GetFunctionId() string {
@@ -1152,7 +1241,7 @@ type SetLabelsRequest struct {
 
 func (x *SetLabelsRequest) Reset() {
 	*x = SetLabelsRequest{}
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[20]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1164,7 +1253,7 @@ func (x *SetLabelsRequest) String() string {
 func (*SetLabelsRequest) ProtoMessage() {}
 
 func (x *SetLabelsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[20]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1177,7 +1266,7 @@ func (x *SetLabelsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetLabelsRequest.ProtoReflect.Descriptor instead.
 func (*SetLabelsRequest) Descriptor() ([]byte, []int) {
-	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{20}
+	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *SetLabelsRequest) GetFunctionId() string {
@@ -1211,7 +1300,7 @@ type SetLabelsResponse struct {
 
 func (x *SetLabelsResponse) Reset() {
 	*x = SetLabelsResponse{}
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[21]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1223,7 +1312,7 @@ func (x *SetLabelsResponse) String() string {
 func (*SetLabelsResponse) ProtoMessage() {}
 
 func (x *SetLabelsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[21]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1236,7 +1325,7 @@ func (x *SetLabelsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetLabelsResponse.ProtoReflect.Descriptor instead.
 func (*SetLabelsResponse) Descriptor() ([]byte, []int) {
-	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{21}
+	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *SetLabelsResponse) GetFunction() *Function {
@@ -1262,7 +1351,7 @@ type PatchLabelsRequest struct {
 
 func (x *PatchLabelsRequest) Reset() {
 	*x = PatchLabelsRequest{}
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[22]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1274,7 +1363,7 @@ func (x *PatchLabelsRequest) String() string {
 func (*PatchLabelsRequest) ProtoMessage() {}
 
 func (x *PatchLabelsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[22]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1287,7 +1376,7 @@ func (x *PatchLabelsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PatchLabelsRequest.ProtoReflect.Descriptor instead.
 func (*PatchLabelsRequest) Descriptor() ([]byte, []int) {
-	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{22}
+	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *PatchLabelsRequest) GetFunctionId() string {
@@ -1328,7 +1417,7 @@ type PatchLabelsResponse struct {
 
 func (x *PatchLabelsResponse) Reset() {
 	*x = PatchLabelsResponse{}
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[23]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1340,7 +1429,7 @@ func (x *PatchLabelsResponse) String() string {
 func (*PatchLabelsResponse) ProtoMessage() {}
 
 func (x *PatchLabelsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[23]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1353,7 +1442,7 @@ func (x *PatchLabelsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PatchLabelsResponse.ProtoReflect.Descriptor instead.
 func (*PatchLabelsResponse) Descriptor() ([]byte, []int) {
-	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{23}
+	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *PatchLabelsResponse) GetFunction() *Function {
@@ -1373,7 +1462,7 @@ type SetEgressResponse struct {
 
 func (x *SetEgressResponse) Reset() {
 	*x = SetEgressResponse{}
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[24]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1385,7 +1474,7 @@ func (x *SetEgressResponse) String() string {
 func (*SetEgressResponse) ProtoMessage() {}
 
 func (x *SetEgressResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[24]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1398,7 +1487,7 @@ func (x *SetEgressResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetEgressResponse.ProtoReflect.Descriptor instead.
 func (*SetEgressResponse) Descriptor() ([]byte, []int) {
-	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{24}
+	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *SetEgressResponse) GetFunction() *Function {
@@ -1418,7 +1507,7 @@ type ListEnvResponse struct {
 
 func (x *ListEnvResponse) Reset() {
 	*x = ListEnvResponse{}
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[25]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1430,7 +1519,7 @@ func (x *ListEnvResponse) String() string {
 func (*ListEnvResponse) ProtoMessage() {}
 
 func (x *ListEnvResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_edgerun_control_v1_function_proto_msgTypes[25]
+	mi := &file_edgerun_control_v1_function_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1443,7 +1532,7 @@ func (x *ListEnvResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListEnvResponse.ProtoReflect.Descriptor instead.
 func (*ListEnvResponse) Descriptor() ([]byte, []int) {
-	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{25}
+	return file_edgerun_control_v1_function_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *ListEnvResponse) GetEntries() []*EnvEntry {
@@ -1457,7 +1546,11 @@ var File_edgerun_control_v1_function_proto protoreflect.FileDescriptor
 
 const file_edgerun_control_v1_function_proto_rawDesc = "" +
 	"\n" +
-	"!edgerun/control/v1/function.proto\x12\x12edgerun.control.v1\x1a\x1eedgerun/common/v1/common.proto\x1a\x1eedgerun/control/v1/model.proto\"\xda\x01\n" +
+	"!edgerun/control/v1/function.proto\x12\x12edgerun.control.v1\x1a\x1eedgerun/common/v1/common.proto\x1a\x1eedgerun/control/v1/model.proto\"\x11\n" +
+	"\x0fDescribeRequest\"\x87\x01\n" +
+	"\x10DescribeResponse\x12I\n" +
+	"\x0eimplementation\x18\x01 \x01(\v2!.edgerun.common.v1.ImplementationR\x0eimplementation\x12(\n" +
+	"\x10max_module_bytes\x18\x02 \x01(\x04R\x0emaxModuleBytes\"\xda\x01\n" +
 	"\x15CreateFunctionRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12M\n" +
 	"\x06labels\x18\x02 \x03(\v25.edgerun.control.v1.CreateFunctionRequest.LabelsEntryR\x06labels\x12#\n" +
@@ -1573,8 +1666,10 @@ const file_edgerun_control_v1_function_proto_rawDesc = "" +
 	"\x11SetEgressResponse\x128\n" +
 	"\bfunction\x18\x01 \x01(\v2\x1c.edgerun.control.v1.FunctionR\bfunction\"I\n" +
 	"\x0fListEnvResponse\x126\n" +
-	"\aentries\x18\x01 \x03(\v2\x1c.edgerun.control.v1.EnvEntryR\aentries2\xf1\t\n" +
-	"\x0fFunctionService\x12g\n" +
+	"\aentries\x18\x01 \x03(\v2\x1c.edgerun.control.v1.EnvEntryR\aentries2\xc8\n" +
+	"\n" +
+	"\x0fFunctionService\x12U\n" +
+	"\bDescribe\x12#.edgerun.control.v1.DescribeRequest\x1a$.edgerun.control.v1.DescribeResponse\x12g\n" +
 	"\x0eCreateFunction\x12).edgerun.control.v1.CreateFunctionRequest\x1a*.edgerun.control.v1.CreateFunctionResponse\x12^\n" +
 	"\vGetFunction\x12&.edgerun.control.v1.GetFunctionRequest\x1a'.edgerun.control.v1.GetFunctionResponse\x12d\n" +
 	"\rListFunctions\x12(.edgerun.control.v1.ListFunctionsRequest\x1a).edgerun.control.v1.ListFunctionsResponse\x12g\n" +
@@ -1602,96 +1697,102 @@ func file_edgerun_control_v1_function_proto_rawDescGZIP() []byte {
 	return file_edgerun_control_v1_function_proto_rawDescData
 }
 
-var file_edgerun_control_v1_function_proto_msgTypes = make([]protoimpl.MessageInfo, 32)
+var file_edgerun_control_v1_function_proto_msgTypes = make([]protoimpl.MessageInfo, 34)
 var file_edgerun_control_v1_function_proto_goTypes = []any{
-	(*CreateFunctionRequest)(nil),   // 0: edgerun.control.v1.CreateFunctionRequest
-	(*CreateFunctionResponse)(nil),  // 1: edgerun.control.v1.CreateFunctionResponse
-	(*GetFunctionRequest)(nil),      // 2: edgerun.control.v1.GetFunctionRequest
-	(*GetFunctionResponse)(nil),     // 3: edgerun.control.v1.GetFunctionResponse
-	(*ListFunctionsRequest)(nil),    // 4: edgerun.control.v1.ListFunctionsRequest
-	(*ListFunctionsResponse)(nil),   // 5: edgerun.control.v1.ListFunctionsResponse
-	(*DeleteFunctionRequest)(nil),   // 6: edgerun.control.v1.DeleteFunctionRequest
-	(*DeleteFunctionResponse)(nil),  // 7: edgerun.control.v1.DeleteFunctionResponse
-	(*CreateVersionRequest)(nil),    // 8: edgerun.control.v1.CreateVersionRequest
-	(*CreateVersionResponse)(nil),   // 9: edgerun.control.v1.CreateVersionResponse
-	(*ListVersionsRequest)(nil),     // 10: edgerun.control.v1.ListVersionsRequest
-	(*ListVersionsResponse)(nil),    // 11: edgerun.control.v1.ListVersionsResponse
-	(*ActivateVersionRequest)(nil),  // 12: edgerun.control.v1.ActivateVersionRequest
-	(*ActivateVersionResponse)(nil), // 13: edgerun.control.v1.ActivateVersionResponse
-	(*SetEnvRequest)(nil),           // 14: edgerun.control.v1.SetEnvRequest
-	(*SetEnvResponse)(nil),          // 15: edgerun.control.v1.SetEnvResponse
-	(*DeleteEnvRequest)(nil),        // 16: edgerun.control.v1.DeleteEnvRequest
-	(*DeleteEnvResponse)(nil),       // 17: edgerun.control.v1.DeleteEnvResponse
-	(*ListEnvRequest)(nil),          // 18: edgerun.control.v1.ListEnvRequest
-	(*SetEgressRequest)(nil),        // 19: edgerun.control.v1.SetEgressRequest
-	(*SetLabelsRequest)(nil),        // 20: edgerun.control.v1.SetLabelsRequest
-	(*SetLabelsResponse)(nil),       // 21: edgerun.control.v1.SetLabelsResponse
-	(*PatchLabelsRequest)(nil),      // 22: edgerun.control.v1.PatchLabelsRequest
-	(*PatchLabelsResponse)(nil),     // 23: edgerun.control.v1.PatchLabelsResponse
-	(*SetEgressResponse)(nil),       // 24: edgerun.control.v1.SetEgressResponse
-	(*ListEnvResponse)(nil),         // 25: edgerun.control.v1.ListEnvResponse
-	nil,                             // 26: edgerun.control.v1.CreateFunctionRequest.LabelsEntry
-	nil,                             // 27: edgerun.control.v1.ListFunctionsRequest.MatchLabelsEntry
-	nil,                             // 28: edgerun.control.v1.CreateVersionRequest.LabelsEntry
-	nil,                             // 29: edgerun.control.v1.ListVersionsRequest.MatchLabelsEntry
-	nil,                             // 30: edgerun.control.v1.SetLabelsRequest.LabelsEntry
-	nil,                             // 31: edgerun.control.v1.PatchLabelsRequest.SetEntry
-	(*Function)(nil),                // 32: edgerun.control.v1.Function
-	(*v1.Limits)(nil),               // 33: edgerun.common.v1.Limits
-	(*FunctionVersion)(nil),         // 34: edgerun.control.v1.FunctionVersion
-	(*EnvEntry)(nil),                // 35: edgerun.control.v1.EnvEntry
+	(*DescribeRequest)(nil),         // 0: edgerun.control.v1.DescribeRequest
+	(*DescribeResponse)(nil),        // 1: edgerun.control.v1.DescribeResponse
+	(*CreateFunctionRequest)(nil),   // 2: edgerun.control.v1.CreateFunctionRequest
+	(*CreateFunctionResponse)(nil),  // 3: edgerun.control.v1.CreateFunctionResponse
+	(*GetFunctionRequest)(nil),      // 4: edgerun.control.v1.GetFunctionRequest
+	(*GetFunctionResponse)(nil),     // 5: edgerun.control.v1.GetFunctionResponse
+	(*ListFunctionsRequest)(nil),    // 6: edgerun.control.v1.ListFunctionsRequest
+	(*ListFunctionsResponse)(nil),   // 7: edgerun.control.v1.ListFunctionsResponse
+	(*DeleteFunctionRequest)(nil),   // 8: edgerun.control.v1.DeleteFunctionRequest
+	(*DeleteFunctionResponse)(nil),  // 9: edgerun.control.v1.DeleteFunctionResponse
+	(*CreateVersionRequest)(nil),    // 10: edgerun.control.v1.CreateVersionRequest
+	(*CreateVersionResponse)(nil),   // 11: edgerun.control.v1.CreateVersionResponse
+	(*ListVersionsRequest)(nil),     // 12: edgerun.control.v1.ListVersionsRequest
+	(*ListVersionsResponse)(nil),    // 13: edgerun.control.v1.ListVersionsResponse
+	(*ActivateVersionRequest)(nil),  // 14: edgerun.control.v1.ActivateVersionRequest
+	(*ActivateVersionResponse)(nil), // 15: edgerun.control.v1.ActivateVersionResponse
+	(*SetEnvRequest)(nil),           // 16: edgerun.control.v1.SetEnvRequest
+	(*SetEnvResponse)(nil),          // 17: edgerun.control.v1.SetEnvResponse
+	(*DeleteEnvRequest)(nil),        // 18: edgerun.control.v1.DeleteEnvRequest
+	(*DeleteEnvResponse)(nil),       // 19: edgerun.control.v1.DeleteEnvResponse
+	(*ListEnvRequest)(nil),          // 20: edgerun.control.v1.ListEnvRequest
+	(*SetEgressRequest)(nil),        // 21: edgerun.control.v1.SetEgressRequest
+	(*SetLabelsRequest)(nil),        // 22: edgerun.control.v1.SetLabelsRequest
+	(*SetLabelsResponse)(nil),       // 23: edgerun.control.v1.SetLabelsResponse
+	(*PatchLabelsRequest)(nil),      // 24: edgerun.control.v1.PatchLabelsRequest
+	(*PatchLabelsResponse)(nil),     // 25: edgerun.control.v1.PatchLabelsResponse
+	(*SetEgressResponse)(nil),       // 26: edgerun.control.v1.SetEgressResponse
+	(*ListEnvResponse)(nil),         // 27: edgerun.control.v1.ListEnvResponse
+	nil,                             // 28: edgerun.control.v1.CreateFunctionRequest.LabelsEntry
+	nil,                             // 29: edgerun.control.v1.ListFunctionsRequest.MatchLabelsEntry
+	nil,                             // 30: edgerun.control.v1.CreateVersionRequest.LabelsEntry
+	nil,                             // 31: edgerun.control.v1.ListVersionsRequest.MatchLabelsEntry
+	nil,                             // 32: edgerun.control.v1.SetLabelsRequest.LabelsEntry
+	nil,                             // 33: edgerun.control.v1.PatchLabelsRequest.SetEntry
+	(*v1.Implementation)(nil),       // 34: edgerun.common.v1.Implementation
+	(*Function)(nil),                // 35: edgerun.control.v1.Function
+	(*v1.Limits)(nil),               // 36: edgerun.common.v1.Limits
+	(*FunctionVersion)(nil),         // 37: edgerun.control.v1.FunctionVersion
+	(*EnvEntry)(nil),                // 38: edgerun.control.v1.EnvEntry
 }
 var file_edgerun_control_v1_function_proto_depIdxs = []int32{
-	26, // 0: edgerun.control.v1.CreateFunctionRequest.labels:type_name -> edgerun.control.v1.CreateFunctionRequest.LabelsEntry
-	32, // 1: edgerun.control.v1.CreateFunctionResponse.function:type_name -> edgerun.control.v1.Function
-	32, // 2: edgerun.control.v1.GetFunctionResponse.function:type_name -> edgerun.control.v1.Function
-	27, // 3: edgerun.control.v1.ListFunctionsRequest.match_labels:type_name -> edgerun.control.v1.ListFunctionsRequest.MatchLabelsEntry
-	32, // 4: edgerun.control.v1.ListFunctionsResponse.functions:type_name -> edgerun.control.v1.Function
-	33, // 5: edgerun.control.v1.CreateVersionRequest.limits:type_name -> edgerun.common.v1.Limits
-	28, // 6: edgerun.control.v1.CreateVersionRequest.labels:type_name -> edgerun.control.v1.CreateVersionRequest.LabelsEntry
-	34, // 7: edgerun.control.v1.CreateVersionResponse.version:type_name -> edgerun.control.v1.FunctionVersion
-	29, // 8: edgerun.control.v1.ListVersionsRequest.match_labels:type_name -> edgerun.control.v1.ListVersionsRequest.MatchLabelsEntry
-	34, // 9: edgerun.control.v1.ListVersionsResponse.versions:type_name -> edgerun.control.v1.FunctionVersion
-	32, // 10: edgerun.control.v1.ActivateVersionResponse.function:type_name -> edgerun.control.v1.Function
-	35, // 11: edgerun.control.v1.SetEnvRequest.entry:type_name -> edgerun.control.v1.EnvEntry
-	35, // 12: edgerun.control.v1.SetEnvResponse.entry:type_name -> edgerun.control.v1.EnvEntry
-	30, // 13: edgerun.control.v1.SetLabelsRequest.labels:type_name -> edgerun.control.v1.SetLabelsRequest.LabelsEntry
-	32, // 14: edgerun.control.v1.SetLabelsResponse.function:type_name -> edgerun.control.v1.Function
-	31, // 15: edgerun.control.v1.PatchLabelsRequest.set:type_name -> edgerun.control.v1.PatchLabelsRequest.SetEntry
-	32, // 16: edgerun.control.v1.PatchLabelsResponse.function:type_name -> edgerun.control.v1.Function
-	32, // 17: edgerun.control.v1.SetEgressResponse.function:type_name -> edgerun.control.v1.Function
-	35, // 18: edgerun.control.v1.ListEnvResponse.entries:type_name -> edgerun.control.v1.EnvEntry
-	0,  // 19: edgerun.control.v1.FunctionService.CreateFunction:input_type -> edgerun.control.v1.CreateFunctionRequest
-	2,  // 20: edgerun.control.v1.FunctionService.GetFunction:input_type -> edgerun.control.v1.GetFunctionRequest
-	4,  // 21: edgerun.control.v1.FunctionService.ListFunctions:input_type -> edgerun.control.v1.ListFunctionsRequest
-	6,  // 22: edgerun.control.v1.FunctionService.DeleteFunction:input_type -> edgerun.control.v1.DeleteFunctionRequest
-	8,  // 23: edgerun.control.v1.FunctionService.CreateVersion:input_type -> edgerun.control.v1.CreateVersionRequest
-	10, // 24: edgerun.control.v1.FunctionService.ListVersions:input_type -> edgerun.control.v1.ListVersionsRequest
-	12, // 25: edgerun.control.v1.FunctionService.ActivateVersion:input_type -> edgerun.control.v1.ActivateVersionRequest
-	14, // 26: edgerun.control.v1.FunctionService.SetEnv:input_type -> edgerun.control.v1.SetEnvRequest
-	16, // 27: edgerun.control.v1.FunctionService.DeleteEnv:input_type -> edgerun.control.v1.DeleteEnvRequest
-	18, // 28: edgerun.control.v1.FunctionService.ListEnv:input_type -> edgerun.control.v1.ListEnvRequest
-	19, // 29: edgerun.control.v1.FunctionService.SetEgress:input_type -> edgerun.control.v1.SetEgressRequest
-	20, // 30: edgerun.control.v1.FunctionService.SetLabels:input_type -> edgerun.control.v1.SetLabelsRequest
-	22, // 31: edgerun.control.v1.FunctionService.PatchLabels:input_type -> edgerun.control.v1.PatchLabelsRequest
-	1,  // 32: edgerun.control.v1.FunctionService.CreateFunction:output_type -> edgerun.control.v1.CreateFunctionResponse
-	3,  // 33: edgerun.control.v1.FunctionService.GetFunction:output_type -> edgerun.control.v1.GetFunctionResponse
-	5,  // 34: edgerun.control.v1.FunctionService.ListFunctions:output_type -> edgerun.control.v1.ListFunctionsResponse
-	7,  // 35: edgerun.control.v1.FunctionService.DeleteFunction:output_type -> edgerun.control.v1.DeleteFunctionResponse
-	9,  // 36: edgerun.control.v1.FunctionService.CreateVersion:output_type -> edgerun.control.v1.CreateVersionResponse
-	11, // 37: edgerun.control.v1.FunctionService.ListVersions:output_type -> edgerun.control.v1.ListVersionsResponse
-	13, // 38: edgerun.control.v1.FunctionService.ActivateVersion:output_type -> edgerun.control.v1.ActivateVersionResponse
-	15, // 39: edgerun.control.v1.FunctionService.SetEnv:output_type -> edgerun.control.v1.SetEnvResponse
-	17, // 40: edgerun.control.v1.FunctionService.DeleteEnv:output_type -> edgerun.control.v1.DeleteEnvResponse
-	25, // 41: edgerun.control.v1.FunctionService.ListEnv:output_type -> edgerun.control.v1.ListEnvResponse
-	24, // 42: edgerun.control.v1.FunctionService.SetEgress:output_type -> edgerun.control.v1.SetEgressResponse
-	21, // 43: edgerun.control.v1.FunctionService.SetLabels:output_type -> edgerun.control.v1.SetLabelsResponse
-	23, // 44: edgerun.control.v1.FunctionService.PatchLabels:output_type -> edgerun.control.v1.PatchLabelsResponse
-	32, // [32:45] is the sub-list for method output_type
-	19, // [19:32] is the sub-list for method input_type
-	19, // [19:19] is the sub-list for extension type_name
-	19, // [19:19] is the sub-list for extension extendee
-	0,  // [0:19] is the sub-list for field type_name
+	34, // 0: edgerun.control.v1.DescribeResponse.implementation:type_name -> edgerun.common.v1.Implementation
+	28, // 1: edgerun.control.v1.CreateFunctionRequest.labels:type_name -> edgerun.control.v1.CreateFunctionRequest.LabelsEntry
+	35, // 2: edgerun.control.v1.CreateFunctionResponse.function:type_name -> edgerun.control.v1.Function
+	35, // 3: edgerun.control.v1.GetFunctionResponse.function:type_name -> edgerun.control.v1.Function
+	29, // 4: edgerun.control.v1.ListFunctionsRequest.match_labels:type_name -> edgerun.control.v1.ListFunctionsRequest.MatchLabelsEntry
+	35, // 5: edgerun.control.v1.ListFunctionsResponse.functions:type_name -> edgerun.control.v1.Function
+	36, // 6: edgerun.control.v1.CreateVersionRequest.limits:type_name -> edgerun.common.v1.Limits
+	30, // 7: edgerun.control.v1.CreateVersionRequest.labels:type_name -> edgerun.control.v1.CreateVersionRequest.LabelsEntry
+	37, // 8: edgerun.control.v1.CreateVersionResponse.version:type_name -> edgerun.control.v1.FunctionVersion
+	31, // 9: edgerun.control.v1.ListVersionsRequest.match_labels:type_name -> edgerun.control.v1.ListVersionsRequest.MatchLabelsEntry
+	37, // 10: edgerun.control.v1.ListVersionsResponse.versions:type_name -> edgerun.control.v1.FunctionVersion
+	35, // 11: edgerun.control.v1.ActivateVersionResponse.function:type_name -> edgerun.control.v1.Function
+	38, // 12: edgerun.control.v1.SetEnvRequest.entry:type_name -> edgerun.control.v1.EnvEntry
+	38, // 13: edgerun.control.v1.SetEnvResponse.entry:type_name -> edgerun.control.v1.EnvEntry
+	32, // 14: edgerun.control.v1.SetLabelsRequest.labels:type_name -> edgerun.control.v1.SetLabelsRequest.LabelsEntry
+	35, // 15: edgerun.control.v1.SetLabelsResponse.function:type_name -> edgerun.control.v1.Function
+	33, // 16: edgerun.control.v1.PatchLabelsRequest.set:type_name -> edgerun.control.v1.PatchLabelsRequest.SetEntry
+	35, // 17: edgerun.control.v1.PatchLabelsResponse.function:type_name -> edgerun.control.v1.Function
+	35, // 18: edgerun.control.v1.SetEgressResponse.function:type_name -> edgerun.control.v1.Function
+	38, // 19: edgerun.control.v1.ListEnvResponse.entries:type_name -> edgerun.control.v1.EnvEntry
+	0,  // 20: edgerun.control.v1.FunctionService.Describe:input_type -> edgerun.control.v1.DescribeRequest
+	2,  // 21: edgerun.control.v1.FunctionService.CreateFunction:input_type -> edgerun.control.v1.CreateFunctionRequest
+	4,  // 22: edgerun.control.v1.FunctionService.GetFunction:input_type -> edgerun.control.v1.GetFunctionRequest
+	6,  // 23: edgerun.control.v1.FunctionService.ListFunctions:input_type -> edgerun.control.v1.ListFunctionsRequest
+	8,  // 24: edgerun.control.v1.FunctionService.DeleteFunction:input_type -> edgerun.control.v1.DeleteFunctionRequest
+	10, // 25: edgerun.control.v1.FunctionService.CreateVersion:input_type -> edgerun.control.v1.CreateVersionRequest
+	12, // 26: edgerun.control.v1.FunctionService.ListVersions:input_type -> edgerun.control.v1.ListVersionsRequest
+	14, // 27: edgerun.control.v1.FunctionService.ActivateVersion:input_type -> edgerun.control.v1.ActivateVersionRequest
+	16, // 28: edgerun.control.v1.FunctionService.SetEnv:input_type -> edgerun.control.v1.SetEnvRequest
+	18, // 29: edgerun.control.v1.FunctionService.DeleteEnv:input_type -> edgerun.control.v1.DeleteEnvRequest
+	20, // 30: edgerun.control.v1.FunctionService.ListEnv:input_type -> edgerun.control.v1.ListEnvRequest
+	21, // 31: edgerun.control.v1.FunctionService.SetEgress:input_type -> edgerun.control.v1.SetEgressRequest
+	22, // 32: edgerun.control.v1.FunctionService.SetLabels:input_type -> edgerun.control.v1.SetLabelsRequest
+	24, // 33: edgerun.control.v1.FunctionService.PatchLabels:input_type -> edgerun.control.v1.PatchLabelsRequest
+	1,  // 34: edgerun.control.v1.FunctionService.Describe:output_type -> edgerun.control.v1.DescribeResponse
+	3,  // 35: edgerun.control.v1.FunctionService.CreateFunction:output_type -> edgerun.control.v1.CreateFunctionResponse
+	5,  // 36: edgerun.control.v1.FunctionService.GetFunction:output_type -> edgerun.control.v1.GetFunctionResponse
+	7,  // 37: edgerun.control.v1.FunctionService.ListFunctions:output_type -> edgerun.control.v1.ListFunctionsResponse
+	9,  // 38: edgerun.control.v1.FunctionService.DeleteFunction:output_type -> edgerun.control.v1.DeleteFunctionResponse
+	11, // 39: edgerun.control.v1.FunctionService.CreateVersion:output_type -> edgerun.control.v1.CreateVersionResponse
+	13, // 40: edgerun.control.v1.FunctionService.ListVersions:output_type -> edgerun.control.v1.ListVersionsResponse
+	15, // 41: edgerun.control.v1.FunctionService.ActivateVersion:output_type -> edgerun.control.v1.ActivateVersionResponse
+	17, // 42: edgerun.control.v1.FunctionService.SetEnv:output_type -> edgerun.control.v1.SetEnvResponse
+	19, // 43: edgerun.control.v1.FunctionService.DeleteEnv:output_type -> edgerun.control.v1.DeleteEnvResponse
+	27, // 44: edgerun.control.v1.FunctionService.ListEnv:output_type -> edgerun.control.v1.ListEnvResponse
+	26, // 45: edgerun.control.v1.FunctionService.SetEgress:output_type -> edgerun.control.v1.SetEgressResponse
+	23, // 46: edgerun.control.v1.FunctionService.SetLabels:output_type -> edgerun.control.v1.SetLabelsResponse
+	25, // 47: edgerun.control.v1.FunctionService.PatchLabels:output_type -> edgerun.control.v1.PatchLabelsResponse
+	34, // [34:48] is the sub-list for method output_type
+	20, // [20:34] is the sub-list for method input_type
+	20, // [20:20] is the sub-list for extension type_name
+	20, // [20:20] is the sub-list for extension extendee
+	0,  // [0:20] is the sub-list for field type_name
 }
 
 func init() { file_edgerun_control_v1_function_proto_init() }
@@ -1706,7 +1807,7 @@ func file_edgerun_control_v1_function_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_edgerun_control_v1_function_proto_rawDesc), len(file_edgerun_control_v1_function_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   32,
+			NumMessages:   34,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

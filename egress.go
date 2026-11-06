@@ -40,29 +40,3 @@ func (e *Egress) Fetch(ctx context.Context, req *egressv1.FetchRequest) (*Respon
 	return res, err
 }
 
-// Registry is the client of an orchestrator's egress.v1 RegistryService: how a
-// network service tells the orchestrator what it carries, and that it is still
-// there. It needs a token of ScopeNetwork. With it, a service of your own (in a
-// private network, behind a proxy, in another cloud) can join the same
-// orchestrators as every other.
-type Registry struct {
-	c egressv1connect.RegistryServiceClient
-}
-
-// NewRegistry returns a client for the orchestrator at baseURL.
-func NewRegistry(baseURL, token string, opts ...Option) *Registry {
-	h, co := settings(token, opts)
-	return &Registry{c: egressv1connect.NewRegistryServiceClient(h, baseURL, co...)}
-}
-
-func (r *Registry) Register(ctx context.Context, req *egressv1.RegisterRequest) (*egressv1.RegisterResponse, error) {
-	return call(ctx, r.c.Register, req)
-}
-
-func (r *Registry) Heartbeat(ctx context.Context, req *egressv1.HeartbeatRequest) (*egressv1.HeartbeatResponse, error) {
-	return call(ctx, r.c.Heartbeat, req)
-}
-
-func (r *Registry) Deregister(ctx context.Context, req *egressv1.DeregisterRequest) (*egressv1.DeregisterResponse, error) {
-	return call(ctx, r.c.Deregister, req)
-}

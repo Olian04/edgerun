@@ -8,6 +8,9 @@ import "edgerun/common/v1/common.proto";
 import "edgerun/control/v1/model.proto";
 
 service FunctionService {
+  // Describe says what hosts this service and what it will accept.
+  rpc Describe(DescribeRequest) returns (DescribeResponse);
+
   rpc CreateFunction(CreateFunctionRequest) returns (CreateFunctionResponse);
   rpc GetFunction(GetFunctionRequest) returns (GetFunctionResponse);
   rpc ListFunctions(ListFunctionsRequest) returns (ListFunctionsResponse);
@@ -55,6 +58,14 @@ service FunctionService {
 // the response it would have returned, and changes nothing. Ids in the
 // response of a validate-only create are empty. See "Validate-only" in
 // docs/protocol.md.
+
+message DescribeRequest {}
+
+message DescribeResponse {
+  edgerun.common.v1.Implementation implementation = 1;
+  // Upper bound for CreateVersionRequest.module.
+  uint64 max_module_bytes = 2;
+}
 
 message CreateFunctionRequest {
   string name = 1;

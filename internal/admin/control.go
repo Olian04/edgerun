@@ -15,6 +15,7 @@ import (
 	"github.com/Olian04/edgerun"
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
 	controlv1 "github.com/Olian04/edgerun/gen/edgerun/control/v1"
+	membershipv1 "github.com/Olian04/edgerun/gen/edgerun/membership/v1"
 )
 
 // maxListed bounds how many rows the UI pulls for a table it lets webui sort
@@ -24,6 +25,7 @@ const maxListed = 10000
 // Control is the UI's view of the control protocol.
 type Control struct {
 	lib *edgerun.Control
+	mem *edgerun.Membership // the membership listing, which the operator reads with the same token
 
 	// DryRun makes every write a validate-only call: all the checks, nothing
 	// changed (see "Validate-only" in docs/protocol.md).
@@ -39,6 +41,7 @@ type Control struct {
 func NewControl(httpc *http.Client, baseURL, adminToken string) *Control {
 	return &Control{
 		lib:      edgerun.NewControl(baseURL, adminToken, edgerun.WithHTTPClient(httpc)),
+		mem:      edgerun.NewMembership(baseURL, adminToken, edgerun.WithHTTPClient(httpc)),
 		versions: map[string]int64{},
 	}
 }
@@ -175,26 +178,24 @@ func (c *Control) Env(ctx context.Context, fid string) ([]*controlv1.EnvEntry, e
 	return r.Entries, nil
 }
 
-// Workers lists the fleet.
-func (c *Control) Workers(ctx context.Context) ([]*controlv1.WorkerStatus, error) {
-	r, err := c.lib.ListWorkers(ctx, &controlv1.ListWorkersRequest{})
-	if err != nil {
-		return nil, err
-	}
-	ws := r.Workers
-	sort.SliceStable(ws, func(i, j int) bool { return ws[i].Endpoint < ws[j].Endpoint })
-	return ws, nil
+// Workers lists the workers that have registered, by endpoint.
+func (c *Control) Workers(ctx context.Context) ([]*membershipv1.Member, error) {
+	return c.members(ctx, membershipv1.MemberKind_MEMBER_KIND_WORKER)
 }
 
-// NetworkServices lists the network services that have registered.
-func (c *Control) NetworkServices(ctx context.Context) ([]*controlv1.NetworkServiceStatus, error) {
-	r, err := c.lib.ListNetworkServices(ctx, &controlv1.ListNetworkServicesRequest{})
+// NetworkServices lists the network services that have registered, by endpoint.
+func (c *Control) NetworkServices(ctx context.Context) ([]*membershipv1.Member, error) {
+	return c.members(ctx, membershipv1.MemberKind_MEMBER_KIND_NETWORK_SERVICE)
+}
+
+func (c *Control) members(ctx context.Context, kind membershipv1.MemberKind) ([]*membershipv1.Member, error) {
+	r, err := c.mem.ListMembers(ctx, &membershipv1.ListMembersRequest{Kind: kind})
 	if err != nil {
 		return nil, err
 	}
-	ns := r.Services
-	sort.SliceStable(ns, func(i, j int) bool { return ns[i].Endpoint < ns[j].Endpoint })
-	return ns, nil
+	ms := r.Members
+	sort.SliceStable(ms, func(i, j int) bool { return ms[i].Endpoint < ms[j].Endpoint })
+	return ms, nil
 }
 
 // Invocations returns one page of invocation records, newest first. after is

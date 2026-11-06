@@ -11,13 +11,23 @@
 // Closed by default: a call carries the destinations the calling function may
 // reach (allow), and an empty list allows nothing. The service adds its own
 // restrictions on top, which a caller cannot lift: it carries only what it
-// declared (it registers with the orchestrator, see registry.proto) and it
+// declared (it registers with the orchestrator, see membership.proto) and it
 // refuses the address classes the protocol docs name.
 syntax = "proto3";
 
 package edgerun.egress.v1;
 
 import "edgerun/common/v1/common.proto";
+
+// ServiceInfo is what a network service tells the orchestrator about itself
+// when it registers (membership.v1).
+message ServiceInfo {
+  edgerun.common.v1.Implementation implementation = 1;
+  // What the service carries, as the protocol docs describe: "*" (everything),
+  // "example.com", "*.example.com", an address, or an address range such as
+  // "10.0.0.0/8". At least one. The service refuses any destination outside it.
+  repeated string covers = 2;
+}
 
 service EgressService {
   rpc Describe(DescribeRequest) returns (DescribeResponse);

@@ -21,7 +21,7 @@ import (
 
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
 	controlv1 "github.com/Olian04/edgerun/gen/edgerun/control/v1"
-	egressv1 "github.com/Olian04/edgerun/gen/edgerun/egress/v1"
+	membershipv1 "github.com/Olian04/edgerun/gen/edgerun/membership/v1"
 	"github.com/Olian04/edgerun/internal/admin"
 	"github.com/Olian04/edgerun/internal/egress/policy"
 )
@@ -615,10 +615,10 @@ func (c *client) networks() error {
 		switch {
 		case !n.Alive:
 			state = "unresponsive"
-		case n.State == egressv1.ServiceState_SERVICE_STATE_DRAINING:
+		case n.State == membershipv1.MemberState_MEMBER_STATE_DRAINING:
 			state = "draining"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\n", n.Endpoint, state, strings.Join(n.GetInfo().GetCovers(), ", "))
+		fmt.Fprintf(w, "%s\t%s\t%s\n", n.Endpoint, state, strings.Join(n.GetNetworkService().GetCovers(), ", "))
 	}
 	return w.Flush()
 }
@@ -650,11 +650,11 @@ func (c *client) workers() error {
 		switch {
 		case !x.Alive:
 			state = "unresponsive"
-		case x.State.String() == "WORKER_STATE_DRAINING":
+		case x.State == membershipv1.MemberState_MEMBER_STATE_DRAINING:
 			state = "draining"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%d/%d\t%s\t%s\t%s\n", x.Endpoint, state, x.InFlight, x.GetInfo().GetMaxConcurrency(),
-			strings.Join(x.GetInfo().GetAbis(), ","), x.GetInfo().GetImplementation().GetName(), when(x.LastHeartbeatTime))
+		fmt.Fprintf(w, "%s\t%s\t%d/%d\t%s\t%s\t%s\n", x.Endpoint, state, x.InFlight, x.GetWorker().GetMaxConcurrency(),
+			strings.Join(x.GetWorker().GetAbis(), ","), x.GetWorker().GetImplementation().GetName(), when(x.LastHeartbeatTime))
 	}
 	return w.Flush()
 }

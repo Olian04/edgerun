@@ -16,10 +16,11 @@ import (
 
 	"github.com/Olian04/edgerun"
 	egressv1 "github.com/Olian04/edgerun/gen/edgerun/egress/v1"
+	membershipv1 "github.com/Olian04/edgerun/gen/edgerun/membership/v1"
 	"github.com/Olian04/edgerun/internal/authn"
 	"github.com/Olian04/edgerun/internal/egress/policy"
-	"github.com/Olian04/edgerun/internal/egress/registry"
 	"github.com/Olian04/edgerun/internal/egress/server"
+	"github.com/Olian04/edgerun/internal/membershipclient"
 )
 
 // Config configures a network service. Zero values select the defaults.
@@ -62,7 +63,7 @@ type Server struct {
 	cfg      Config
 	http     *http.Server
 	ln       net.Listener
-	reg      *registry.Client
+	reg      *membershipclient.Client
 	stopReg  context.CancelFunc
 	regDone  chan struct{}
 	draining atomic.Bool
@@ -134,15 +135,15 @@ func Start(_ context.Context, cfg Config) (*Server, error) {
 		cfg.Log.Warn("connecting to this network is allowed, although it is refused by default", "network", p.String())
 	}
 
-	s.reg = registry.New(registry.Config{
-		Endpoint: advertise,
-		Info:     serviceInfo(cfg),
-		Registry: edgerun.NewRegistry(cfg.OrchestratorURL, cfg.NetworkToken),
-		State: func() egressv1.ServiceState {
+	s.reg = membershipclient.New(membershipclient.Config{
+		Endpoint:       advertise,
+		NetworkService: serviceInfo(cfg),
+		Membership:     edgerun.NewMembership(cfg.OrchestratorURL, cfg.NetworkToken),
+		State: func() membershipv1.MemberState {
 			if s.draining.Load() {
-				return egressv1.ServiceState_SERVICE_STATE_DRAINING
+				return membershipv1.MemberState_MEMBER_STATE_DRAINING
 			}
-			return egressv1.ServiceState_SERVICE_STATE_READY
+			return membershipv1.MemberState_MEMBER_STATE_READY
 		},
 		Log: cfg.Log,
 	})

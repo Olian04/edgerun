@@ -36,6 +36,9 @@ const (
 // reflection-formatted method names, remove the leading slash and convert the remaining slash to a
 // period.
 const (
+	// FunctionServiceDescribeProcedure is the fully-qualified name of the FunctionService's Describe
+	// RPC.
+	FunctionServiceDescribeProcedure = "/edgerun.control.v1.FunctionService/Describe"
 	// FunctionServiceCreateFunctionProcedure is the fully-qualified name of the FunctionService's
 	// CreateFunction RPC.
 	FunctionServiceCreateFunctionProcedure = "/edgerun.control.v1.FunctionService/CreateFunction"
@@ -77,6 +80,8 @@ const (
 
 // FunctionServiceClient is a client for the edgerun.control.v1.FunctionService service.
 type FunctionServiceClient interface {
+	// Describe says what hosts this service and what it will accept.
+	Describe(context.Context, *connect.Request[v1.DescribeRequest]) (*connect.Response[v1.DescribeResponse], error)
 	CreateFunction(context.Context, *connect.Request[v1.CreateFunctionRequest]) (*connect.Response[v1.CreateFunctionResponse], error)
 	GetFunction(context.Context, *connect.Request[v1.GetFunctionRequest]) (*connect.Response[v1.GetFunctionResponse], error)
 	ListFunctions(context.Context, *connect.Request[v1.ListFunctionsRequest]) (*connect.Response[v1.ListFunctionsResponse], error)
@@ -122,6 +127,12 @@ func NewFunctionServiceClient(httpClient connect.HTTPClient, baseURL string, opt
 	baseURL = strings.TrimRight(baseURL, "/")
 	functionServiceMethods := v1.File_edgerun_control_v1_function_proto.Services().ByName("FunctionService").Methods()
 	return &functionServiceClient{
+		describe: connect.NewClient[v1.DescribeRequest, v1.DescribeResponse](
+			httpClient,
+			baseURL+FunctionServiceDescribeProcedure,
+			connect.WithSchema(functionServiceMethods.ByName("Describe")),
+			connect.WithClientOptions(opts...),
+		),
 		createFunction: connect.NewClient[v1.CreateFunctionRequest, v1.CreateFunctionResponse](
 			httpClient,
 			baseURL+FunctionServiceCreateFunctionProcedure,
@@ -205,6 +216,7 @@ func NewFunctionServiceClient(httpClient connect.HTTPClient, baseURL string, opt
 
 // functionServiceClient implements FunctionServiceClient.
 type functionServiceClient struct {
+	describe        *connect.Client[v1.DescribeRequest, v1.DescribeResponse]
 	createFunction  *connect.Client[v1.CreateFunctionRequest, v1.CreateFunctionResponse]
 	getFunction     *connect.Client[v1.GetFunctionRequest, v1.GetFunctionResponse]
 	listFunctions   *connect.Client[v1.ListFunctionsRequest, v1.ListFunctionsResponse]
@@ -218,6 +230,11 @@ type functionServiceClient struct {
 	setEgress       *connect.Client[v1.SetEgressRequest, v1.SetEgressResponse]
 	setLabels       *connect.Client[v1.SetLabelsRequest, v1.SetLabelsResponse]
 	patchLabels     *connect.Client[v1.PatchLabelsRequest, v1.PatchLabelsResponse]
+}
+
+// Describe calls edgerun.control.v1.FunctionService.Describe.
+func (c *functionServiceClient) Describe(ctx context.Context, req *connect.Request[v1.DescribeRequest]) (*connect.Response[v1.DescribeResponse], error) {
+	return c.describe.CallUnary(ctx, req)
 }
 
 // CreateFunction calls edgerun.control.v1.FunctionService.CreateFunction.
@@ -287,6 +304,8 @@ func (c *functionServiceClient) PatchLabels(ctx context.Context, req *connect.Re
 
 // FunctionServiceHandler is an implementation of the edgerun.control.v1.FunctionService service.
 type FunctionServiceHandler interface {
+	// Describe says what hosts this service and what it will accept.
+	Describe(context.Context, *connect.Request[v1.DescribeRequest]) (*connect.Response[v1.DescribeResponse], error)
 	CreateFunction(context.Context, *connect.Request[v1.CreateFunctionRequest]) (*connect.Response[v1.CreateFunctionResponse], error)
 	GetFunction(context.Context, *connect.Request[v1.GetFunctionRequest]) (*connect.Response[v1.GetFunctionResponse], error)
 	ListFunctions(context.Context, *connect.Request[v1.ListFunctionsRequest]) (*connect.Response[v1.ListFunctionsResponse], error)
@@ -328,6 +347,12 @@ type FunctionServiceHandler interface {
 // and JSON codecs. They also support gzip compression.
 func NewFunctionServiceHandler(svc FunctionServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
 	functionServiceMethods := v1.File_edgerun_control_v1_function_proto.Services().ByName("FunctionService").Methods()
+	functionServiceDescribeHandler := connect.NewUnaryHandler(
+		FunctionServiceDescribeProcedure,
+		svc.Describe,
+		connect.WithSchema(functionServiceMethods.ByName("Describe")),
+		connect.WithHandlerOptions(opts...),
+	)
 	functionServiceCreateFunctionHandler := connect.NewUnaryHandler(
 		FunctionServiceCreateFunctionProcedure,
 		svc.CreateFunction,
@@ -408,6 +433,8 @@ func NewFunctionServiceHandler(svc FunctionServiceHandler, opts ...connect.Handl
 	)
 	return "/edgerun.control.v1.FunctionService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case FunctionServiceDescribeProcedure:
+			functionServiceDescribeHandler.ServeHTTP(w, r)
 		case FunctionServiceCreateFunctionProcedure:
 			functionServiceCreateFunctionHandler.ServeHTTP(w, r)
 		case FunctionServiceGetFunctionProcedure:
@@ -442,6 +469,10 @@ func NewFunctionServiceHandler(svc FunctionServiceHandler, opts ...connect.Handl
 
 // UnimplementedFunctionServiceHandler returns CodeUnimplemented from all methods.
 type UnimplementedFunctionServiceHandler struct{}
+
+func (UnimplementedFunctionServiceHandler) Describe(context.Context, *connect.Request[v1.DescribeRequest]) (*connect.Response[v1.DescribeResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("edgerun.control.v1.FunctionService.Describe is not implemented"))
+}
 
 func (UnimplementedFunctionServiceHandler) CreateFunction(context.Context, *connect.Request[v1.CreateFunctionRequest]) (*connect.Response[v1.CreateFunctionResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("edgerun.control.v1.FunctionService.CreateFunction is not implemented"))

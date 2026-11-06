@@ -18,6 +18,7 @@ import (
 
 	"github.com/Olian04/edgerun"
 	commonv1 "github.com/Olian04/edgerun/gen/edgerun/common/v1"
+	membershipv1 "github.com/Olian04/edgerun/gen/edgerun/membership/v1"
 	workerv1 "github.com/Olian04/edgerun/gen/edgerun/worker/v1"
 	"github.com/Olian04/edgerun/gen/edgerun/worker/v1/workerv1connect"
 	"github.com/Olian04/edgerun/internal/authn"
@@ -100,13 +101,13 @@ func (s *Server) Handler(v authn.Verifier) (string, http.Handler) {
 func (s *Server) Info() *workerv1.WorkerInfo { return s.info }
 
 // State reports READY or DRAINING for heartbeats.
-func (s *Server) State() workerv1.WorkerState {
+func (s *Server) State() membershipv1.MemberState {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.draining {
-		return workerv1.WorkerState_WORKER_STATE_DRAINING
+		return membershipv1.MemberState_MEMBER_STATE_DRAINING
 	}
-	return workerv1.WorkerState_WORKER_STATE_READY
+	return membershipv1.MemberState_MEMBER_STATE_READY
 }
 
 // InFlight is the number of invocations currently executing.

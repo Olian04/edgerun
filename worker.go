@@ -75,31 +75,6 @@ func (e *Execution) Execute(ctx context.Context, req *workerv1.ExecuteRequest) (
 	return out, nil
 }
 
-// Fleet is the client of an orchestrator's FleetService: how a worker joins the
-// fleet, stays in it and leaves. It needs a token of ScopeWorker. With it, a
-// worker in any language can offer itself to an orchestrator.
-type Fleet struct {
-	c workerv1connect.FleetServiceClient
-}
-
-// NewFleet returns a client for the orchestrator at baseURL.
-func NewFleet(baseURL, token string, opts ...Option) *Fleet {
-	h, co := settings(token, opts)
-	return &Fleet{c: workerv1connect.NewFleetServiceClient(h, baseURL, co...)}
-}
-
-func (f *Fleet) Register(ctx context.Context, req *workerv1.RegisterRequest) (*workerv1.RegisterResponse, error) {
-	return call(ctx, f.c.Register, req)
-}
-
-func (f *Fleet) Heartbeat(ctx context.Context, req *workerv1.HeartbeatRequest) (*workerv1.HeartbeatResponse, error) {
-	return call(ctx, f.c.Heartbeat, req)
-}
-
-func (f *Fleet) Deregister(ctx context.Context, req *workerv1.DeregisterRequest) (*workerv1.DeregisterResponse, error) {
-	return call(ctx, f.c.Deregister, req)
-}
-
 // Artifacts is the client of an orchestrator's ArtifactService: how a worker
 // obtains module bytes. It needs a token of ScopeWorker.
 type Artifacts struct {
