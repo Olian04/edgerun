@@ -591,7 +591,11 @@ it).
 - A member that has not heartbeated for three intervals is not alive and is given nothing. One that reports
   `DRAINING` is given nothing new either, and stays listed.
 - `Deregister` is idempotent: an unknown id is not an error.
-- `ListMembers` (scope `admin`) returns the members ordered by kind (workers first), then endpoint, with their
+- A call is judged in this order: authentication, then whether the token's scope allows the call, then the message
+  (so a worker token that registers a network service is `permission_denied` however well-formed the request).
+  Endpoints are unique **per kind**: registering a worker's endpoint as a network service does not replace the worker.
+  An `admin` or `ingress` token can neither register nor heartbeat nor deregister: `permission_denied`.
+- `ListMembers` (scope `admin`) returns the members ordered by kind (workers first), then endpoint by byte order, with their
   state, whether they are alive, when they last heartbeated and what they declared; `kind` restricts it to one
   kind.
 - A member keeps trying to register until it succeeds, and a refused registration (`invalid_argument`,
