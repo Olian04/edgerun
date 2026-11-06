@@ -1,11 +1,11 @@
 // The worker in this process against a fake orchestrator, with hand-assembled
-// guests: error mapping, limits, capacity, auth, fleet behaviour.
+// guests: error mapping, limits, capacity, auth, membership behaviour.
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { Code, ConnectError, createClient } from "@connectrpc/connect";
 import { createConnectTransport } from "@connectrpc/connect-node";
 import { ExecutionService } from "../gen/edgerun/worker/v1/execution_pb.js";
-import { WorkerState } from "../gen/edgerun/worker/v1/worker_pb.js";
+import { MemberState } from "../gen/edgerun/membership/v1/membership_pb.js";
 import { ErrorReason, reasonOf } from "../src/errors.js";
 import { startWorker } from "../src/worker.js";
 import { fakeOrchestrator } from "./fake-orchestrator.js";
@@ -22,7 +22,7 @@ before(async () => {
   const port = await freePort();
   w = await startWorker({ orchestratorUrl: orch.url, workerToken: orch.workerToken, executionToken: EXEC, listen: `127.0.0.1:${port}`, advertiseUrl: `http://127.0.0.1:${port}`, maxConcurrency: 2 });
   exec = clientWith(`http://127.0.0.1:${port}`, EXEC);
-  await w.fleet.registered;
+  await w.membership.registered;
 });
 after(async () => { await w.stop(); await orch.close(); });
 
@@ -306,6 +306,7 @@ test("authentication: missing or wrong token is UNAUTHENTICATED, on Execute and 
 test("Describe agrees with what was registered", async () => {
   const reg = orch.events.find((e) => e.kind === "register");
   const d = (await exec.describe({})).info;
+  assert.equal(reg.infoCase, "worker");
   assert.deepEqual(d.abis, reg.info.abis);
   assert.equal(d.maxConcurrency, 2);
   assert.deepEqual(d.implementation.protocols, ["edgerun.worker.v1"]);
@@ -315,7 +316,7 @@ test("heartbeats at the dictated interval; the orchestrator forgetting the worke
   const hb = () => orch.events.filter((e) => e.kind === "heartbeat");
   const n = hb().length;
   await until(() => hb().length >= n + 3, 3000, "three heartbeats");
-  assert.ok(hb().slice(-3).every((e) => e.state === WorkerState.READY));
+  assert.ok(hb().slice(-3).every((e) => e.state === MemberState.READY));
   const regs = orch.events.filter((e) => e.kind === "register").length;
   orch.state.forget = orch.events.findLast((e) => e.kind === "register").id;
   await until(() => orch.events.filter((e) => e.kind === "register").length > regs, 3000, "re-registration");
@@ -327,12 +328,12 @@ test("shutdown: DRAINING first, in-flight work finishes, new work gets NO_CAPACI
   const busy = execute(guests.spin(), { timeoutMs: 1200 });
   await until(() => w.impl.inFlight === 1, 3000, "in flight");
   const stopping = w.stop();
-  await until(() => orch.events.some((e) => e.kind === "heartbeat" && e.state === WorkerState.DRAINING), 3000, "DRAINING heartbeat");
+  await until(() => orch.events.some((e) => e.kind === "heartbeat" && e.state === MemberState.DRAINING), 3000, "DRAINING heartbeat");
   assert.equal(reason(await execute(guests.respond())), ErrorReason.NO_CAPACITY);
   assert.equal(reason(await busy), ErrorReason.DEADLINE_EXCEEDED); // allowed to run to its own end
   await stopping;
   const kinds = orch.events.map((e) => e.kind + ":" + (e.state ?? ""));
-  const firstDraining = orch.events.findIndex((e) => e.kind === "heartbeat" && e.state === WorkerState.DRAINING);
+  const firstDraining = orch.events.findIndex((e) => e.kind === "heartbeat" && e.state === MemberState.DRAINING);
   const dereg = orch.events.findIndex((e) => e.kind === "deregister");
   assert.ok(firstDraining >= 0 && dereg > firstDraining, kinds.join(" "));
 });

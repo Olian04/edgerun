@@ -2,8 +2,9 @@ import { spawn } from "node:child_process";
 import { createClient } from "@connectrpc/connect";
 import { createConnectTransport } from "@connectrpc/connect-node";
 import { FunctionService } from "../gen/edgerun/control/v1/function_pb.js";
-import { InspectionService } from "../gen/edgerun/control/v1/inspection_pb.js";
+import { RecordsService } from "../gen/edgerun/control/v1/records_pb.js";
 import { RouteService } from "../gen/edgerun/control/v1/route_pb.js";
+import { MembershipService } from "../gen/edgerun/membership/v1/membership_pb.js";
 import { IngressService } from "../gen/edgerun/ingress/v1/ingress_pb.js";
 import { projectRoot } from "./stack.js";
 
@@ -16,7 +17,7 @@ export function transport(baseUrl, token) {
 
 export function controlClients(url, adminToken) {
   const t = transport(url, adminToken);
-  return { functions: createClient(FunctionService, t), routes: createClient(RouteService, t), inspect: createClient(InspectionService, t) };
+  return { functions: createClient(FunctionService, t), routes: createClient(RouteService, t), records: createClient(RecordsService, t), membership: createClient(MembershipService, t) };
 }
 export const ingressClient = (url, token) => createClient(IngressService, transport(url, token));
 

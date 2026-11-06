@@ -1,14 +1,14 @@
-// Assembles the worker: HTTP server (ExecutionService), module store, fleet client.
+// Assembles the worker: HTTP server (ExecutionService), module store, membership client.
 import http from "node:http";
 import { createClient } from "@connectrpc/connect";
 import { connectNodeAdapter, createConnectTransport } from "@connectrpc/connect-node";
 import { ArtifactService } from "../gen/edgerun/worker/v1/artifact_pb.js";
 import { ExecutionService } from "../gen/edgerun/worker/v1/execution_pb.js";
-import { FleetService } from "../gen/edgerun/worker/v1/fleet_pb.js";
+import { MembershipService } from "../gen/edgerun/membership/v1/membership_pb.js";
 import { bearerAuth } from "./auth.js";
 import { ModuleStore } from "./artifacts.js";
 import { ExecutionImpl, SUPPORTED_ABIS } from "./execution.js";
-import { FleetClient } from "./fleet.js";
+import { MembershipClient } from "./membership.js";
 import { invalidArgumentOnParseError } from "./parse-errors.js";
 
 export const VERSION = "0.1.0";
@@ -33,7 +33,7 @@ export async function startWorker(cfg) {
   });
   const store = new ModuleStore({ client: createClient(ArtifactService, orchestrator), log });
   const impl = new ExecutionImpl({ store, maxConcurrency: cfg.maxConcurrency, info, limits: cfg.limits, log });
-  const fleet = new FleetClient({ client: createClient(FleetService, orchestrator), endpoint: cfg.advertiseUrl, info, impl, log });
+  const membership = new MembershipClient({ client: createClient(MembershipService, orchestrator), endpoint: cfg.advertiseUrl, info, impl, log });
 
   const rpc = connectNodeAdapter({
     readMaxBytes: 64 * 1024 * 1024,
@@ -56,24 +56,24 @@ export async function startWorker(cfg) {
   const [host, port] = splitListen(cfg.listen);
   await new Promise((resolve, reject) => { server.once("error", reject); server.listen(port, host, resolve); });
   log("info", "worker listening", { addr: cfg.listen, advertise: cfg.advertiseUrl, maxConcurrency: cfg.maxConcurrency });
-  fleet.start();
+  membership.start();
 
   let stopping = null;
   /** Graceful shutdown as SIGTERM does: report DRAINING, finish in-flight work, deregister, stop serving. */
   const stop = ({ drainTimeoutMs = 30_000 } = {}) => (stopping ??= (async () => {
     impl.state = "DRAINING";
     // Nothing to announce if we never registered (the orchestrator was never reachable).
-    const registered = await Promise.race([fleet.registered.then(() => true), new Promise((r) => setTimeout(r, 1000, false).unref())]);
-    if (registered) await fleet.drain();
+    const registered = await Promise.race([membership.registered.then(() => true), new Promise((r) => setTimeout(r, 1000, false).unref())]);
+    if (registered) await membership.drain();
     await Promise.race([impl.whenIdle(), new Promise((r) => setTimeout(r, drainTimeoutMs).unref())]);
-    await fleet.deregister();
+    await membership.deregister();
     server.close();
     server.closeIdleConnections();
     await new Promise((r) => setTimeout(r, 50));
     server.closeAllConnections();
   })());
 
-  return { server, impl, store, fleet, stop, url: cfg.advertiseUrl };
+  return { server, impl, store, membership, stop, url: cfg.advertiseUrl };
 }
 
 function splitListen(addr) {

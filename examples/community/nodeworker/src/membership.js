@@ -1,14 +1,14 @@
-// The worker's side of FleetService: register, heartbeat at the dictated
+// The worker's side of MembershipService: register, heartbeat at the dictated
 // interval, re-register when told, announce DRAINING and deregister on exit.
 import { Code, ConnectError } from "@connectrpc/connect";
-import { WorkerState } from "../gen/edgerun/worker/v1/worker_pb.js";
+import { MemberState } from "../gen/edgerun/membership/v1/membership_pb.js";
 
 const sleep = (ms, signal) => new Promise((resolve) => {
   const t = setTimeout(resolve, ms);
   signal?.addEventListener("abort", () => { clearTimeout(t); resolve(); }, { once: true });
 });
 
-export class FleetClient {
+export class MembershipClient {
   /**
    * @param {{client:any, endpoint:string, info:object, impl:{state:string,inFlight:number}, log?:Function}} o
    */
@@ -18,7 +18,7 @@ export class FleetClient {
     this.info = info;
     this.impl = impl;
     this.log = log;
-    this.workerId = "";
+    this.memberId = "";
     this.intervalMs = 5000;
     this.stopped = new AbortController();
     this.loop = null;
@@ -36,12 +36,12 @@ export class FleetClient {
     for (;;) {
       if (this.stopped.signal.aborted) return false;
       try {
-        const res = await this.client.register({ endpoint: this.endpoint, info: this.info }, { timeoutMs: 10_000 });
-        this.workerId = res.workerId;
+        const res = await this.client.register({ endpoint: this.endpoint, info: { case: "worker", value: this.info } }, { timeoutMs: 10_000 });
+        this.memberId = res.memberId;
         const d = res.heartbeatInterval;
         if (d) this.intervalMs = Number(d.seconds) * 1000 + d.nanos / 1e6;
-        this.log("info", "registered", { workerId: this.workerId, heartbeatMs: this.intervalMs });
-        this.onRegistered(this.workerId);
+        this.log("info", "registered", { memberId: this.memberId, heartbeatMs: this.intervalMs });
+        this.onRegistered(this.memberId);
         return true;
       } catch (e) {
         const err = ConnectError.from(e);
@@ -68,8 +68,8 @@ export class FleetClient {
     if (process.env.NODEWORKER_DEBUG) this.log("debug", "heartbeat", { state: this.impl.state, inFlight: this.impl.inFlight });
     try {
       const res = await this.client.heartbeat({
-        workerId: this.workerId,
-        state: this.impl.state === "READY" ? WorkerState.READY : WorkerState.DRAINING,
+        memberId: this.memberId,
+        state: this.impl.state === "READY" ? MemberState.READY : MemberState.DRAINING,
         inFlight: this.impl.inFlight,
       }, { timeoutMs: Math.max(1000, this.intervalMs) });
       if (res.reregister) {
@@ -84,13 +84,13 @@ export class FleetClient {
   /** Report DRAINING now (state must already be flipped on impl). */
   drain() { return this.heartbeat(); }
 
-  /** Stop heartbeating and leave the fleet. Idempotent. */
+  /** Stop heartbeating and leave the membership. Idempotent. */
   async deregister() {
     this.stopped.abort();
-    if (!this.workerId) return;
+    if (!this.memberId) return;
     try {
-      await this.client.deregister({ workerId: this.workerId }, { timeoutMs: 5000 });
-      this.log("info", "deregistered", { workerId: this.workerId });
+      await this.client.deregister({ memberId: this.memberId }, { timeoutMs: 5000 });
+      this.log("info", "deregistered", { memberId: this.memberId });
     } catch (e) {
       this.log("warn", "deregister failed", { message: ConnectError.from(e).rawMessage });
     }

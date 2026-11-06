@@ -1,11 +1,11 @@
-// A JS stand-in for the orchestrator's worker-facing half (FleetService and
+// A JS stand-in for the orchestrator's worker-facing half (MembershipService and
 // ArtifactService), so the worker can be tested without Go or PostgreSQL.
 import { createHash } from "node:crypto";
 import http from "node:http";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { connectNodeAdapter } from "@connectrpc/connect-node";
 import { ArtifactService } from "../gen/edgerun/worker/v1/artifact_pb.js";
-import { FleetService } from "../gen/edgerun/worker/v1/fleet_pb.js";
+import { MembershipService } from "../gen/edgerun/membership/v1/membership_pb.js";
 import { platformError, ErrorReason } from "../src/errors.js";
 import { freePort } from "./stack.js";
 
@@ -24,19 +24,19 @@ export async function fakeOrchestrator({ workerToken = "w-token", heartbeatMs = 
   const handler = connectNodeAdapter({
     interceptors: [auth],
     routes(router) {
-      router.service(FleetService, {
+      router.service(MembershipService, {
         register(req) {
           const id = `w${nextId++}`;
           known.add(id);
-          events.push({ kind: "register", id, endpoint: req.endpoint, info: req.info });
-          return { workerId: id, heartbeatInterval: { seconds: 0n, nanos: heartbeatMs * 1e6 } };
+          events.push({ kind: "register", id, endpoint: req.endpoint, info: req.info.value, infoCase: req.info.case });
+          return { memberId: id, heartbeatInterval: { seconds: 0n, nanos: heartbeatMs * 1e6 } };
         },
         heartbeat(req) {
-          events.push({ kind: "heartbeat", id: req.workerId, state: req.state, inFlight: req.inFlight });
-          if (state.forget === req.workerId || !known.has(req.workerId)) { known.delete(req.workerId); state.forget = null; return { reregister: true }; }
+          events.push({ kind: "heartbeat", id: req.memberId, state: req.state, inFlight: req.inFlight });
+          if (state.forget === req.memberId || !known.has(req.memberId)) { known.delete(req.memberId); state.forget = null; return { reregister: true }; }
           return { reregister: false };
         },
-        deregister(req) { known.delete(req.workerId); events.push({ kind: "deregister", id: req.workerId }); return {}; },
+        deregister(req) { known.delete(req.memberId); events.push({ kind: "deregister", id: req.memberId }); return {}; },
       });
       router.service(ArtifactService, {
         async *getArtifact(req) {

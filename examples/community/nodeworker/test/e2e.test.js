@@ -7,7 +7,7 @@ import { after, before, test } from "node:test";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { ErrorReason, reasonOf } from "../src/errors.js";
 import { guests } from "./wasm.js";
-import { WorkerState } from "../gen/edgerun/worker/v1/worker_pb.js";
+import { MemberKind, MemberState } from "../gen/edgerun/membership/v1/membership_pb.js";
 import { controlClients, ingressClient, invoke, spawnWorker, until } from "./helpers.js";
 import { freePort, startStack, tokens } from "./stack.js";
 
@@ -19,7 +19,7 @@ before(async () => {
   worker = spawnWorker({ orchestratorUrl: stack.url, workerToken: tokens.worker, executionToken: tokens.execution, port });
   ctl = controlClients(stack.url, tokens.admin);
   ingress = ingressClient(stack.url, tokens.ingress);
-  await until(async () => (await ctl.inspect.listWorkers({})).workers.some((w) => w.state === WorkerState.READY), 15000, "the worker to register");
+  await until(async () => (await ctl.membership.listMembers({ kind: MemberKind.WORKER })).members.some((w) => w.state === MemberState.READY), 15000, "the worker to register");
 });
 
 after(async () => {
@@ -28,9 +28,10 @@ after(async () => {
 });
 
 test("the worker registers, advertising wagi-1 only", async () => {
-  const { workers } = await ctl.inspect.listWorkers({});
-  assert.equal(workers.length, 1);
-  const info = workers[0].info;
+  const { members } = await ctl.membership.listMembers({ kind: MemberKind.WORKER });
+  assert.equal(members.length, 1);
+  assert.equal(members[0].info.case, "worker");
+  const info = members[0].info.value;
   assert.deepEqual(info.abis, ["wagi-1"]);
   assert.equal(info.maxConcurrency, 2);
   assert.equal(info.implementation.name, "edgerun-worker-node");
@@ -52,7 +53,7 @@ test("deploy hello through control.v1, invoke through ingress.v1, the Node worke
   assert.equal(body.toString(), "Howdy, node!\nYou asked for GET /greet from 203.0.113.9.\n");
 
   // The orchestrator recorded which worker ran it, with the summary's numbers.
-  const rec = await until(async () => (await ctl.inspect.listInvocations({ functionId: fn.id })).invocations[0], 10000, "an invocation record");
+  const rec = await until(async () => (await ctl.records.listInvocations({ functionId: fn.id })).invocations[0], 10000, "an invocation record");
   assert.equal(rec.status, 200);
   assert.ok(rec.durationMicros > 0n);
   assert.ok(rec.peakMemoryBytes > 0n);
@@ -104,7 +105,7 @@ test("SIGTERM reports DRAINING, deregisters, and exits 0", async () => {
   worker.term();
   const { code } = await worker.exited;
   assert.equal(code, 0, worker.logs());
-  const { workers } = await ctl.inspect.listWorkers({});
-  assert.equal(workers.length, 0);
+  const { members } = await ctl.membership.listMembers({ kind: MemberKind.WORKER });
+  assert.equal(members.length, 0);
   assert.match(worker.logs(), /deregistered/);
 });
