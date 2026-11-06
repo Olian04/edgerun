@@ -8,21 +8,36 @@ import (
 	"testing"
 	"time"
 
-	workerconf "github.com/Olian04/edgerun/conformance/worker"
+	artifactsconf "github.com/Olian04/edgerun/conformance/artifacts"
+	egressconf "github.com/Olian04/edgerun/conformance/egress"
+	executionconf "github.com/Olian04/edgerun/conformance/execution"
+	membershipconf "github.com/Olian04/edgerun/conformance/membership"
 	"github.com/Olian04/edgerun/internal/worker/app"
 )
 
-// TestConformance runs the worker conformance suite against the in-repo worker,
-// assembled by the same app.Run that cmd/worker uses.
-func TestConformance(t *testing.T) { runConformance(t, 2) }
+// TestConformance runs the conformance suite of the service a worker hosts
+// (Execution) and of its duties as a client (Membership, Artifacts, Egress)
+// against the in-repo worker, assembled by the same app.Run that cmd/worker uses:
+// the worker profile of edgerun-conformance. Each suite launches a worker of its
+// own.
+func TestConformance(t *testing.T) {
+	t.Run("Execution", func(t *testing.T) { executionconf.Run(t, target(2)) })
+	t.Run("ArtifactsClient", func(t *testing.T) { artifactsconf.RunClient(t, target(2)) })
+	t.Run("EgressClient", func(t *testing.T) { egressconf.RunClient(t, target(2)) })
+	t.Run("MembershipClient", func(t *testing.T) { membershipconf.RunWorkerClient(t, target(2)) })
+}
 
 // With one slot every invocation is the whole capacity: the edge where
 // "all slots busy" is easiest to see too early.
-func TestConformanceWithOneSlot(t *testing.T) { runConformance(t, 1) }
+func TestConformanceWithOneSlot(t *testing.T) {
+	t.Run("Execution", func(t *testing.T) { executionconf.Run(t, target(1)) })
+	t.Run("MembershipClient", func(t *testing.T) { membershipconf.RunWorkerClient(t, target(1)) })
+}
 
-func runConformance(t *testing.T, slots uint32) {
-	workerconf.Run(t, workerconf.Target{Env: workerconf.Env{MaxConcurrency: slots},
-		Launch: func(t testing.TB, env workerconf.Env) func() {
+// target launches the in-repo worker with that many slots.
+func target(slots uint32) executionconf.Target {
+	return executionconf.Target{Env: executionconf.Env{MaxConcurrency: slots},
+		Launch: func(t testing.TB, env executionconf.Env) func() {
 			ctx, cancel := context.WithCancel(context.Background())
 			done := make(chan error, 1)
 			go func() {
@@ -55,5 +70,5 @@ func runConformance(t *testing.T, slots uint32) {
 			t.Cleanup(stop)
 			return stop
 		},
-	})
+	}
 }

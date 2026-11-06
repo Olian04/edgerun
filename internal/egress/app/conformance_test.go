@@ -9,13 +9,14 @@ import (
 	"testing"
 
 	egressconf "github.com/Olian04/edgerun/conformance/egress"
+	membershipconf "github.com/Olian04/edgerun/conformance/membership"
 	"github.com/Olian04/edgerun/internal/egress/app"
 )
 
-// TestConformance runs the network service conformance suite against the
-// in-repo service, assembled by the same app.Start that cmd/egress uses.
-func TestConformance(t *testing.T) {
-	egressconf.Run(t, egressconf.Target{
+// target launches in-repo network services, assembled by the same app.Start that
+// cmd/egress uses.
+func target() egressconf.Target {
+	return egressconf.Target{
 		Launch: func(t testing.TB, env egressconf.Env) egressconf.Instance {
 			cfg := app.Config{
 				Listen: "127.0.0.1:0", EgressToken: env.EgressToken,
@@ -38,5 +39,13 @@ func TestConformance(t *testing.T) {
 			t.Cleanup(stop)
 			return egressconf.Instance{URL: "http://" + srv.Addr(), Stop: stop}
 		},
-	})
+	}
+}
+
+// TestConformance runs the conformance suite of the service a network service
+// hosts (Egress) and of its duties as a client of Membership against the in-repo
+// service: the network-service profile of edgerun-conformance.
+func TestConformance(t *testing.T) {
+	t.Run("Egress", func(t *testing.T) { egressconf.Run(t, target()) })
+	t.Run("MembershipClient", func(t *testing.T) { membershipconf.RunNetworkServiceClient(t, target()) })
 }

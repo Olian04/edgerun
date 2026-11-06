@@ -154,7 +154,7 @@ func TestTheOrchestratorSuiteJudgesAProcess(t *testing.T) {
 		"--network-token", networkToken, "--execution-token", executionToken,
 		"--secret-key", base64.StdEncoding.EncodeToString(orchtest.Key), "--heartbeat-interval", "200ms")
 	waitPort(t, "127.0.0.1:"+port, 60*time.Second)
-	suite := start(t, "edgerun-conformance", "--role", "orchestrator", "--target", "127.0.0.1:"+port)
+	suite := start(t, "edgerun-conformance", "--profile", "orchestrator", "--target", "127.0.0.1:"+port)
 	suite.finish(t, 90*time.Second)
 }
 
@@ -163,7 +163,7 @@ func TestTheFrontendSuiteJudgesAProcess(t *testing.T) {
 		t.Skip("builds and runs several processes")
 	}
 	suitePort, fePort := freePort(t), freePort(t)
-	suite := start(t, "edgerun-conformance", "--role", "frontend", "--target", "127.0.0.1:"+fePort, "--listen", "127.0.0.1:"+suitePort)
+	suite := start(t, "edgerun-conformance", "--profile", "frontend", "--target", "127.0.0.1:"+fePort, "--listen", "127.0.0.1:"+suitePort)
 	waitPort(t, "127.0.0.1:"+suitePort, 60*time.Second)
 	start(t, "frontend", "--listen", "127.0.0.1:"+fePort, "--health-listen", "", "--orchestrator-url", "http://127.0.0.1:"+suitePort,
 		"--ingress-token", ingressToken, "--request-timeout", "3s")
@@ -176,7 +176,7 @@ func TestTheWorkerSuiteJudgesAProcess(t *testing.T) {
 	}
 	suitePort, workerPort := freePort(t), freePort(t)
 	pidfile := filepath.Join(t.TempDir(), "worker.pid")
-	suite := start(t, "edgerun-conformance", "--role", "worker", "--target", "127.0.0.1:"+workerPort,
+	suite := start(t, "edgerun-conformance", "--profile", "worker", "--target", "127.0.0.1:"+workerPort,
 		"--listen", "127.0.0.1:"+suitePort, "--stop-cmd", "kill -TERM $(cat "+pidfile+")")
 	waitPort(t, "127.0.0.1:"+suitePort, 60*time.Second)
 	w := start(t, "worker", "--listen", "127.0.0.1:"+workerPort, "--advertise-url", "http://127.0.0.1:"+workerPort,
@@ -193,7 +193,7 @@ func TestTheEgressSuiteJudgesTwoProcesses(t *testing.T) {
 	suitePort, openPort, defaultPort := freePort(t), freePort(t), freePort(t)
 	dir := t.TempDir()
 	openPid, defaultPid := filepath.Join(dir, "open.pid"), filepath.Join(dir, "default.pid")
-	suite := start(t, "edgerun-conformance", "--role", "egress",
+	suite := start(t, "edgerun-conformance", "--profile", "network-service",
 		"--target", "127.0.0.1:"+openPort, "--target-default", "127.0.0.1:"+defaultPort, "--listen", "127.0.0.1:"+suitePort,
 		"--stop-cmd", "kill -TERM $(cat "+openPid+")", "--stop-cmd-default", "kill -TERM $(cat "+defaultPid+")")
 	waitPort(t, "127.0.0.1:"+suitePort, 60*time.Second)
