@@ -1,0 +1,25 @@
+# A minimal OpenTelemetry Collector configuration for trying edgerun's telemetry
+# (docs/observability.md). It accepts OTLP and prints what it receives; replace
+# the exporter with your backend's. Untested against a real backend.
+#
+#   docker run --rm -p 4317:4317 -p 4318:4318 \
+#     -v $PWD/deploy/otel-collector.yaml:/etc/otelcol/config.yaml otel/opentelemetry-collector
+#
+# Then start a component with OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318.
+receivers:
+  otlp:
+    protocols:
+      grpc: { endpoint: 0.0.0.0:4317 }
+      http: { endpoint: 0.0.0.0:4318 }
+
+processors:
+  batch: {}
+
+exporters:
+  debug: { verbosity: basic }
+
+service:
+  pipelines:
+    traces:  { receivers: [otlp], processors: [batch], exporters: [debug] }
+    metrics: { receivers: [otlp], processors: [batch], exporters: [debug] }
+    logs:    { receivers: [otlp], processors: [batch], exporters: [debug] }

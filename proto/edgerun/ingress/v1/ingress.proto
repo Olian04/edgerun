@@ -1,0 +1,53 @@
+// Ingress seam: how a frontend hands an HTTP request to an orchestrator.
+//
+// The frontend knows hosts, paths and bytes. It does not know about functions,
+// versions, routes or workers: all of that is the orchestrator's business.
+// Server: orchestrator. Client: frontend.
+syntax = "proto3";
+
+package edgerun.ingress.v1;
+
+import "edgerun/common/v1/common.proto";
+
+service IngressService {
+  // Describe returns the orchestrator's identity and the protocols it speaks.
+  rpc Describe(DescribeRequest) returns (DescribeResponse);
+
+  // Invoke routes the request to a function and streams its response.
+  //
+  // The response stream is: exactly one InvokeHead, then zero or more chunks.
+  // Failures before the head are returned as a Connect error carrying
+  // common.v1.ErrorInfo. A failure after the head (e.g. a worker dying
+  // mid-body) terminates the stream with a Connect error; the frontend must
+  // then abort the client connection rather than pretend the body is complete.
+  //
+  // The RPC deadline is the invocation's wall-clock budget.
+  rpc Invoke(InvokeRequest) returns (stream InvokeResponse);
+}
+
+message DescribeRequest {}
+
+message DescribeResponse {
+  edgerun.common.v1.Implementation implementation = 1;
+  // Upper bound the orchestrator accepts for HttpRequest.body.
+  uint64 max_request_body_bytes = 2;
+}
+
+message InvokeRequest {
+  edgerun.common.v1.HttpRequest request = 1;
+  // Opaque id minted by the frontend for correlation across logs.
+  string request_id = 2;
+}
+
+message InvokeResponse {
+  oneof part {
+    InvokeHead head = 1;
+    bytes chunk = 2;
+  }
+}
+
+message InvokeHead {
+  edgerun.common.v1.HttpResponseHead http = 1;
+  // Id of the persisted invocation record, for support and tracing.
+  string invocation_id = 2;
+}

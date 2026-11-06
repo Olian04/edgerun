@@ -1,0 +1,58 @@
+// Fleet seam: how workers announce themselves to the orchestrator.
+// Server: orchestrator. Client: worker.
+//
+// Workers dial the orchestrator (any instance; it is stateless), never the
+// other way round, so workers can sit behind NAT and orchestrators need no
+// worker inventory in configuration.
+syntax = "proto3";
+
+package edgerun.worker.v1;
+
+import "google/protobuf/duration.proto";
+import "edgerun/worker/v1/worker.proto";
+
+service FleetService {
+  // Register announces a worker and the endpoint at which it serves
+  // ExecutionService. Registering the same endpoint again replaces the old
+  // entry and returns a fresh worker_id.
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+
+  // Heartbeat keeps the registration alive and reports load. A worker missing
+  // three consecutive intervals is considered dead.
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+
+  // Deregister removes the worker immediately (graceful shutdown).
+  rpc Deregister(DeregisterRequest) returns (DeregisterResponse);
+}
+
+message RegisterRequest {
+  // Base URL at which the orchestrator can reach this worker's
+  // ExecutionService, e.g. "http://10.0.0.7:9000".
+  string endpoint = 1;
+  WorkerInfo info = 2;
+}
+
+message RegisterResponse {
+  string worker_id = 1;
+  // How often the worker must heartbeat.
+  google.protobuf.Duration heartbeat_interval = 2;
+}
+
+message HeartbeatRequest {
+  string worker_id = 1;
+  WorkerState state = 2;
+  // Invocations currently executing.
+  uint32 in_flight = 3;
+}
+
+message HeartbeatResponse {
+  // True if the orchestrator no longer knows this worker_id; the worker must
+  // call Register again.
+  bool reregister = 1;
+}
+
+message DeregisterRequest {
+  string worker_id = 1;
+}
+
+message DeregisterResponse {}

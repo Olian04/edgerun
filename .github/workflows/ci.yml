@@ -1,0 +1,40 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      # Each test creates and drops its own database on this server. With
+      # REQUIRE_PG a missing database fails the run instead of skipping tests.
+      EDGERUN_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
+      EDGERUN_REQUIRE_PG: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # buf breaking compares against origin/main
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: make proto-check
+      - run: make build
+      - run: go vet ./...
+      - run: make test
+      # The end-to-end tests run every component in one process: the ones most
+      # likely to expose a data race between them.
+      - run: go test -race -count=1 ./internal/e2e/...

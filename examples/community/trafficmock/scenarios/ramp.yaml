@@ -1,0 +1,15 @@
+# Find the knee: climb from 10 to 500 requests/second over a minute.
+name: ramp
+target: {url: http://127.0.0.1:8080, http: "2", conns: 4}   # token: EDGERUN_INGRESS_TOKEN
+defaults: {host: mock.test, budget: 5s}
+requests:
+  - {path: /status/200}
+load:
+  model: ramp
+  from: 10
+  to: 500
+  duration: 60s
+  max_in_flight: 5000      # above this, requests are dropped and counted, never queued
+expect:
+  - errors<1%
+  - p99<250ms

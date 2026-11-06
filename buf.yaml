@@ -1,0 +1,11 @@
+version: v2
+modules:
+  - path: proto
+lint:
+  use:
+    - STANDARD
+breaking:
+  # FILE is the strictest category: it also forbids changes that would break
+  # generated code (moves, renames), which is what swappable peers rely on.
+  use:
+    - FILE

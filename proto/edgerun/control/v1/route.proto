@@ -1,0 +1,80 @@
+// Control seam, routing. Server: orchestrator. Clients: admin UI, CLI.
+syntax = "proto3";
+
+package edgerun.control.v1;
+
+import "edgerun/control/v1/model.proto";
+
+service RouteService {
+  // CreateRoute fails with ALREADY_EXISTS if the same (host_pattern,
+  // path_prefix) pair is already routed.
+  rpc CreateRoute(CreateRouteRequest) returns (CreateRouteResponse);
+  rpc ListRoutes(ListRoutesRequest) returns (ListRoutesResponse);
+  rpc DeleteRoute(DeleteRouteRequest) returns (DeleteRouteResponse);
+
+  // SetRouteLabels replaces the route's labels (an empty map clears them).
+  // Labels are not part of what a route routes: changing them changes nothing
+  // about which requests it serves, which is why a route can be relabelled
+  // though it cannot be retargeted.
+  rpc SetRouteLabels(SetRouteLabelsRequest) returns (SetRouteLabelsResponse);
+  // PatchRouteLabels is PatchLabels for a route.
+  rpc PatchRouteLabels(PatchRouteLabelsRequest) returns (PatchRouteLabelsResponse);
+}
+
+message CreateRouteRequest {
+  string host_pattern = 1;
+  string path_prefix = 2;
+  string function_id = 3;
+  map<string, string> labels = 4;
+  bool validate_only = 5;
+}
+
+message CreateRouteResponse {
+  Route route = 1;
+}
+
+message ListRoutesRequest {
+  uint32 page_size = 1;
+  string page_token = 2;
+  // Only routes that carry every one of these labels with exactly these values.
+  map<string, string> match_labels = 3;
+  // As in ListFunctionsRequest.
+  repeated string has_label_keys = 4;
+  repeated string lacks_label_keys = 5;
+  // Only the routes to this function. A malformed id or one nothing has: none.
+  // Empty: all.
+  string function_id = 6;
+}
+
+message ListRoutesResponse {
+  repeated Route routes = 1;
+  string next_page_token = 2;
+}
+
+message DeleteRouteRequest {
+  string route_id = 1;
+  bool validate_only = 2;
+}
+
+message DeleteRouteResponse {}
+
+message SetRouteLabelsRequest {
+  string route_id = 1;
+  map<string, string> labels = 2;
+  bool validate_only = 3;
+}
+
+message SetRouteLabelsResponse {
+  Route route = 1;
+}
+
+message PatchRouteLabelsRequest {
+  string route_id = 1;
+  map<string, string> set = 2;
+  repeated string remove = 3;
+  bool validate_only = 4;
+}
+
+message PatchRouteLabelsResponse {
+  Route route = 1;
+}

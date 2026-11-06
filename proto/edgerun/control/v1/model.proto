@@ -1,0 +1,136 @@
+// Resources managed through the control seam.
+syntax = "proto3";
+
+package edgerun.control.v1;
+
+import "google/protobuf/timestamp.proto";
+import "edgerun/common/v1/common.proto";
+import "edgerun/egress/v1/registry.proto";
+import "edgerun/worker/v1/worker.proto";
+
+message Function {
+  string id = 1;
+  // Unique, DNS-label-like: lowercase letters, digits and '-', 1-63 chars.
+  string name = 2;
+  // Version that serves traffic. Empty until the first activation.
+  string active_version_id = 3;
+  google.protobuf.Timestamp create_time = 4;
+  // The destinations the function may reach over the network, in canonical
+  // form (see SetEgress). Empty: the function has no network. Closed by
+  // default, and only the operator opens it.
+  repeated string egress_allow = 5;
+  // Free-form metadata, set by whoever manages the function (see Labels in
+  // docs/protocol.md). Nothing in edgerun interprets it; tools use it to mark
+  // what they own and to find it again (ListFunctionsRequest.match_labels).
+  map<string, string> labels = 6;
+}
+
+// FunctionVersion is immutable once created. Rolling back is activating an
+// older version, never editing one.
+message FunctionVersion {
+  string id = 1;
+  string function_id = 2;
+  // 1-based, increasing per function.
+  int64 number = 3;
+  // "sha256:<lowercase hex>" of the module bytes.
+  string artifact_digest = 4;
+  // Guest ABI, e.g. "wagi-1".
+  string abi = 5;
+  uint64 size_bytes = 6;
+  edgerun.common.v1.Limits limits = 7;
+  google.protobuf.Timestamp create_time = 8;
+  // Set when the version is created, and as immutable as the version is.
+  map<string, string> labels = 9;
+}
+
+// Route maps incoming requests to a function.
+//
+// Matching: among the routes that match both host and path, the most specific
+// host pattern wins (exact host, then a leading wildcard like "*.example.com"
+// with the longer suffix first, then "*"); among equally specific hosts the
+// longest path_prefix wins. Prefixes match on whole path segments. A wildcard
+// does not match its own apex ("*.example.com" does not match "example.com").
+// A request that matches a specific host but none of its prefixes falls through
+// to less specific hosts, so a "*" route works as a catch-all.
+message Route {
+  string id = 1;
+  string host_pattern = 2;
+  // Starts with "/".
+  string path_prefix = 3;
+  string function_id = 4;
+  google.protobuf.Timestamp create_time = 5;
+  // Set when the route is created and changed by SetRouteLabels and
+  // PatchRouteLabels. Nothing else of a route can be edited: retargeting one is
+  // deleting it and creating another.
+  map<string, string> labels = 6;
+}
+
+// EnvEntry is one environment variable of a function. Values of secret
+// entries are write-only: reads return them empty.
+message EnvEntry {
+  string name = 1;
+  string value = 2;
+  bool secret = 3;
+  // Output only (ignored when the entry is sent). An opaque token that
+  // identifies the stored value without revealing it, so that a write-only
+  // secret can still be compared: it is the same for the same value stored
+  // under the same name in the same function (setting a value that is already
+  // there changes nothing), and different for any other value. It is keyed
+  // with a secret only the orchestrator holds, so it cannot be recomputed
+  // outside, nor used to guess a value offline: remember the revision a write
+  // returned, and a different one later means the value was changed by someone
+  // else. Present for every entry, secret or not.
+  string revision = 4;
+}
+
+// WorkerStatus is the orchestrator's current view of one registered worker.
+message WorkerStatus {
+  string id = 1;
+  string endpoint = 2;
+  edgerun.worker.v1.WorkerInfo info = 3;
+  edgerun.worker.v1.WorkerState state = 4;
+  uint32 in_flight = 5;
+  google.protobuf.Timestamp last_heartbeat_time = 6;
+  // Whether the worker has heartbeated recently enough to be scheduled onto.
+  bool alive = 7;
+}
+
+// Invocation is the persisted record of one routed request.
+message Invocation {
+  string id = 1;
+  string request_id = 2;
+  string function_id = 3;
+  string version_id = 4;
+  string worker_id = 5;
+  string method = 6;
+  string path = 7;
+  // HTTP status the function answered with; 0 if it never answered.
+  uint32 status = 8;
+  // Set when the platform (not the function) failed the invocation.
+  edgerun.common.v1.ErrorReason error_reason = 9;
+  // Execution time as reported by the worker; if the worker never reported
+  // one, the time the orchestrator observed.
+  uint64 duration_micros = 10;
+  uint64 peak_memory_bytes = 11;
+  // Tail of the guest's stderr, truncated. For an invocation that failed
+  // before the worker could report, the error message instead (for a trapped
+  // function that message ends with the guest's stderr tail).
+  bytes stderr = 12;
+  google.protobuf.Timestamp start_time = 13;
+  // The trace this invocation belongs to (W3C trace id, 32 lower-case hex
+  // digits), if the request arrived carrying one: the way from a record to its
+  // trace in whatever the deployment collects traces in. Empty otherwise.
+  string trace_id = 14;
+}
+
+// NetworkServiceStatus is a registered network service as the orchestrator
+// sees it.
+message NetworkServiceStatus {
+  string id = 1;
+  string endpoint = 2;
+  edgerun.egress.v1.ServiceInfo info = 3;
+  edgerun.egress.v1.ServiceState state = 4;
+  google.protobuf.Timestamp last_heartbeat_time = 5;
+  // Whether it has heartbeated recently enough to be given work.
+  bool alive = 6;
+}

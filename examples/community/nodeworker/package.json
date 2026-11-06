@@ -1,0 +1,24 @@
+{
+  "name": "edgerun-worker-node",
+  "version": "0.1.0",
+  "description": "A conforming edgerun worker in plain Node.js, built only from proto/ and docs/protocol.md",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "bin": { "edgerun-worker-node": "src/main.js" },
+  "scripts": {
+    "generate": "buf generate",
+    "pretest": "npm run generate",
+    "start": "node src/main.js",
+    "test": "node --test --test-concurrency=1 \"test/*.test.js\""
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "2.16.0",
+    "@connectrpc/connect": "2.3.0",
+    "@connectrpc/connect-node": "2.3.0"
+  },
+  "devDependencies": {
+    "@bufbuild/buf": "1.75.0",
+    "@bufbuild/protoc-gen-es": "2.16.0"
+  }
+}
