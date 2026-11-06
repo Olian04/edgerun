@@ -34,7 +34,13 @@ func FrontendStatus(err error, ctxErr error) (status int, retryAfter bool) {
 		return http.StatusBadGateway, false
 	case commonv1.ErrorReason_ERROR_REASON_REQUEST_TOO_LARGE:
 		return http.StatusRequestEntityTooLarge, false
-	case commonv1.ErrorReason_ERROR_REASON_INTERNAL:
+	case commonv1.ErrorReason_ERROR_REASON_CANCELLED:
+		return 0, false // the caller gave up: nobody is listening
+	case commonv1.ErrorReason_ERROR_REASON_UNSPECIFIED:
+		// no typed reason: classified below by what can be observed
+	default:
+		// INTERNAL, and every reason this table has no row for (an EGRESS_* reason does not belong to this
+		// seam; a reason newer than this table is not known to mean anything better): 500.
 		return http.StatusInternalServerError, false
 	}
 	// No typed reason: classify by what we can observe.

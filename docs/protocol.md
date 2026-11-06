@@ -91,8 +91,12 @@ that do export can join one trace:
   its trace.
 - The worker gives the **guest** a `traceparent` request header (`HTTP_TRACEPARENT` in its environment, see the ABI)
   with the trace id of the `Execute` call and a span id of its own, so that a function with telemetry of its own can
-  continue the trace. A `traceparent`, `tracestate` or `baggage` the *client* sent is never given to the guest: it
-  is replaced by the platform's, or, if the call carried no trace, absent.
+  continue the trace. The trace context is the *trace's*, not a header the client sent: the guest gets the
+  `traceparent` of the call and, if the trace has one, its `tracestate` (it started as the client's and travelled with
+  the trace), and **never `baggage`**; a `traceparent`, `tracestate` or `baggage` the client sent as a plain header
+  in `HttpRequest.headers` is never given to the guest (it is replaced by the platform's, or, if the call carried no
+  trace, absent). A component that makes no spans forwards the span id it received: a guest then continues
+  the same span, which is allowed.
 - A network service **never adds trace context to the request it makes upstream** (it adds nothing, see "What a
   network service does with a `Fetch`"): the origin sees a `traceparent` only if the guest sent one as a header of
   its own request.
@@ -116,6 +120,7 @@ that do export can join one trace:
 | Worker liveness | 3 missed heartbeats | fleet |
 | Module size | reported in `control.DescribeResponse.max_module_bytes` | uploads |
 | Artifact chunk | ≤ 1 MiB | `GetArtifact` |
+| Request header block | bounded by the frontend (the reference frontend: 64 KiB); `431` beyond | frontend |
 | Stderr tail | ≤ 64 KiB, truncated from the front | `ExecutionSummary` |
 
 A frontend **must** enforce `max_request_body_bytes` (from `Describe`) itself and answer 413
@@ -181,11 +186,20 @@ what a hop may rely on.
    next candidate, at most 3 attempts. It never retries after the response head was received,
    and never retries `FUNCTION_TRAPPED` or `DEADLINE_EXCEEDED`, or a connection that broke
    after the request was sent, because the function may have had side effects. A worker that
-   could not be reached is skipped for a few seconds.
+   could not be reached is skipped for a few seconds. "Could not be reached" means the connect phase failed
+   (refused, unresolvable, no route, or no answer within a few seconds: an orchestrator's dial timeout is short
+   on purpose); a reset on a connection that was already open counts as *may have run*, so a restart of a worker
+   can cost a request that never ran, which is the price of never running one twice. Only a failed connect marks a
+   worker down: a worker that accepts connections and then never answers keeps being offered work and each
+   such invocation ends at its deadline.
 5. **Capacity is never queued.** A worker with no free slot answers `NO_CAPACITY` immediately.
 6. **Response stream:** head, then chunks. (A worker buffers the response before it streams it, so today the head
-   and the body arrive together: a frontend's time to first byte is the function's run time.) A worker stream ends with exactly one
-   `ExecutionSummary`; ending without one is a failed invocation.
+   and the body arrive together: a frontend's time to first byte is the function's run time.) A worker stream is exactly one head, zero or more
+   chunks, then exactly one `ExecutionSummary`, which **ends the response**: a message after the summary (a chunk, a
+   second summary) is a protocol violation by the worker, answered `INTERNAL`; ending without a summary is a failed
+   invocation. A message with no part set carries nothing and is ignored, while a stream that does not begin with a
+   head is a violation. Producers send chunks of at most 1 MiB (the stream's seams say so); a consumer is not required
+   to refuse a larger one.
 7. **Failure after the head** terminates the stream with an error. The frontend must abort the
    client connection instead of finishing the body normally.
 
@@ -213,7 +227,10 @@ A `FUNCTION_TRAPPED` message SHOULD end with the tail of the guest's stderr (at 
 because a failed invocation has no `ExecutionSummary` to carry logs.
 
 The two `EGRESS_*` reasons occur on the egress seam only. A function never fails an invocation with
-them (the guest is told, see below), so the frontend has no mapping for them.
+them (the guest is told, see below), so the frontend has no mapping for them, and a reason that has no row in the
+table (these, or one newer than the table) is answered like `INTERNAL`: 500. `CANCELLED` is the reason of the
+invocation *record* of a call whose caller gave up (its connection ended before the invocation did): nobody is
+waiting, so it is never answered, and the record says why it has no status.
 
 Every reason has one canonical Connect code. Peers branch on the reason, never on the code:
 
@@ -228,6 +245,7 @@ Every reason has one canonical Connect code. Peers branch on the reason, never o
 | `INTERNAL` | `internal` |
 | `EGRESS_DENIED` | `permission_denied` |
 | `EGRESS_FAILED` | `unavailable` |
+| `CANCELLED` | `canceled` |
 
 A malformed request (bad digest, bad environment variable name) is `invalid_argument` with no
 reason: it is a caller bug, and nothing should branch on it.
@@ -244,9 +262,11 @@ makes one replaceable is that every frontend maps HTTP onto the protocol the sam
   That includes a body of undeclared length, which it must stop reading at the limit.
 - A request target that is not a path starting with `/` (`OPTIONS *`) is never forwarded: the frontend
   answers it itself, with a 2xx or a 4xx.
-- `HttpRequest` carries the method; `host` as the `Host` header arrived; the `path`, **decoded** (percent-decoded once,
+- `HttpRequest` carries the method; `host` as the `Host` header arrived (for an absolute-form target, the authority of
+  the target, which takes precedence over the header: RFC 9112 3.2.2); the `path`, **decoded** (percent-decoded once,
   by the frontend; dot segments and repeated slashes are kept, nothing is cleaned); `raw_query` as received, still
   encoded (the query without its `?`); the body; and `remote_addr`, the peer's `ip:port`. See "HTTP messages".
+- `CONNECT` is answered 405 and not forwarded: a function is not a tunnel.
 - A request whose target contains a byte outside printable ASCII (a space, a control character, DEL, or any byte of
   0x80 and above), or whose path does not decode to text, is answered 400 and never forwarded. See "HTTP messages".
 - Header names are lower-cased and every value kept, in order, **as the bytes it arrived as**. Headers that describe one connection
@@ -260,7 +280,8 @@ makes one replaceable is that every frontend maps HTTP onto the protocol the sam
 - `request_id` is the client's `X-Request-Id` if it is made of the bytes 0x21 to 0x7E (printable ASCII **without the
   space**) and is at most 128 of them, otherwise a fresh unique value. If the request carries several `X-Request-Id`
   headers the first is the one considered. It is echoed in the `X-Request-Id` header of every response, successful or
-  not, and it is the platform's: a function that writes its own `X-Request-Id` (or `X-Edgerun-Invocation-Id`) header
+  not (a request the HTTP stack refuses before any application code runs, an undecodable path for instance, may carry
+  none: that is a limit of the stack, not of the rule), and it is the platform's: a function that writes its own `X-Request-Id` (or `X-Edgerun-Invocation-Id`) header
   in its response does not get it through; the frontend's value replaces it. (A frontend built on an HTTP stack that
   refuses some requests before application code sees them can only echo a fresh id for those: that is allowed.)
 - `Invoke` is called with the frontend's whole-request budget as its deadline, with the ingress
@@ -280,6 +301,8 @@ makes one replaceable is that every frontend maps HTTP onto the protocol the sam
 - A head with a header whose name is not a token or whose value has a control character other than tab (see "HTTP
   messages") is a violation of the protocol by the orchestrator: it is answered 502 as a whole, and no part of the
   offending header reaches the client.
+- A function's response is forwarded as it wrote it: the frontend invents no `Content-Type` for a response that has none,
+  and a 205 is answered without content (RFC 9110 15.3.6; 204 and 304 likewise).
 - The head's status must be 200–599; anything else is a platform fault and is answered 502. Headers
   are forwarded as given, repeated ones included, except the connection-level ones above and
   `content-length`: the frontend frames the response itself.
@@ -287,7 +310,9 @@ makes one replaceable is that every frontend maps HTTP onto the protocol the sam
 - The invocation the response belongs to is named in an `X-Edgerun-Invocation-Id` header: with the head's
   `invocation_id`, and on a platform error with the `invocation_id` of its `ErrorInfo`, when there is one (an
   error for a request that was not routed has none, and the header is absent). It is the way from a response, or
-  a failure, to its record (`GetInvocation`), whoever the client is. Like the request id it is an identifier,
+  a failure, to its record (`GetInvocation`), whoever the client is. A failure the frontend declares on its own,
+  its deadline expiring while the orchestrator is still working, has no invocation id to give: the request id
+  finds the record (`ListInvocations` with a `request_id`). Like the request id it is an identifier,
   never a place for a message.
 - A function's own error statuses, 500 included, are forwarded as they are.
 - A platform error before the head is answered with the status in the table above, a generic body
@@ -774,8 +799,12 @@ on **WASI preview 1** (`wasip1`). Anything that compiles to a preview-1 command 
 | `QUERY_STRING` | raw query, no `?` |
 | `REMOTE_ADDR` | client address |
 | `CONTENT_LENGTH` | body length in bytes, as measured; a `content-length` header is not also passed |
-| `CONTENT_TYPE` | request `content-type`, if any; it is not also passed as `HTTP_CONTENT_TYPE` |
-| `HTTP_<NAME>` | each other header, upper-cased, `-` → `_`; repeated headers joined with `, ` |
+| `CONTENT_TYPE` | the request's first `content-type`, if any; it is not also passed as `HTTP_CONTENT_TYPE` |
+| `HTTP_<NAME>` | each other header, upper-cased, `-` → `_`; repeated headers joined with `, ` (`cookie`: `; `, RFC 6265) |
+
+A header whose name contains `_` is **not given to the guest**: it would become the same variable as the name spelt with
+`-` (`x_forwarded_for` and `x-forwarded-for` are both `HTTP_X_FORWARDED_FOR`), and a client could use it to shadow one the
+platform set. There is no `HTTP_HOST`: the `Host` is `SERVER_NAME`. A guest that reads CGI's `HTTP_HOST` finds nothing.
 
 User-defined environment variables are added after these. Names colliding with the table, or
 starting with `HTTP_`, are rejected when the variable is set.

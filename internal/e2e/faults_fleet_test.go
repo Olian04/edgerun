@@ -125,8 +125,7 @@ func TestFaults_WorkerRejoinsAfterLinkFaults(t *testing.T) {
 // link is healthy again, until someone restarts the worker. protocol.md: "A worker
 // that has not heartbeated for three intervals is not alive": nothing in the
 // worker makes sure it keeps heartbeating.
-func TestFaults_KnownDefect_HeartbeatOnBlackHoledLink(t *testing.T) {
-	stSkipKnown(t, "D-WK-HEARTBEAT-NO-TIMEOUT", "a heartbeat on a silent connection waits for ever: the worker is lost until restarted")
+func TestFaults_HeartbeatOnBlackHoledLink(t *testing.T) {
 	r := ftNewFleetRig(t, true)
 	s := r.s
 	r.px.Freeze(true)
@@ -135,9 +134,9 @@ func TestFaults_KnownDefect_HeartbeatOnBlackHoledLink(t *testing.T) {
 	eventually(t, "the worker to heartbeat again with no restart, the link being healthy", 12*time.Second, func() bool {
 		return s.aliveWorkers() == 1
 	})
-	if res := s.call(req{host: "fleet.test", path: "/echo"}); res.err != nil {
-		t.Errorf("after the link came back: %v", res.err)
-	}
+	eventually(t, "the worker to serve again (the orchestrator's view of the fleet is refreshed on an interval)", 15*time.Second, func() bool {
+		return s.call(req{host: "fleet.test", path: "/echo"}).err == nil
+	})
 }
 
 // A worker started while the orchestrator is unreachable keeps trying and joins when it can.

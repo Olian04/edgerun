@@ -152,6 +152,12 @@ server.on("checkContinue", (req, res) => {
   handle(req, res);
 });
 server.requestTimeout = 120_000;
+// CONNECT is for proxies: a function is not a tunnel (docs/protocol.md, "Frontend behaviour").
+server.on("connect", (req, socket) => {
+  socket.on("error", () => {});
+  if (socket.destroyed || !socket.writable) return;
+  socket.end("HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+});
 
 async function handle(req, res) {
   const requestId = pickRequestId(req.rawHeaders);
@@ -318,15 +324,16 @@ async function serve(req, res, requestId, reply) {
     }
     outHeaders.push("x-request-id", requestId);
     if (head.invocationId) outHeaders.push("x-edgerun-invocation-id", head.invocationId);
+    if (status === 205) outHeaders.push("content-length", "0"); // no content, and not framed as chunked either
     res.writeHead(status, outHeaders);
     headSent = true;
-    res.write(Buffer.alloc(0)); // NOT flushHeaders(): Node then encodes header strings as UTF-8, not latin1
+    if (status !== 205) res.write(Buffer.alloc(0)); // NOT flushHeaders(): Node then encodes header strings as UTF-8, not latin1
     for (;;) {
       const n = await iter.next();
       if (n.done) break;
       const p = n.value.part;
       if (p.case !== "chunk") throw new Error("unexpected message after head");
-      if (p.value.length === 0) continue;
+      if (p.value.length === 0 || status === 205) continue; // a 205 has no content (RFC 9110 15.3.6)
       if (!res.write(p.value)) {
         await Promise.race([once(res, "drain"), once(res, "close")]);
         if (res.destroyed) return;

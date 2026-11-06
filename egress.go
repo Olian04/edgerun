@@ -36,7 +36,7 @@ func (e *Egress) Fetch(ctx context.Context, req *egressv1.FetchRequest) (*Respon
 	}
 	res, _, err := openStream(st,
 		func(m *egressv1.FetchResponse) *commonv1.HttpResponseHead { return m.GetHead() },
-		func(m *egressv1.FetchResponse) []byte { return m.GetChunk() })
+		func(m *egressv1.FetchResponse) ([]byte, error) { return m.GetChunk(), nil })
 	return res, err
 }
 

@@ -25,6 +25,7 @@ var codes = map[commonv1.ErrorReason]connect.Code{
 	commonv1.ErrorReason_ERROR_REASON_INTERNAL:           connect.CodeInternal,
 	commonv1.ErrorReason_ERROR_REASON_EGRESS_DENIED:      connect.CodePermissionDenied,
 	commonv1.ErrorReason_ERROR_REASON_EGRESS_FAILED:      connect.CodeUnavailable,
+	commonv1.ErrorReason_ERROR_REASON_CANCELLED:          connect.CodeCanceled,
 }
 
 // Code returns the canonical Connect code for a reason.

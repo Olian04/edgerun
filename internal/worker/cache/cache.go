@@ -21,8 +21,6 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/sync/singleflight"
-
 	"github.com/Olian04/edgerun"
 	"github.com/Olian04/edgerun/internal/errs"
 )
@@ -61,7 +59,8 @@ type Store struct {
 	fetcher      Fetcher
 	maxBytes     int64
 	fetchTimeout time.Duration
-	group        singleflight.Group
+	fmu          sync.Mutex
+	fetches      map[string]*fetch
 	requests     metric.Int64Counter
 
 	mu    sync.Mutex
@@ -78,7 +77,7 @@ type item struct {
 // New returns a store that keeps at most maxBytes of artifacts.
 func New(f Fetcher, maxBytes int64) *Store {
 	return &Store{
-		fetcher: f, maxBytes: maxBytes, fetchTimeout: 60 * time.Second,
+		fetcher: f, maxBytes: maxBytes, fetchTimeout: 60 * time.Second, fetches: map[string]*fetch{},
 		items: map[string]*list.Element{}, lru: list.New(), requests: newRequests(),
 	}
 }
@@ -99,40 +98,85 @@ func (s *Store) Get(ctx context.Context, digest string) ([]byte, error) {
 		s.note(ctx, span, "hit")
 		return b, nil
 	}
-	led := false
-	ch := s.group.DoChan(digest, func() (any, error) {
-		led = true
-		// A caller may have filled the cache between our lookup and here.
-		if b, ok := s.lookup(digest); ok {
-			return b, nil
-		}
-		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.fetchTimeout)
-		defer cancel()
-		b, err := s.fetcher.Fetch(fctx, digest)
-		if err != nil {
-			return nil, err
-		}
-		if Digest(b) != digest {
-			return nil, fmt.Errorf("%w: wanted %s", ErrDigestMismatch, digest)
-		}
-		s.store(digest, b)
-		return b, nil
-	})
+	f, led := s.join(digest)
 	select {
-	case r := <-ch:
-		if r.Err != nil {
+	case <-f.done:
+		if f.err != nil {
 			span.SetStatus(codes.Error, "artifact unavailable")
 			s.note(ctx, span, "error")
-			return nil, r.Err
+			return nil, f.err
 		}
 		if led {
 			s.note(ctx, span, "fetched")
 		} else {
 			s.note(ctx, span, "shared") // another invocation was already fetching it
 		}
-		return r.Val.([]byte), nil
+		return f.data, nil
 	case <-ctx.Done():
+		s.leave(digest, f)
 		return nil, ctx.Err()
+	}
+}
+
+// fetch is one fetch of one digest, shared by every caller that wants it while
+// it runs.
+type fetch struct {
+	done    chan struct{}
+	data    []byte
+	err     error
+	waiters int
+	cancel  context.CancelFunc
+}
+
+// join returns the fetch of digest, starting it if there is none, and counts the
+// caller as waiting for it. led says whether this call started it.
+func (s *Store) join(digest string) (f *fetch, led bool) {
+	s.fmu.Lock()
+	defer s.fmu.Unlock()
+	if f, ok := s.fetches[digest]; ok {
+		f.waiters++
+		return f, false
+	}
+	// The fetch belongs to the callers that wait for it, not to the first of them: an impatient one
+	// must not fail the others. It ends when it finishes, at the timeout, or when the last of them
+	// has given up (a fetch that nobody waits for is abandoned, not left to block the digest).
+	fctx, cancel := context.WithTimeout(context.Background(), s.fetchTimeout)
+	f = &fetch{done: make(chan struct{}), waiters: 1, cancel: cancel}
+	s.fetches[digest] = f
+	go func() {
+		defer cancel()
+		// A caller may have filled the cache between its lookup and here.
+		if b, ok := s.lookup(digest); ok {
+			f.data = b
+		} else if b, err := s.fetcher.Fetch(fctx, digest); err != nil {
+			f.err = err
+		} else if Digest(b) != digest {
+			f.err = fmt.Errorf("%w: wanted %s", ErrDigestMismatch, digest)
+		} else {
+			s.store(digest, b)
+			f.data = b
+		}
+		s.fmu.Lock()
+		if s.fetches[digest] == f {
+			delete(s.fetches, digest)
+		}
+		s.fmu.Unlock()
+		close(f.done)
+	}()
+	return f, true
+}
+
+// leave takes a caller out of the waiters of f; the last to leave abandons the
+// fetch, and the digest is free to be fetched afresh.
+func (s *Store) leave(digest string, f *fetch) {
+	s.fmu.Lock()
+	defer s.fmu.Unlock()
+	f.waiters--
+	if f.waiters == 0 {
+		f.cancel()
+		if s.fetches[digest] == f {
+			delete(s.fetches, digest)
+		}
 	}
 }
 

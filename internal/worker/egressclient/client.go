@@ -52,6 +52,10 @@ func (c *Client) Fetch(ctx context.Context, req runtime.NetRequest) (*runtime.Ne
 		return nil, classify(err)
 	}
 	defer res.Body.Close()
+	if st := res.Head.GetStatus(); st < 200 || st > 599 {
+		// The head's status is 200-599 (docs/protocol.md): anything else is the service breaking the protocol, not an answer.
+		return nil, &runtime.NetError{Kind: runtime.NetFailed, Msg: "the network service answered with an invalid status"}
+	}
 
 	// A service that exceeds the bound it was given is not trusted to stop.
 	var body io.Reader = res.Body

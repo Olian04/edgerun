@@ -120,9 +120,9 @@ func TestCorpusResponse(t *testing.T) {
 				t.Errorf("the body changed on the way (%d bytes)", len(ex.resps[0].body))
 			}
 		}},
-		{name: "no Content-Type: the frontend sniffs one", raw: raw("\n<html><body>x</body></html>"), want: []string{"200"}, check: hdrIs("Content-Type", "text/html; charset=utf-8"),
-			silent: "a guest that sends no Content-Type gets one invented by the HTTP library's content sniffing (text/html here); the spec does not say whether the frontend may add or must omit it, and a guest cannot ask for none"},
-		{name: "no Content-Type on a binary body", raw: raw("\n\x00\x01\x02\xff\xfe"), want: []string{"200"}, check: hdrIs("Content-Type", "application/octet-stream")},
+		{name: "no Content-Type: none is invented", raw: raw("\n<html><body>x</body></html>"), want: []string{"200"}, check: hdrIs("Content-Type"),
+			spec: "HTTP messages: a response is forwarded as the function wrote it: no Content-Type is invented"},
+		{name: "no Content-Type on a binary body", raw: raw("\n\x00\x01\x02\xff\xfe"), want: []string{"200"}, check: hdrIs("Content-Type")},
 		{name: "a Date header is added", raw: raw(text("\nx")), check: func(t *testing.T, ex *exch) {
 			d := ex.resps[0].header.Get("Date")
 			if _, err := http.ParseTime(d); err != nil {
@@ -146,8 +146,7 @@ func TestCorpusResponse(t *testing.T) {
 			}), sentinel: true, silent: "docs/protocol.md does not say what happens to a body the guest wrote with a status that forbids one (204, 304): it is dropped silently, and the invocation counts as a success"},
 		{name: "304 with a body and a lying Content-Length", raw: raw("Status: 304 Not Modified\nContent-Length: 99\nETag: \"x\"\n\nbody"), want: []string{seq("304", ok("/sentinel", 0))}, check: all(bodyIs(""), hdrIs("Etag", `"x"`)), sentinel: true},
 		{name: "205 with a body", raw: raw("Status: 205 Reset Content\n\nbody that RFC 9110 15.3.6 forbids"), want: []string{seq("205", ok("/sentinel", 0))}, sentinel: true,
-			check: bodyIs(""), spec: "RFC 9110 15.3.6: a server MUST NOT generate content in a 205",
-			defect: "CORPUS-205: a guest's 205 with a body is forwarded with the body (the HTTP library only strips bodies for 1xx, 204 and 304); a client that honours RFC 9110 15.3.6 mis-frames the answer. Low severity"},
+			check: bodyIs(""), spec: "RFC 9110 15.3.6: a server MUST NOT generate content in a 205"},
 		abi("status 100", "Status: 100 Continue\n\nx", specStatus),
 		abi("status 101", "Status: 101 Switching Protocols\nUpgrade: websocket\nConnection: Upgrade\n\n", specStatus),
 		abi("status 103", "Status: 103 Early Hints\nLink: </a.css>; rel=preload\n\nx", specStatus),
@@ -167,10 +166,8 @@ func TestCorpusResponse(t *testing.T) {
 		abi("status with an underscore", "Status: 2_00\n\nx", specStatus),
 		abi("an HTTP status line instead of a Status header", "HTTP/1.1 200 OK\nContent-Type: text/plain\n\nx", specStatus),
 		abi("status 200.5", "Status: 200.5\n\nx", specStatus),
-		{name: "status with a plus sign", raw: raw("Status: +200\n\nx"), want: []string{"502"}, check: platformFault, spec: specStatus,
-			defect: "CORPUS-STATUS: `Status: +200` (and `0200`) is accepted as 200: the worker parses the code with a lenient integer parser, so a value that is not three digits is a valid status (low)"},
-		{name: "status with leading zeros", raw: raw("Status: 0200\n\nx"), want: []string{"502"}, check: platformFault, spec: specStatus,
-			defect: "CORPUS-STATUS: same, leading zeros accepted"},
+		{name: "status with a plus sign", raw: raw("Status: +200\n\nx"), want: []string{"502"}, check: platformFault, spec: specStatus},
+		{name: "status with leading zeros", raw: raw("Status: 0200\n\nx"), want: []string{"502"}, check: platformFault, spec: specStatus},
 		{name: "status two numbers is valid (the rest is the reason)", raw: raw("Status: 200 300\n\nx"), want: []string{"200"}},
 
 		// ---- header syntax ----------------------------------------------------------------------

@@ -108,9 +108,11 @@ func (c *Client) setID(id string) {
 func (c *Client) register(ctx context.Context) (string, time.Duration, error) {
 	delay := c.cfg.RetryMin
 	for {
-		resp, err := c.cfg.Fleet.Register(ctx, &workerv1.RegisterRequest{
+		cctx, cancel := context.WithTimeout(ctx, callTimeout(0))
+		resp, err := c.cfg.Fleet.Register(cctx, &workerv1.RegisterRequest{
 			Endpoint: c.cfg.Endpoint, Info: c.cfg.Info,
 		})
+		cancel()
 		if err == nil {
 			interval := resp.GetHeartbeatInterval().AsDuration()
 			if interval <= 0 {
@@ -145,9 +147,11 @@ func (c *Client) heartbeats(ctx context.Context, id string, interval time.Durati
 		case <-t.C:
 		case <-c.poke:
 		}
-		resp, err := c.cfg.Fleet.Heartbeat(ctx, &workerv1.HeartbeatRequest{
+		cctx, cancel := context.WithTimeout(ctx, callTimeout(interval))
+		resp, err := c.cfg.Fleet.Heartbeat(cctx, &workerv1.HeartbeatRequest{
 			WorkerId: id, State: c.cfg.Source.State(), InFlight: c.cfg.Source.InFlight(),
 		})
+		cancel()
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -167,4 +171,11 @@ func (c *Client) heartbeats(ctx context.Context, id string, interval time.Durati
 			return nil
 		}
 	}
+}
+
+// callTimeout bounds one call to the orchestrator: a call on a connection that has
+// gone silent (a mapping that expired, a hung peer) must end, or the loop that
+// makes it would wait forever and the service would never be alive again.
+func callTimeout(interval time.Duration) time.Duration {
+	return min(max(interval, 2*time.Second), 15*time.Second)
 }

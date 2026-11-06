@@ -82,7 +82,8 @@ export function guestTraceparent(callTraceparent, newSpanId = () => randomBytes(
 }
 
 const COMMA = Buffer.from(", ");
-const join = (a, b) => Buffer.concat([a, COMMA, b]);
+const SEMI = Buffer.from("; ");
+const join = (a, b, sep = COMMA) => Buffer.concat([a, sep, b]);
 
 /**
  * The guest's environment: name -> BYTES. Strings are encoded as UTF-8; header
@@ -113,15 +114,19 @@ export function buildEnv(req, bodyLength, userEnv, traceparent = null) {
     const name = h.name.toLowerCase();
     const value = Buffer.from(h.value.buffer, h.value.byteOffset, h.value.byteLength);
     if (name === "content-type") {
-      // "request content-type, if any"; a repeated one is joined like any other.
-      contentType = contentType === undefined ? value : join(contentType, value);
+      // "the request's first content-type, if any": a second one is not a different type.
+      if (contentType === undefined) contentType = value;
       continue;
     }
     // CONTENT_LENGTH above is the measured length: the client's own header is not repeated.
     if (name === "content-length") continue;
     if (CLIENT_TRACE_HEADERS.has(name)) continue;
+    // A name with an underscore would be the same variable as its dash spelling (and let a client shadow a header
+    // the platform set): it is not given to the guest ("Guest ABI wagi-1").
+    if (name.includes("_")) continue;
     const key = "HTTP_" + name.toUpperCase().replaceAll("-", "_");
-    repeated.set(key, repeated.has(key) ? join(repeated.get(key), value) : value);
+    // The lines of a Cookie are joined with "; " (RFC 6265), the repeats of any other header with ", ".
+    repeated.set(key, repeated.has(key) ? join(repeated.get(key), value, name === "cookie" ? SEMI : COMMA) : value);
   }
   if (contentType !== undefined) env.set("CONTENT_TYPE", contentType);
   for (const [k, v] of repeated) env.set(k, v);

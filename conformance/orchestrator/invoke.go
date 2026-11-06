@@ -593,6 +593,15 @@ func (h *harness) errorPassthrough(t *testing.T) {
 		case <-time.After(10 * time.Second):
 			t.Error("cancelling the client's call did not stop the worker")
 		}
+		// And the record says why it has no status: the caller gave up.
+		check.Eventually(t, "the record of the abandoned invocation", settle, func() bool {
+			for _, r := range h.records(t, f.fn.GetId(), 0) {
+				if r.GetPath() == "/hang" {
+					return r.GetErrorReason() == commonv1.ErrorReason_ERROR_REASON_CANCELLED && r.GetStatus() == 0
+				}
+			}
+			return false
+		})
 	})
 }
 

@@ -54,11 +54,15 @@ func (e *Execution) Execute(ctx context.Context, req *workerv1.ExecuteRequest) (
 	out := &ExecutionResult{}
 	res, _, err := openStream(st,
 		func(m *workerv1.ExecuteResponse) *commonv1.HttpResponseHead { return m.GetHead() },
-		func(m *workerv1.ExecuteResponse) []byte {
+		func(m *workerv1.ExecuteResponse) ([]byte, error) {
+			if out.summary != nil {
+				// The summary closes the response: exactly one head, chunks, exactly one summary.
+				return nil, errAfterSummary
+			}
 			if s := m.GetSummary(); s != nil {
 				out.summary = s
 			}
-			return m.GetChunk()
+			return m.GetChunk(), nil
 		})
 	if err != nil {
 		return nil, err

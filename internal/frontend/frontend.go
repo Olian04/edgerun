@@ -137,6 +137,10 @@ func (f *Frontend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(rec, "Bad Request", http.StatusBadRequest)
 		return
 	}
+	if r.Method == http.MethodConnect { // for proxies: a function is not a tunnel
+		http.Error(rec, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	// The request target is ASCII (RFC 9112): a byte outside it, or a control
 	// character, is not a request this edge can describe faithfully. The path is
 	// carried decoded, so it must come out as text (docs/protocol.md,
@@ -186,11 +190,12 @@ func (f *Frontend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeHead(rec, res, reqID)
+	noBody := res.Status() == http.StatusResetContent // RFC 9110 15.3.6: a 205 has no content (Go strips 1xx, 204 and 304)
 	rc := http.NewResponseController(rec)
 	buf := make([]byte, 64<<10)
 	for {
 		n, err := res.Body.Read(buf)
-		if n > 0 {
+		if n > 0 && !noBody {
 			rc.SetWriteDeadline(time.Now().Add(writeTimeout))
 			if _, werr := rec.Write(buf[:n]); werr != nil && !errors.Is(werr, http.ErrBodyNotAllowed) {
 				return // the client went away; cancel() ends the invocation
@@ -264,6 +269,9 @@ func writeHead(w http.ResponseWriter, res *edgerun.Invocation, reqID string) {
 			continue
 		}
 		h.Add(n, string(hd.GetValue()))
+	}
+	if _, ok := h["Content-Type"]; !ok {
+		h["Content-Type"] = nil // a function that sets none gets none: no sniffing by this server
 	}
 	h.Set("X-Request-Id", reqID)
 	if id := res.ID; id != "" {

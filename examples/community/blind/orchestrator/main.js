@@ -287,7 +287,7 @@ const ingressImpl = {
           rec.workerId = w.id;
         } catch (e) {
           if (e instanceof ConnectError && errorInfo(e)?.invocationId === rec.id) throw e; // our own `fail`
-          if (ctx.signal.aborted && !expired()) throw e; // the client went away
+          if (ctx.signal.aborted && !expired()) { rec.errorReason = ErrorReason.CANCELLED; throw e; } // the client went away
           if (expired()) throw fail(ErrorReason.DEADLINE_EXCEEDED, "the deadline expired");
           const info = errorInfo(e);
           rec.workerId = w.id;
@@ -327,7 +327,7 @@ const ingressImpl = {
         }
       } catch (e) {
         if (e instanceof ConnectError && errorInfo(e)?.invocationId === rec.id) throw e;
-        if (ctx.signal.aborted && !expired()) throw e;
+        if (ctx.signal.aborted && !expired()) { rec.errorReason = ErrorReason.CANCELLED; throw e; }
         const info = errorInfo(e);
         if (expired()) throw fail(ErrorReason.DEADLINE_EXCEEDED, "the deadline expired");
         throw fail(info && info.reason !== ErrorReason.UNSPECIFIED ? info.reason : ErrorReason.INTERNAL, info?.message || "the worker's stream failed");

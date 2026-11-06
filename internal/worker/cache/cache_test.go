@@ -244,3 +244,65 @@ func TestArtifactFetcher(t *testing.T) {
 		t.Errorf("size cap not enforced: %v", err)
 	}
 }
+
+// stuckThenFine blocks its first fetch until its context ends and serves every
+// later one at once: a peer that stalled, then recovered.
+type stuckThenFine struct {
+	b     []byte
+	calls atomic.Int32
+}
+
+func (f *stuckThenFine) Fetch(ctx context.Context, d string) ([]byte, error) {
+	if f.calls.Add(1) == 1 {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	return f.b, nil
+}
+
+// A fetch that nobody waits for any more is abandoned: it must not keep the
+// digest unservable until its own timeout (the first invocation fails at its
+// deadline; the next one must not join a fetch that is stuck).
+func TestAnAbandonedFetchDoesNotBlockTheDigest(t *testing.T) {
+	b, d := blob("module")
+	f := &stuckThenFine{b: b}
+	s := New(f, 1<<20)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if _, err := s.Get(ctx, d); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("the first Get: %v, want its deadline", err)
+	}
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel2()
+	got, err := s.Get(ctx2, d)
+	if err != nil || !bytes.Equal(got, b) {
+		t.Fatalf("the next Get joined the stuck fetch: %v", err)
+	}
+	if f.calls.Load() != 2 {
+		t.Errorf("%d fetches, want 2 (the stuck one, abandoned, and a fresh one)", f.calls.Load())
+	}
+}
+
+// One impatient caller must not take the fetch from the others.
+func TestOneImpatientCallerDoesNotAbandonTheFetch(t *testing.T) {
+	b, d := blob("module")
+	f := &fakeFetcher{blobs: map[string][]byte{d: b}, gate: make(chan struct{})}
+	s := New(f, 1<<20)
+
+	impatient, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	patient := make(chan error, 1)
+	go func() { _, err := s.Get(context.Background(), d); patient <- err }()
+	time.Sleep(20 * time.Millisecond)
+	if _, err := s.Get(impatient, d); err == nil {
+		t.Fatal("the impatient caller got an answer before the gate opened")
+	}
+	close(f.gate)
+	if err := <-patient; err != nil {
+		t.Errorf("the patient caller: %v", err)
+	}
+	if f.calls.Load() != 1 {
+		t.Errorf("%d fetches, want 1 shared", f.calls.Load())
+	}
+}

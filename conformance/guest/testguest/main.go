@@ -51,6 +51,9 @@ func main() {
 	case "/ctlheader":
 		// ABI violation: a control character in a header value.
 		fmt.Print("Content-Type: text/plain\nX-Bad: a\x01b\n\nbody\n")
+	case "/rawstatus":
+		// The Status header exactly as given, for the ones that are not valid.
+		fmt.Printf("Status: %s\nContent-Type: text/plain\n\nx", q.Get("v"))
 	case "/status":
 		fmt.Printf("Status: %d Test\nX-Test: 1\nSet-Cookie: a=1\nSet-Cookie: b=2\nContent-Type: text/plain\n\nstatus\n", num("code", 200))
 	case "/stderr":

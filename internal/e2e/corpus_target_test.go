@@ -163,7 +163,6 @@ func TestCorpusTarget(t *testing.T) {
 					t.Errorf("RFC 9112 6.3 / 9110 8.6: a 2xx answer to CONNECT turns the connection into a tunnel and carries neither Content-Length nor Transfer-Encoding; got te=%v CL=%q", r.te, r.header.Get("Content-Length"))
 				}
 			},
-			defect: "CORPUS-CONNECT: a function can answer CONNECT /x with 200; the frontend frames it with chunked (RFC 9110 9.3.6 turns the connection into a tunnel after the head, and a client that honours that reads chunk framing as tunnel data)",
 			silent: "the spec never says what to do with CONNECT/TRACE and other methods; an origin-form CONNECT is malformed per RFC 9112 3.2.3 but is forwarded"},
 
 		// ---- request line --------------------------------------------------------------------

@@ -711,6 +711,35 @@ func (h *harness) httpMessages(t *testing.T) {
 		}
 	})
 
+	t.Run("a header whose name has an underscore is not given to the guest", func(t *testing.T) {
+		out := h.ok(t, invocation{path: "/env", clientHeaders: []*commonv1.Header{
+			{Name: "x-a", Value: []byte("dash")}, {Name: "x_a", Value: []byte("underscore")},
+			{Name: "x_forwarded_for", Value: []byte("6.6.6.6")}, {Name: "content_type", Value: []byte("evil/type")}, {Name: "content_length", Value: []byte("99")}}})
+		env := string(out.body)
+		if !strings.Contains(env, "HTTP_X_A=dash\n") || strings.Contains(env, "underscore") || strings.Contains(env, "6.6.6.6") ||
+			strings.Contains(env, "evil/type") || strings.Contains(env, "HTTP_CONTENT_LENGTH") {
+			t.Errorf("a header named with an underscore would shadow the one spelt with a dash (and a client could forge x-forwarded-for); the guest saw:\n%s", env)
+		}
+	})
+
+	t.Run("cookies are joined with a semicolon and the first content-type is the request's", func(t *testing.T) {
+		out := h.ok(t, invocation{path: "/env", clientHeaders: []*commonv1.Header{
+			{Name: "cookie", Value: []byte("a=1")}, {Name: "cookie", Value: []byte("b=2")}, {Name: "content-type", Value: []byte("text/other")}}})
+		env := string(out.body)
+		if !strings.Contains(env, "HTTP_COOKIE=a=1; b=2\n") || !strings.Contains(env, "CONTENT_TYPE=text/x-conformance\n") {
+			t.Errorf("guest environment:\n%s", env)
+		}
+	})
+
+	t.Run("a Status that is not exactly three digits is an ABI violation", func(t *testing.T) {
+		for _, v := range []string{"%2B200", "0200", "20", "2000", "200.5", "abc", "100", "199", "600"} {
+			wantReason(t, h.call(t, invocation{path: "/rawstatus", query: "v=" + v}).err, commonv1.ErrorReason_ERROR_REASON_ABI_MISMATCH)
+		}
+		if out := h.ok(t, invocation{path: "/rawstatus", query: "v=204 No Content"}); out.head.GetStatus() != 204 {
+			t.Errorf("Status: 204 No Content: status %d", out.head.GetStatus())
+		}
+	})
+
 	t.Run("a control character in a response header is an ABI violation", func(t *testing.T) {
 		wantReason(t, h.call(t, invocation{path: "/ctlheader"}).err, commonv1.ErrorReason_ERROR_REASON_ABI_MISMATCH)
 	})

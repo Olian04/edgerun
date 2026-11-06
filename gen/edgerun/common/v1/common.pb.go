@@ -56,6 +56,11 @@ const (
 	// Egress: the destination was allowed but could not be reached, or the
 	// exchange broke part-way.
 	ErrorReason_ERROR_REASON_EGRESS_FAILED ErrorReason = 11
+	// The caller gave up before the invocation finished (its connection ended, or
+	// it cancelled): nobody is waiting for an answer. It is the reason of the
+	// invocation record of such a call; a caller that is still there is never
+	// answered with it.
+	ErrorReason_ERROR_REASON_CANCELLED ErrorReason = 12
 )
 
 // Enum value maps for ErrorReason.
@@ -73,6 +78,7 @@ var (
 		9:  "ERROR_REASON_INTERNAL",
 		10: "ERROR_REASON_EGRESS_DENIED",
 		11: "ERROR_REASON_EGRESS_FAILED",
+		12: "ERROR_REASON_CANCELLED",
 	}
 	ErrorReason_value = map[string]int32{
 		"ERROR_REASON_UNSPECIFIED":        0,
@@ -87,6 +93,7 @@ var (
 		"ERROR_REASON_INTERNAL":           9,
 		"ERROR_REASON_EGRESS_DENIED":      10,
 		"ERROR_REASON_EGRESS_FAILED":      11,
+		"ERROR_REASON_CANCELLED":          12,
 	}
 )
 
@@ -280,7 +287,7 @@ func (x *HttpRequest) GetRemoteAddr() string {
 // the first part of a response stream.
 type HttpResponseHead struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// HTTP status code, 100-599 excluding 1xx.
+	// HTTP status code, 200-599.
 	Status        uint32    `protobuf:"varint,1,opt,name=status,proto3" json:"status,omitempty"`
 	Headers       []*Header `protobuf:"bytes,2,rep,name=headers,proto3" json:"headers,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -612,7 +619,7 @@ const file_edgerun_common_v1_common_proto_rawDesc = "" +
 	"\tErrorInfo\x126\n" +
 	"\x06reason\x18\x01 \x01(\x0e2\x1e.edgerun.common.v1.ErrorReasonR\x06reason\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12#\n" +
-	"\rinvocation_id\x18\x03 \x01(\tR\finvocationId*\x9d\x03\n" +
+	"\rinvocation_id\x18\x03 \x01(\tR\finvocationId*\xb9\x03\n" +
 	"\vErrorReason\x12\x1c\n" +
 	"\x18ERROR_REASON_UNSPECIFIED\x10\x00\x12#\n" +
 	"\x1fERROR_REASON_FUNCTION_NOT_FOUND\x10\x01\x12\x1c\n" +
@@ -626,7 +633,8 @@ const file_edgerun_common_v1_common_proto_rawDesc = "" +
 	"\x15ERROR_REASON_INTERNAL\x10\t\x12\x1e\n" +
 	"\x1aERROR_REASON_EGRESS_DENIED\x10\n" +
 	"\x12\x1e\n" +
-	"\x1aERROR_REASON_EGRESS_FAILED\x10\vB\xc5\x01\n" +
+	"\x1aERROR_REASON_EGRESS_FAILED\x10\v\x12\x1a\n" +
+	"\x16ERROR_REASON_CANCELLED\x10\fB\xc5\x01\n" +
 	"\x15com.edgerun.common.v1B\vCommonProtoP\x01Z9github.com/Olian04/edgerun/gen/edgerun/common/v1;commonv1\xa2\x02\x03ECX\xaa\x02\x11Edgerun.Common.V1\xca\x02\x11Edgerun\\Common\\V1\xe2\x02\x1dEdgerun\\Common\\V1\\GPBMetadata\xea\x02\x13Edgerun::Common::V1b\x06proto3"
 
 var (

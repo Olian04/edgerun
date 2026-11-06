@@ -168,6 +168,27 @@ func (h *harness) httpMessages(t *testing.T) {
 		}
 	})
 
+	t.Run("CONNECT is refused and not forwarded", func(t *testing.T) {
+		h.orch.script(answer(200, "ok"))
+		r := h.raw(t, "msg-connect", "CONNECT /x HTTP/1.1\r\n\r\n")
+		if r.status != 405 || h.forwarded("msg-connect") {
+			t.Errorf("status %d (forwarded: %v), want 405 and not forwarded: a function is not a tunnel", r.status, h.forwarded("msg-connect"))
+		}
+	})
+
+	t.Run("a 205 has no content, and a missing Content-Type is not invented", func(t *testing.T) {
+		h.orch.script(answer(205, "body that a 205 may not have"))
+		r := h.raw(t, "msg-205", "GET / HTTP/1.1\r\n\r\n")
+		if r.status != 205 || len(r.body) != 0 {
+			t.Errorf("205: status %d with %d bytes of body", r.status, len(r.body))
+		}
+		h.orch.script(answer(200, "<html><body>x</body></html>"))
+		r = h.raw(t, "msg-nosniff", "GET / HTTP/1.1\r\n\r\n")
+		if v := r.header.Get("Content-Type"); v != "" {
+			t.Errorf("Content-Type = %q: the frontend invented one for a response that had none", v)
+		}
+	})
+
 	t.Run("Host is not repeated in the headers, and content-length is forwarded as received", func(t *testing.T) {
 		h.orch.script(answer(200, "ok"))
 		h.send(t, "msg-host", "POST", "/", strings.NewReader("12345"), nil)

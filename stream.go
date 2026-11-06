@@ -107,7 +107,7 @@ func (b *body) Close() error {
 // chunkOf the payload of a later message, which a seam may also use to notice
 // parts of its own (a summary). A later message that is a head again is a
 // protocol violation.
-func openStream[M any](st *connect.ServerStreamForClient[M], headOf func(*M) *commonv1.HttpResponseHead, chunkOf func(*M) []byte) (*Response, *M, error) {
+func openStream[M any](st *connect.ServerStreamForClient[M], headOf func(*M) *commonv1.HttpResponseHead, chunkOf func(*M) ([]byte, error)) (*Response, *M, error) {
 	if !st.Receive() {
 		err := st.Err()
 		st.Close()
@@ -127,7 +127,7 @@ func openStream[M any](st *connect.ServerStreamForClient[M], headOf func(*M) *co
 		if headOf(m) != nil {
 			return nil, errSecondHead
 		}
-		return chunkOf(m), nil
+		return chunkOf(m)
 	}}}, first, nil
 }
 
@@ -137,5 +137,7 @@ func openStream[M any](st *connect.ServerStreamForClient[M], headOf func(*M) *co
 var ErrProtocol = errors.New("edgerun: the peer violated the protocol")
 
 var errSecondHead = fmt.Errorf("%w: a second response head", ErrProtocol)
+
+var errAfterSummary = fmt.Errorf("%w: a message after the summary, which ends the response", ErrProtocol)
 
 var errNoHead = fmt.Errorf("%w: the stream did not begin with a response head", ErrProtocol)

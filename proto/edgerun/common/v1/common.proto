@@ -37,7 +37,7 @@ message HttpRequest {
 // HttpResponseHead is the status line and headers of a response. It is always
 // the first part of a response stream.
 message HttpResponseHead {
-  // HTTP status code, 100-599 excluding 1xx.
+  // HTTP status code, 200-599.
   uint32 status = 1;
   repeated Header headers = 2;
 }
@@ -105,6 +105,11 @@ enum ErrorReason {
   // Egress: the destination was allowed but could not be reached, or the
   // exchange broke part-way.
   ERROR_REASON_EGRESS_FAILED = 11;
+  // The caller gave up before the invocation finished (its connection ended, or
+  // it cancelled): nobody is waiting for an answer. It is the reason of the
+  // invocation record of such a call; a caller that is still there is never
+  // answered with it.
+  ERROR_REASON_CANCELLED = 12;
 }
 
 // ErrorInfo is attached to every non-OK Connect error as a detail.

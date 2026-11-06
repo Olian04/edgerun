@@ -1,7 +1,9 @@
 package edgerun
 
 import (
+	"net"
 	"net/http"
+	"time"
 
 	"connectrpc.com/connect"
 	"connectrpc.com/otelconnect"
@@ -20,6 +22,9 @@ var defaultHTTP = &http.Client{Transport: func() *http.Transport {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.MaxIdleConns = 256
 	t.MaxIdleConnsPerHost = 64
+	// A peer that cannot be reached is found out in seconds, not in the 30 the standard dialer waits (longer
+	// than the budget of most calls: an unreachable host would eat it instead of failing over).
+	t.DialContext = (&net.Dialer{Timeout: 3 * time.Second, KeepAlive: 30 * time.Second}).DialContext
 	return t
 }()}
 

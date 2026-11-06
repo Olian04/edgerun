@@ -39,11 +39,17 @@ func Env(req *commonv1.HttpRequest, user []*commonv1.EnvVar) ([]KV, error) {
 	joined := map[string][]string{}
 	for _, h := range req.GetHeaders() {
 		name := strings.ToLower(h.GetName())
-		switch name {
-		case "content-type":
-			contentType = string(h.GetValue())
-		case "content-length":
+		switch {
+		case name == "content-type":
+			if contentType == "" { // a second Content-Type is not a different type: the first is the request's
+				contentType = string(h.GetValue())
+			}
+		case name == "content-length":
 			// Replaced by the measured CONTENT_LENGTH above.
+		case strings.Contains(name, "_"):
+			// HTTP_X_FORWARDED_FOR is both x-forwarded-for and x_forwarded_for. A header the guest could not tell
+			// from another, or that a client could use to shadow one the platform set, is not handed over
+			// (docs/protocol.md, "Guest ABI wagi-1").
 		default:
 			joined[name] = append(joined[name], string(h.GetValue()))
 		}
@@ -58,7 +64,11 @@ func Env(req *commonv1.HttpRequest, user []*commonv1.EnvVar) ([]KV, error) {
 	sort.Strings(names)
 	for _, n := range names {
 		key := "HTTP_" + strings.ToUpper(strings.ReplaceAll(n, "-", "_"))
-		env = append(env, KV{key, strings.Join(joined[n], ", ")})
+		sep := ", "
+		if n == "cookie" { // RFC 6265: the cookies of a request are joined with "; ", not ", "
+			sep = "; "
+		}
+		env = append(env, KV{key, strings.Join(joined[n], sep)})
 	}
 
 	for _, u := range user {
@@ -124,7 +134,7 @@ func ParseResponse(out []byte) (*commonv1.HttpResponseHead, []byte, error) {
 func parseStatus(v string) (uint32, error) {
 	num, _, _ := strings.Cut(v, " ")
 	code, err := strconv.Atoi(num)
-	if err != nil || code < 200 || code > 599 {
+	if err != nil || len(num) != 3 || code < 200 || code > 599 { // exactly three digits: not "+200", not "0200"
 		return 0, fmt.Errorf("invalid status %q: want a code in 200-599", v)
 	}
 	return uint32(code), nil

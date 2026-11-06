@@ -67,8 +67,7 @@ func TestCorpusHost(t *testing.T) {
 			guest: g("HTTP_X_FORWARDED_HOST", "CORPUS.test:81", "-HTTP_FORWARDED", "WHO", "exact"),
 			spec:  "Frontend behaviour: the frontend sets x-forwarded-host itself, from the connection; client copies are discarded"},
 		{name: "X-Forwarded-Host with underscores is not discarded", raw: host("corpus.test", "X_Forwarded_Host: evil.test"),
-			guest:  g("HTTP_X_FORWARDED_HOST", "corpus.test"),
-			defect: "CORPUS-UNDERSCORE: a client header x_forwarded_host maps to the same guest variable HTTP_X_FORWARDED_HOST as the frontend's x-forwarded-host, so the guest environment holds two entries of the name and the client's can win (docs/protocol.md \"Frontend behaviour\": client-supplied forwarding headers are discarded)"},
+			guest: g("HTTP_X_FORWARDED_HOST", "corpus.test")},
 	}
 	runRows(t, e, rows)
 }

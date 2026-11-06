@@ -314,10 +314,9 @@ func TestFaults_GoneClientCancelsTheWorker(t *testing.T) { ftGoneClient(t) }
 // "cancelled", and the record of a function that ran and was abandoned cannot be told
 // from one that was never answered at all. Every cut Invoke between a frontend and an
 // orchestrator leaves such a record.
-func TestFaults_KnownDefect_CancelledInvocationRecord(t *testing.T) {
-	stSkipKnown(t, "D-OR-CANCEL-RECORD", "an invocation cancelled by its client is recorded with error_reason UNSPECIFIED and status 0, like nothing happened")
+func TestFaults_CancelledInvocationRecord(t *testing.T) {
 	rec := ftGoneClient(t)
-	if rec != nil && rec.ErrorReason == commonv1.ErrorReason_ERROR_REASON_UNSPECIFIED {
-		t.Fatalf("a cancelled invocation is recorded with status %d and no error reason", rec.Status)
+	if rec != nil && rec.ErrorReason != commonv1.ErrorReason_ERROR_REASON_CANCELLED {
+		t.Fatalf("a cancelled invocation is recorded with status %d and reason %v, want CANCELLED", rec.Status, rec.ErrorReason)
 	}
 }

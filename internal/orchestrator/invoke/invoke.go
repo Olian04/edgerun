@@ -50,7 +50,7 @@ type Recorder interface{ Record(*controlv1.Invocation) }
 type Config struct {
 	Cache    *snapshot.Cache
 	Recorder Recorder
-	// HTTP is the client used to reach workers.
+	// HTTP is the client used to reach workers. Nil: the library's pooled client (short dial timeout).
 	HTTP *http.Client
 	// ExecutionToken is presented to workers.
 	ExecutionToken string
@@ -90,9 +90,6 @@ func New(cfg Config) *Service {
 	}
 	if cfg.DownFor == 0 {
 		cfg.DownFor = 5 * time.Second
-	}
-	if cfg.HTTP == nil {
-		cfg.HTTP = &http.Client{}
 	}
 	if cfg.Version == "" {
 		cfg.Version = "dev"
@@ -348,7 +345,7 @@ func (s *Service) translate(ctx context.Context, err error) error {
 		// transport as cancelled too, and passing that on would tell the frontend
 		// that nobody is waiting, so it would answer nothing: a success, silently.
 		if ctx.Err() != nil {
-			return connect.NewError(connect.CodeCanceled, errors.New("request cancelled"))
+			return errs.New(commonv1.ErrorReason_ERROR_REASON_CANCELLED, "request cancelled")
 		}
 	}
 	s.cfg.Log.ErrorContext(ctx, "worker call failed", "error", err)
@@ -359,7 +356,11 @@ func (s *Service) client(endpoint string) *edgerun.Execution {
 	if c, ok := s.clients.Load(endpoint); ok {
 		return c.(*edgerun.Execution)
 	}
-	c := edgerun.NewExecution(endpoint, s.cfg.ExecutionToken, edgerun.WithHTTPClient(s.cfg.HTTP))
+	var opts []edgerun.Option
+	if s.cfg.HTTP != nil { // otherwise the library's own pooled client, with its short dial timeout
+		opts = append(opts, edgerun.WithHTTPClient(s.cfg.HTTP))
+	}
+	c := edgerun.NewExecution(endpoint, s.cfg.ExecutionToken, opts...)
 	actual, _ := s.clients.LoadOrStore(endpoint, c)
 	return actual.(*edgerun.Execution)
 }

@@ -47,7 +47,7 @@ func (i *Ingress) Invoke(ctx context.Context, req *ingressv1.InvokeRequest) (*In
 	}
 	res, first, err := openStream(st,
 		func(m *ingressv1.InvokeResponse) *commonv1.HttpResponseHead { return m.GetHead().GetHttp() },
-		func(m *ingressv1.InvokeResponse) []byte { return m.GetChunk() })
+		func(m *ingressv1.InvokeResponse) ([]byte, error) { return m.GetChunk(), nil })
 	if err != nil {
 		return nil, err
 	}
