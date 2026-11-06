@@ -327,6 +327,10 @@ func (f form) hasValue(v string) bool {
 	return false
 }
 
+// unchecked, as a value for a field, leaves a switch unticked: a browser does
+// not send an unchecked checkbox at all.
+const unchecked = "\x00unchecked"
+
 // values fills the form's fields by visible label.
 func (f form) values(t *testing.T, byLabel map[string]string) url.Values {
 	t.Helper()
@@ -338,6 +342,10 @@ func (f form) values(t *testing.T, byLabel map[string]string) url.Values {
 		name, ok := f.labels[label]
 		if !ok {
 			t.Fatalf("the form has no field labelled %q (has %v)", label, f.labels)
+		}
+		if v == unchecked {
+			out.Del(name)
+			continue
 		}
 		out.Set(name, v)
 	}

@@ -161,6 +161,13 @@ func TestOperatorDeploysAFunctionThroughTheUI(t *testing.T) {
 	}
 	b.submit(t, envForm, map[string]string{"Name": "GREETING", "Value": "hi from the ui"})
 	secretForm := formWith(t, b.get("/admin/function/"+fid+"/secret/new").body, "Save", "")
+	// A secret is a password input: it is never filled in, and a refused form does not give it back.
+	if f := b.get("/admin/function/" + fid + "/secret/new").body; !strings.Contains(f, `type="password"`) {
+		t.Error("a secret's value must be typed into a password input")
+	}
+	if p := b.submit(t, secretForm, map[string]string{"Name": "1 bad", "Value": "refused-secret-value"}); p.status != http.StatusUnprocessableEntity || strings.Contains(p.body, "refused-secret-value") {
+		t.Errorf("a refused secret form: %d, and it must not echo the value", p.status)
+	}
 	b.submit(t, secretForm, map[string]string{"Name": "API_KEY", "Value": "super-secret-value"})
 
 	envTab := b.get("/admin/function/" + fid + "?tabs.tab=environment")
@@ -182,7 +189,7 @@ func TestOperatorDeploysAFunctionThroughTheUI(t *testing.T) {
 
 	// 6. Upload a second version without activating it, then roll over with the row button.
 	deploy = formWith(t, b.get("/admin/function/"+fid+"/deploy").body, "Upload", "")
-	b.submitFile(t, deploy, map[string]string{"Make it live": "false"}, "Module", "v-next.wasm", append(moduleBytes(t), 0, 20, 3, 'p', 'a', 'd', 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16))
+	b.submitFile(t, deploy, map[string]string{"Make it live": unchecked}, "Module", "v-next.wasm", append(moduleBytes(t), 0, 20, 3, 'p', 'a', 'd', 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16))
 	versions, _ := r.ctl.Versions(ctx, fid)
 	if len(versions) != 2 {
 		t.Fatalf("versions = %d", len(versions))
@@ -371,25 +378,32 @@ func TestFleetAndInvocationsAreVisible(t *testing.T) {
 	}
 }
 
-// Views reload themselves; anything with a form on it must not, because a
-// reload would throw away what someone is typing.
+// Views refresh themselves, panel by panel (webui asks for the panel again, so
+// nothing else on the page is reloaded); anything with a form on it must not
+// refresh, because a reload would throw away what someone is typing.
 func TestOnlyReadOnlyPagesReloadThemselves(t *testing.T) {
 	r := newRig(t)
 	fn, _ := r.ctl.CreateFunction(ctx, "reloads", nil)
 	b := r.browser()
 	b.signIn("alice", "alice-pw")
 
-	for _, path := range []string{"/admin/", "/admin/worker", "/admin/invocation"} {
-		if got := b.get(path).header.Get("Refresh"); got != "7" {
-			t.Errorf("%s: Refresh = %q, want 7", path, got)
+	// How many panels of a page ask to be loaded again, and after how long.
+	const mark = `data-refresh-after="7"`
+	for path, want := range map[string]int{"/admin/": 3, "/admin/worker": 1, "/admin/invocation": 1} {
+		p := b.get(path)
+		if got := strings.Count(p.body, mark); got != want {
+			t.Errorf("%s: %d panels refresh every 7s, want %d", path, got, want)
+		}
+		if got := p.header.Get("Refresh"); got != "" {
+			t.Errorf("%s: the whole page must not reload (Refresh = %q)", path, got)
 		}
 	}
 	for _, path := range []string{
-		"/admin/function", "/admin/function/new", "/admin/function/" + fn.Id,
-		"/admin/function/" + fn.Id + "/deploy", "/admin/route", "/admin/route/new", "/admin/missing",
+		"/admin/function", "/admin/function/new", "/admin/function/" + fn.Id, "/admin/function/" + fn.Id + "?tabs.tab=invocations",
+		"/admin/function/" + fn.Id + "/deploy", "/admin/route", "/admin/route/new", "/admin/network", "/admin/missing",
 	} {
-		if got := b.get(path).header.Get("Refresh"); got != "" {
-			t.Errorf("%s reloads itself (Refresh = %q) and would discard what is being typed", path, got)
+		if p := b.get(path); strings.Contains(p.body, "data-refresh-after") || p.header.Get("Refresh") != "" {
+			t.Errorf("%s refreshes itself and would discard what is being typed", path)
 		}
 	}
 	// A page that did not render (here: signed out, so redirected) is not reloaded.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	controlv1 "github.com/Olian04/edgerun/gen/edgerun/control/v1"
 	egressv1 "github.com/Olian04/edgerun/gen/edgerun/egress/v1"
@@ -15,7 +16,7 @@ import (
 
 type workerRow struct {
 	ID, Endpoint, Implementation, ABIs, State, Load, Labels string
-	Heartbeat                                               int
+	Heartbeat                                               time.Time
 }
 
 var (
@@ -29,7 +30,7 @@ var (
 	}, Load: func(r workerRow) []string { return []string{r.State} }}
 	workerLoad      = webui.String[workerRow]{Label: "In flight", NoFilter: true, Load: func(r workerRow) string { return r.Load }}
 	workerLabels    = webui.String[workerRow]{Label: "Labels", Load: func(r workerRow) string { return r.Labels }}
-	workerHeartbeat = webui.Timestamp[workerRow]{Label: "Last heartbeat", Load: func(r workerRow) int { return r.Heartbeat }, Format: when}
+	workerHeartbeat = webui.Time[workerRow]{Label: "Last heartbeat", Load: func(r workerRow) time.Time { return r.Heartbeat }, Format: when}
 )
 
 func workerState_(w *controlv1.WorkerStatus) string {
@@ -46,10 +47,10 @@ func (u *ui) workersTable(title string) webui.Table[workerRow] {
 	return webui.Table[workerRow]{
 		Title: title,
 		Desc:  "Workers register themselves and heartbeat; one that stops heartbeating is unresponsive and receives no work.",
-		Rows: func(ctx context.Context) ([]workerRow, error) {
+		Loader: webui.RowsLoader[workerRow]{Load: func(ctx context.Context) ([]workerRow, webui.Loaded) {
 			ws, err := u.c.Workers(ctx)
 			if err != nil {
-				return nil, err
+				return nil, webui.Failed(err)
 			}
 			rows := make([]workerRow, len(ws))
 			for i, w := range ws {
@@ -64,10 +65,10 @@ func (u *ui) workersTable(title string) webui.Table[workerRow] {
 				rows[i] = workerRow{ID: w.Id, Endpoint: w.Endpoint, Implementation: impl, State: workerState_(w),
 					ABIs: strings.Join(w.GetInfo().GetAbis(), ", "), Labels: strings.Join(labels, ", "),
 					Load:      fmt.Sprintf("%d / %d", w.InFlight, w.GetInfo().GetMaxConcurrency()),
-					Heartbeat: int(w.LastHeartbeatTime.AsTime().Unix())}
+					Heartbeat: w.LastHeartbeatTime.AsTime()}
 			}
-			return rows, nil
-		},
+			return rows, u.live()
+		}},
 		Columns: []webui.Accessor[workerRow]{workerEndpoint, workerImpl, workerABIs, workerState, workerLoad, workerLabels, workerHeartbeat},
 	}
 }
@@ -84,7 +85,7 @@ func (u *ui) workersPage() webui.Page[webui.NoArgs] {
 
 type netRow struct {
 	Endpoint, Implementation, Covers, State string
-	Heartbeat                               int
+	Heartbeat                               time.Time
 }
 
 var (
@@ -96,7 +97,7 @@ var (
 		{Value: "draining", Label: "Draining", Tone: webui.ToneWarning},
 		{Value: "unresponsive", Label: "Unresponsive", Tone: webui.ToneCritical},
 	}, Load: func(r netRow) []string { return []string{r.State} }}
-	netHeartbeat = webui.Timestamp[netRow]{Label: "Last heartbeat", Load: func(r netRow) int { return r.Heartbeat }, Format: when}
+	netHeartbeat = webui.Time[netRow]{Label: "Last heartbeat", Load: func(r netRow) time.Time { return r.Heartbeat }, Format: when}
 )
 
 func netServiceState(n *controlv1.NetworkServiceStatus) string {
@@ -115,10 +116,10 @@ func (u *ui) networkTable(title string) webui.Table[netRow] {
 		Desc: "Network services register themselves and say which destinations they carry: one may sit inside a private network, " +
 			"another on the public internet. A function's allowed destination goes to the most specific service that carries it. " +
 			"One that stops heartbeating is unresponsive and is given nothing.",
-		Rows: func(ctx context.Context) ([]netRow, error) {
+		Loader: webui.RowsLoader[netRow]{Load: func(ctx context.Context) ([]netRow, webui.Loaded) {
 			ns, err := u.c.NetworkServices(ctx)
 			if err != nil {
-				return nil, err
+				return nil, webui.Failed(err)
 			}
 			rows := make([]netRow, len(ns))
 			for i, n := range ns {
@@ -127,10 +128,10 @@ func (u *ui) networkTable(title string) webui.Table[netRow] {
 					impl += " " + v
 				}
 				rows[i] = netRow{Endpoint: n.Endpoint, Implementation: impl, State: netServiceState(n),
-					Covers: strings.Join(n.GetInfo().GetCovers(), ", "), Heartbeat: int(n.LastHeartbeatTime.AsTime().Unix())}
+					Covers: strings.Join(n.GetInfo().GetCovers(), ", "), Heartbeat: n.LastHeartbeatTime.AsTime()}
 			}
-			return rows, nil
-		},
+			return rows, webui.Ready()
+		}},
 		Columns: []webui.Accessor[netRow]{netEndpoint, netImpl, netCovers, netState, netHeartbeat},
 	}
 }
@@ -147,11 +148,12 @@ func (u *ui) networkPage() webui.Page[webui.NoArgs] {
 
 type invRow struct {
 	ID, Function, Method, Path, Result, Failure, Worker, Log string
-	Status, Duration, Memory, When                           int
+	Status, Duration, Memory                                 int
+	When                                                     time.Time
 }
 
 var (
-	invWhen     = webui.Timestamp[invRow]{Label: "Time", Load: func(r invRow) int { return r.When }, Format: when, NoSort: true, NoFilter: true}
+	invWhen     = webui.Time[invRow]{Label: "Time", Load: func(r invRow) time.Time { return r.When }, Format: when, NoSort: true, NoFilter: true}
 	invFunction = webui.String[invRow]{Label: "Function", NoSort: true, NoFilter: true, Load: func(r invRow) string { return r.Function }}
 	invMethod   = webui.String[invRow]{Label: "Method", NoSort: true, NoFilter: true, Load: func(r invRow) string { return r.Method }}
 	invPath     = webui.String[invRow]{Label: "Path", NoSort: true, NoFilter: true, Load: func(r invRow) string { return r.Path }}
@@ -179,19 +181,20 @@ var (
 
 // invocationsTable lists invocation records, newest first, paged by the
 // orchestrator's cursor. onlyFunction picks one function; nil means all.
-func (u *ui) invocationsTable(title string, pageSize int, onlyFunction func(context.Context) string) webui.Table[invRow] {
+// live says whether the table asks for itself again every AutoRefresh.
+func (u *ui) invocationsTable(title string, pageSize int, onlyFunction func(context.Context) string, live bool) webui.Table[invRow] {
 	return webui.Table[invRow]{
 		Title:    title,
 		PageSize: pageSize,
 		Desc:     "Newest first. A failed result means the platform could not run the function; a 5xx means the function itself answered with an error.",
-		Feed: func(ctx context.Context, after string, limit int) ([]invRow, string, error) {
+		Loader: webui.FeedLoader[invRow]{Load: func(ctx context.Context, after string, limit int) ([]invRow, string, webui.Loaded) {
 			only := ""
 			if onlyFunction != nil {
 				only = onlyFunction(ctx)
 			}
 			recs, next, err := u.c.Invocations(ctx, only, after, limit)
 			if err != nil {
-				return nil, "", err
+				return nil, "", webui.Failed(err)
 			}
 			names := u.c.FunctionNames(ctx)
 			rows := make([]invRow, len(recs))
@@ -203,10 +206,13 @@ func (u *ui) invocationsTable(title string, pageSize int, onlyFunction func(cont
 				rows[i] = invRow{ID: r.Id, Function: fn, Method: r.Method, Path: r.Path, Status: int(r.Status),
 					Result: resultClass(r.Status, r.ErrorReason), Failure: reasonLabel(r.ErrorReason),
 					Duration: int(r.DurationMicros), Memory: int(r.PeakMemoryBytes), Worker: shortID(r.WorkerId),
-					Log: string(r.Stderr), When: int(r.StartTime.AsTime().Unix())}
+					Log: string(r.Stderr), When: r.StartTime.AsTime()}
 			}
-			return rows, next, nil
-		},
+			if live {
+				return rows, next, u.live()
+			}
+			return rows, next, webui.Ready()
+		}},
 		Columns: []webui.Accessor[invRow]{invWhen, invFunction, invMethod, invPath, invStatus, invResult, invFailure, invDuration, invMemory, invWorker, invLog},
 	}
 }
@@ -215,7 +221,7 @@ func (u *ui) invocationsPage() webui.Page[webui.NoArgs] {
 	return webui.Page[webui.NoArgs]{
 		Path: InvocationsPath,
 		Nav:  webui.Nav{Label: "Invocations", Icon: "clock-rotate-left"},
-		Body: u.invocationsTable("Invocations", 50, nil),
+		Body: u.invocationsTable("Invocations", 50, nil, true),
 	}
 }
 
@@ -244,26 +250,26 @@ func (u *ui) overviewPage() webui.Page[webui.NoArgs] {
 		Body: webui.Stack{
 			webui.Form[overview]{
 				Title: "System",
-				Load: func(ctx context.Context) (overview, error) {
+				Load: func(ctx context.Context) (overview, webui.Loaded) {
 					info, err := u.c.Info(ctx)
 					if err != nil {
-						return overview{}, err
+						return overview{}, webui.Failed(err)
 					}
 					fns, err := u.c.Functions(ctx)
 					if err != nil {
-						return overview{}, err
+						return overview{}, webui.Failed(err)
 					}
 					rts, err := u.c.Routes(ctx)
 					if err != nil {
-						return overview{}, err
+						return overview{}, webui.Failed(err)
 					}
 					ws, err := u.c.Workers(ctx)
 					if err != nil {
-						return overview{}, err
+						return overview{}, webui.Failed(err)
 					}
 					nets, err := u.c.NetworkServices(ctx)
 					if err != nil {
-						return overview{}, err
+						return overview{}, webui.Failed(err)
 					}
 					netAlive := 0
 					for _, n := range nets {
@@ -282,7 +288,7 @@ func (u *ui) overviewPage() webui.Page[webui.NoArgs] {
 						Orchestrator: strings.TrimSpace(impl.GetName() + " " + impl.GetVersion()),
 						Functions:    len(fns), Routes: len(rts), Workers: fmt.Sprintf("%d alive of %d registered", alive, len(ws)),
 						Network: fmt.Sprintf("%d alive of %d registered", netAlive, len(nets)),
-					}, nil
+					}, u.live()
 				},
 				Fields: []webui.Accessor[overview]{
 					webui.Group[overview]{ovOrchestrator, ovWorkers},
@@ -290,7 +296,7 @@ func (u *ui) overviewPage() webui.Page[webui.NoArgs] {
 				},
 			},
 			u.workersTable("Workers"),
-			u.invocationsTable("Recent invocations", 10, nil),
+			u.invocationsTable("Recent invocations", 10, nil, true),
 		},
 	}
 }

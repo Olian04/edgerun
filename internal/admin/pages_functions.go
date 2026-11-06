@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"connectrpc.com/connect"
 
@@ -24,13 +25,13 @@ import (
 type fnRow struct {
 	ID, Name string
 	Active   int64
-	Created  int
+	Created  time.Time
 }
 
 var (
 	fnRowName    = webui.String[fnRow]{Label: "Name", Load: func(r fnRow) string { return r.Name }}
 	fnRowActive  = webui.Int[fnRow]{Label: "Active version", Load: func(r fnRow) int { return int(r.Active) }, Format: versionLabel}
-	fnRowCreated = webui.Timestamp[fnRow]{Label: "Created", Load: func(r fnRow) int { return r.Created }, Format: when}
+	fnRowCreated = webui.Time[fnRow]{Label: "Created", Load: func(r fnRow) time.Time { return r.Created }, Format: when}
 )
 
 func (u *ui) functionsPage() webui.Page[webui.NoArgs] {
@@ -38,25 +39,25 @@ func (u *ui) functionsPage() webui.Page[webui.NoArgs] {
 		Path: FunctionsPath,
 		Nav:  webui.Nav{Label: "Functions", Icon: "cube"},
 		Body: webui.Stack{
-			webui.Toolbar[webui.NoArgs]{Left: []webui.ToolbarItem[webui.NoArgs]{
+			webui.Toolbar{Left: []webui.ToolbarItem{
 				webui.Link[webui.NoArgs, webui.NoArgs]{Label: "New function", Role: webui.RolePrimary, Page: NewFunctionPath,
 					Args: func(context.Context, webui.NoArgs) webui.NoArgs { return webui.NoArgs{} }},
 			}},
 			webui.Table[fnRow]{
 				Title: "Functions",
 				Key:   func(r fnRow) string { return r.ID },
-				Rows: func(ctx context.Context) ([]fnRow, error) {
+				Loader: webui.RowsLoader[fnRow]{Load: func(ctx context.Context) ([]fnRow, webui.Loaded) {
 					fns, err := u.c.Functions(ctx)
 					if err != nil {
-						return nil, err
+						return nil, webui.Failed(err)
 					}
 					numbers := u.c.ActiveVersionNumbers(ctx, fns)
 					rows := make([]fnRow, len(fns))
 					for i, f := range fns {
-						rows[i] = fnRow{ID: f.Id, Name: f.Name, Active: numbers[f.Id], Created: int(f.CreateTime.AsTime().Unix())}
+						rows[i] = fnRow{ID: f.Id, Name: f.Name, Active: numbers[f.Id], Created: f.CreateTime.AsTime()}
 					}
-					return rows, nil
-				},
+					return rows, webui.Ready()
+				}},
 				Columns: []webui.Accessor[fnRow]{fnRowName, fnRowActive, fnRowCreated},
 				RowClick: webui.Link[fnRow, FnArgs]{Page: FunctionPath,
 					Args: func(_ context.Context, r fnRow) FnArgs { return FnArgs{ID: r.ID} }},
@@ -71,8 +72,9 @@ type newFn struct{ Name string }
 
 var newFnName = webui.String[newFn]{
 	Label: "Name", Placeholder: "my-function",
-	Help: "Lower-case letters, digits and '-'. This is how the function is referred to; routes decide which requests reach it.",
-	Rules: webui.StringRules{Required: true, MaxLen: 63, Pattern: &webui.PatternRule{
+	Help:     "Lower-case letters, digits and '-'. This is how the function is referred to; routes decide which requests reach it.",
+	Required: true,
+	Rules: webui.StringRules{MaxLen: 63, Pattern: &webui.PatternRule{
 		Expr: `[a-z0-9]([a-z0-9\-]*[a-z0-9])?`, Message: "must be lower-case letters, digits and '-', not starting or ending with '-'"}},
 	Load:  func(f newFn) string { return f.Name },
 	Store: func(f *newFn, v string) { f.Name = v },
@@ -84,7 +86,7 @@ func (u *ui) newFunctionPage() webui.Page[webui.NoArgs] {
 		Guard: editPageGuard[webui.NoArgs],
 		Body: webui.Form[newFn]{
 			Title:  "New function",
-			Load:   func(context.Context) (newFn, error) { return newFn{}, nil },
+			Load:   func(context.Context) (newFn, webui.Loaded) { return newFn{}, webui.Ready() },
 			Fields: []webui.Accessor[newFn]{newFnName},
 			Submit: webui.Action[newFn]{
 				Label: "Create", Role: webui.RolePrimary, Guard: editGuard[newFn],
@@ -111,7 +113,7 @@ func (u *ui) newFunctionPage() webui.Page[webui.NoArgs] {
 type fnDetail struct {
 	ID, Name string
 	Active   int64
-	Created  int
+	Created  time.Time
 	Labels   string
 }
 
@@ -119,7 +121,7 @@ var (
 	detailName    = webui.String[fnDetail]{Label: "Name", Load: func(d fnDetail) string { return d.Name }}
 	detailID      = webui.String[fnDetail]{Label: "ID", Load: func(d fnDetail) string { return d.ID }}
 	detailActive  = webui.Int[fnDetail]{Label: "Active version", Load: func(d fnDetail) int { return int(d.Active) }, Format: versionLabel}
-	detailCreated = webui.Timestamp[fnDetail]{Label: "Created", Load: func(d fnDetail) int { return d.Created }, Format: when}
+	detailCreated = webui.Time[fnDetail]{Label: "Created", Load: func(d fnDetail) time.Time { return d.Created }, Format: when}
 	detailLabels  = webui.String[fnDetail]{Label: "Labels", NoSort: true, Load: func(d fnDetail) string { return d.Labels }}
 )
 
@@ -143,21 +145,23 @@ func (u *ui) functionPage() webui.Page[FnArgs] {
 			return ""
 		},
 		Body: webui.Stack{
-			webui.Toolbar[FnArgs]{
-				Left: []webui.ToolbarItem[FnArgs]{
-					webui.Link[FnArgs, FnArgs]{Label: "Deploy a version", Role: webui.RolePrimary, Page: DeployPath, Args: sameArgs},
-					webui.Link[FnArgs, FnArgs]{Label: "Add a variable", Page: EnvNewPath, Args: sameArgs},
-					webui.Link[FnArgs, FnArgs]{Label: "Add a secret", Page: SecretNewPath, Args: sameArgs},
-					webui.Link[FnArgs, FnArgs]{Label: "Allow a destination", Page: EgressNewPath, Args: sameArgs},
-					webui.Link[FnArgs, RouteNewArgs]{Label: "Add a route", Page: NewRoutePath,
-						Args: func(_ context.Context, a FnArgs) RouteNewArgs { return RouteNewArgs{Function: a.ID} }},
+			webui.Toolbar{
+				Left: []webui.ToolbarItem{
+					webui.Link[webui.NoArgs, FnArgs]{Label: "Deploy a version", Role: webui.RolePrimary, Page: DeployPath, Args: thisFunction},
+					webui.Link[webui.NoArgs, FnArgs]{Label: "Add a variable", Page: EnvNewPath, Args: thisFunction},
+					webui.Link[webui.NoArgs, FnArgs]{Label: "Add a secret", Page: SecretNewPath, Args: thisFunction},
+					webui.Link[webui.NoArgs, FnArgs]{Label: "Allow a destination", Page: EgressNewPath, Args: thisFunction},
+					webui.Link[webui.NoArgs, RouteNewArgs]{Label: "Add a route", Page: NewRoutePath,
+						Args: func(ctx context.Context, _ webui.NoArgs) RouteNewArgs {
+							return RouteNewArgs{Function: webui.ArgsOf[FnArgs](ctx).ID}
+						}},
 				},
-				Right: []webui.ToolbarItem[FnArgs]{
-					webui.Action[FnArgs]{
-						Label: "Delete function", Role: webui.RoleDestructive, Guard: editGuard[FnArgs],
+				Right: []webui.ToolbarItem{
+					webui.Action[webui.NoArgs]{
+						Label: "Delete function", Role: webui.RoleDestructive, Guard: editGuard[webui.NoArgs],
 						Confirm: "Delete this function with its versions, routes and environment? This cannot be undone.",
-						Run: func(ctx context.Context, a FnArgs) (webui.Outcome, error) {
-							if err := u.c.DeleteFunction(ctx, a.ID); err != nil {
+						Run: func(ctx context.Context, _ webui.NoArgs) (webui.Outcome, error) {
+							if err := u.c.DeleteFunction(ctx, webui.ArgsOf[FnArgs](ctx).ID); err != nil {
 								return failed(err)
 							}
 							return webui.Success("Function deleted").Then(webui.Open(ctx, FunctionsPath, webui.NoArgs{})), nil
@@ -167,29 +171,30 @@ func (u *ui) functionPage() webui.Page[FnArgs] {
 			},
 			webui.Form[fnDetail]{
 				Title: "Function",
-				Load: func(ctx context.Context) (fnDetail, error) {
+				Load: func(ctx context.Context) (fnDetail, webui.Loaded) {
 					id := webui.ArgsOf[FnArgs](ctx).ID
 					f, err := u.c.Function(ctx, id)
 					if err != nil {
-						return fnDetail{}, err
+						return fnDetail{}, webui.Failed(err)
 					}
 					n := u.c.ActiveVersionNumbers(ctx, []*controlv1.Function{f})[f.Id]
-					return fnDetail{ID: f.Id, Name: f.Name, Active: n, Created: int(f.CreateTime.AsTime().Unix()), Labels: labelsText(f.Labels)}, nil
+					return fnDetail{ID: f.Id, Name: f.Name, Active: n, Created: f.CreateTime.AsTime(), Labels: labelsText(f.Labels)}, webui.Ready()
 				},
 				Fields: []webui.Accessor[fnDetail]{webui.Group[fnDetail]{detailName, detailID}, webui.Group[fnDetail]{detailActive, detailCreated}, detailLabels},
 			},
-			webui.Tabs{Panels: []webui.Tab{
+			webui.Tabs{
 				{Label: "Versions", Body: u.versionsTable()},
 				{Label: "Environment", Body: u.envTable()},
 				{Label: "Network", Body: u.egressTable()},
 				{Label: "Routes", Body: u.routesTable("Routes to this function", func(ctx context.Context) string { return webui.ArgsOf[FnArgs](ctx).ID })},
-				{Label: "Invocations", Body: u.invocationsTable("Invocations", 10, func(ctx context.Context) string { return webui.ArgsOf[FnArgs](ctx).ID })},
-			}},
+				{Label: "Invocations", Body: u.invocationsTable("Invocations", 10, func(ctx context.Context) string { return webui.ArgsOf[FnArgs](ctx).ID }, false)},
+			},
 		},
 	}
 }
 
-func sameArgs(_ context.Context, a FnArgs) FnArgs { return a }
+// thisFunction links to another page about the function that is open.
+func thisFunction(ctx context.Context, _ webui.NoArgs) FnArgs { return webui.ArgsOf[FnArgs](ctx) }
 
 // --- versions ---------------------------------------------------------------------
 
@@ -198,7 +203,7 @@ type verRow struct {
 	Number                 int64
 	Active                 bool
 	Size, Memory, Response int
-	Created                int
+	Created                time.Time
 }
 
 var (
@@ -215,33 +220,33 @@ var (
 	verMemory   = webui.Int[verRow]{Label: "Memory limit", Load: func(r verRow) int { return r.Memory }, Format: limitLabel}
 	verResponse = webui.Int[verRow]{Label: "Response limit", Load: func(r verRow) int { return r.Response }, Format: limitLabel}
 	verDigest   = webui.String[verRow]{Label: "Digest", Load: func(r verRow) string { return r.Digest }}
-	verCreated  = webui.Timestamp[verRow]{Label: "Uploaded", Load: func(r verRow) int { return r.Created }, Format: when}
+	verCreated  = webui.Time[verRow]{Label: "Uploaded", Load: func(r verRow) time.Time { return r.Created }, Format: when}
 )
 
 func (u *ui) versionsTable() webui.Table[verRow] {
 	return webui.Table[verRow]{
 		Title: "Versions",
 		Key:   func(r verRow) string { return r.ID },
-		Rows: func(ctx context.Context) ([]verRow, error) {
+		Loader: webui.RowsLoader[verRow]{Load: func(ctx context.Context) ([]verRow, webui.Loaded) {
 			fid := webui.ArgsOf[FnArgs](ctx).ID
 			fn, err := u.c.Function(ctx, fid)
 			if err != nil {
-				return nil, err
+				return nil, webui.Failed(err)
 			}
 			vs, err := u.c.Versions(ctx, fid)
 			if err != nil {
-				return nil, err
+				return nil, webui.Failed(err)
 			}
 			rows := make([]verRow, len(vs))
 			for i, v := range vs {
 				rows[i] = verRow{ID: v.Id, Number: v.Number, Active: v.Id == fn.ActiveVersionId, ABI: v.Abi,
-					Digest: shortDigest(v.ArtifactDigest), Size: int(v.SizeBytes), Created: int(v.CreateTime.AsTime().Unix()),
+					Digest: shortDigest(v.ArtifactDigest), Size: int(v.SizeBytes), Created: v.CreateTime.AsTime(),
 					Memory: int(v.GetLimits().GetMemoryLimitBytes()), Response: int(v.GetLimits().GetMaxResponseBytes())}
 			}
-			return rows, nil
-		},
+			return rows, webui.Ready()
+		}},
 		Columns: []webui.Accessor[verRow]{verNumber, verState, verABI, verSize, verMemory, verResponse, verDigest, verCreated},
-		Actions: []webui.Action[verRow]{{
+		Actions: []webui.Control[verRow]{webui.Action[verRow]{
 			Label: "Activate", Role: webui.RolePrimary,
 			Guard: func(ctx context.Context, r verRow) error {
 				if err := editGuard(ctx, r); err != nil {
@@ -269,7 +274,7 @@ type deployForm struct {
 	ABI      string
 	MemoryMB int
 	RespKB   int
-	Activate *bool
+	Activate bool
 }
 
 func (u *ui) deployPage() webui.Page[FnArgs] {
@@ -281,7 +286,8 @@ func (u *ui) deployPage() webui.Page[FnArgs] {
 	}
 	abi := webui.String[deployForm]{
 		Label: "ABI", Help: "The guest ABI the module was built for. Only workers that support it will run it.",
-		Rules: webui.StringRules{Required: true, MaxLen: 32, Pattern: &webui.PatternRule{
+		Required: true,
+		Rules: webui.StringRules{MaxLen: 32, Pattern: &webui.PatternRule{
 			Expr: `[a-z0-9][a-z0-9.\-]*`, Message: "must be a short lower-case name such as wagi-1"}},
 		Load:  func(d deployForm) string { return d.ABI },
 		Store: func(d *deployForm, v string) { d.ABI = v },
@@ -300,16 +306,15 @@ func (u *ui) deployPage() webui.Page[FnArgs] {
 	}
 	activate := webui.Bool[deployForm]{
 		Label: "Make it live", Help: "Yes serves traffic with this version immediately. No uploads it; activate it from the versions list.",
-		Load: func(d deployForm) *bool { return d.Activate }, Store: func(d *deployForm, v *bool) { d.Activate = v },
+		Load: func(d deployForm) bool { return d.Activate }, Store: func(d *deployForm, v bool) { d.Activate = v },
 	}
 	return webui.Page[FnArgs]{
 		Path:  DeployPath,
 		Guard: editPageGuard[FnArgs],
 		Body: webui.Form[deployForm]{
 			Title: "Deploy a version",
-			Load: func(context.Context) (deployForm, error) {
-				yes := true
-				return deployForm{ABI: "wagi-1", Activate: &yes}, nil
+			Load: func(context.Context) (deployForm, webui.Loaded) {
+				return deployForm{ABI: "wagi-1", Activate: true}, webui.Ready()
 			},
 			Fields: []webui.Accessor[deployForm]{module, abi, webui.Group[deployForm]{memory, resp}, activate},
 			Submit: webui.Action[deployForm]{
@@ -325,7 +330,7 @@ func (u *ui) deployPage() webui.Page[FnArgs] {
 						return webui.Reject(webui.Field[deployForm](module, "this does not look like a WebAssembly module: it must start with \\0asm")), nil
 					}
 					fid := webui.ArgsOf[FnArgs](ctx).ID
-					live := d.Activate != nil && *d.Activate
+					live := d.Activate
 					v, err := u.c.Deploy(ctx, fid, d.Module.Data, d.ABI, &commonv1.Limits{
 						MemoryLimitBytes: uint64(d.MemoryMB) << 20, MaxResponseBytes: uint64(d.RespKB) << 10}, live)
 					if err == nil {
@@ -376,19 +381,19 @@ func (u *ui) envTable() webui.Table[envRow] {
 		Title: "Environment",
 		Desc:  "Variables the function sees. Secrets are write-only: they are never shown again.",
 		Key:   func(r envRow) string { return r.Name },
-		Rows: func(ctx context.Context) ([]envRow, error) {
+		Loader: webui.RowsLoader[envRow]{Load: func(ctx context.Context) ([]envRow, webui.Loaded) {
 			es, err := u.c.Env(ctx, webui.ArgsOf[FnArgs](ctx).ID)
 			if err != nil {
-				return nil, err
+				return nil, webui.Failed(err)
 			}
 			rows := make([]envRow, len(es))
 			for i, e := range es {
 				rows[i] = envRow{Name: e.Name, Value: e.Value, Secret: e.Secret}
 			}
-			return rows, nil
-		},
+			return rows, webui.Ready()
+		}},
 		Columns: []webui.Accessor[envRow]{envName, envValue, envKind},
-		Actions: []webui.Action[envRow]{{
+		Actions: []webui.Control[envRow]{webui.Action[envRow]{
 			Label: "Delete", Role: webui.RoleDestructive, Guard: editGuard[envRow],
 			Confirm: "Delete this variable?",
 			Run: func(ctx context.Context, r envRow) (webui.Outcome, error) {
@@ -408,26 +413,36 @@ type envForm struct{ Name, Value string }
 func (u *ui) envNewPage(secret bool) webui.Page[FnArgs] {
 	name := webui.String[envForm]{
 		Label: "Name", Placeholder: "MY_VARIABLE",
-		Rules: webui.StringRules{Required: true, MaxLen: 128, Pattern: &webui.PatternRule{
+		Required: true,
+		Rules: webui.StringRules{MaxLen: 128, Pattern: &webui.PatternRule{
 			Expr: `[A-Za-z_][A-Za-z0-9_]*`, Message: "must be letters, digits and '_', not starting with a digit"}},
 		Load: func(e envForm) string { return e.Name }, Store: func(e *envForm, v string) { e.Name = v },
 	}
-	value := webui.String[envForm]{
-		Label: "Value", Secret: secret, Multiline: !secret,
+	// A plain variable is shown and stored as text. A secret is a Secret: a
+	// password input that the page is never given a value for, so it cannot be
+	// shown again, in a refused form either.
+	var value webui.Accessor[envForm] = webui.String[envForm]{
+		Label: "Value", Multiline: true,
 		Rules: webui.StringRules{MaxLen: 32 << 10},
 		Load:  func(e envForm) string { return e.Value }, Store: func(e *envForm, v string) { e.Value = v },
 	}
 	path, title, verb := EnvNewPath, "Add a variable", "Added "
 	if secret {
 		path, title, verb = SecretNewPath, "Add a secret", "Stored secret "
-		value.Help = "Stored encrypted and never shown again. To change it, add it again under the same name."
+		value = webui.Secret[envForm]{
+			Label: "Value", Rules: webui.StringRules{MaxLen: 32 << 10},
+			Help: "Stored encrypted and never shown again. To change it, add it again under the same name.",
+			// This form only adds: nothing is stored under the name yet, so there are no bullets to show.
+			Load:  func(envForm) bool { return false },
+			Store: func(e *envForm, v string) { e.Value = v },
+		}
 	}
 	return webui.Page[FnArgs]{
 		Path:  path,
 		Guard: editPageGuard[FnArgs],
 		Body: webui.Form[envForm]{
 			Title:  title,
-			Load:   func(context.Context) (envForm, error) { return envForm{}, nil },
+			Load:   func(context.Context) (envForm, webui.Loaded) { return envForm{}, webui.Ready() },
 			Fields: []webui.Accessor[envForm]{name, value},
 			Submit: webui.Action[envForm]{
 				Label: "Save", Role: webui.RolePrimary, Guard: editGuard[envForm],
@@ -522,24 +537,24 @@ func (u *ui) egressTable() webui.Table[egressRow] {
 		Desc: "Where this function may send requests. Closed by default: with nothing listed it can reach nothing. " +
 			"Only modules built for the wagi-2 ABI can use the network at all.",
 		Key: func(r egressRow) string { return r.Entry },
-		Rows: func(ctx context.Context) ([]egressRow, error) {
+		Loader: webui.RowsLoader[egressRow]{Load: func(ctx context.Context) ([]egressRow, webui.Loaded) {
 			f, err := u.c.Function(ctx, webui.ArgsOf[FnArgs](ctx).ID)
 			if err != nil {
-				return nil, err
+				return nil, webui.Failed(err)
 			}
 			services, err := u.c.NetworkServices(ctx)
 			if err != nil {
-				return nil, err
+				return nil, webui.Failed(err)
 			}
 			rows := make([]egressRow, len(f.EgressAllow))
 			for i, e := range f.EgressAllow {
 				rows[i] = describeRule(e)
 				rows[i].Carrier = carriers(e, services)
 			}
-			return rows, nil
-		},
+			return rows, webui.Ready()
+		}},
 		Columns: []webui.Accessor[egressRow]{egressEntry, egressMatch, egressPort, egressCarry},
-		Actions: []webui.Action[egressRow]{{
+		Actions: []webui.Control[egressRow]{webui.Action[egressRow]{
 			Label: "Remove", Role: webui.RoleDestructive, Guard: editGuard[egressRow],
 			Confirm: "Stop allowing this destination?",
 			Run: func(ctx context.Context, r egressRow) (webui.Outcome, error) {
@@ -570,15 +585,16 @@ func (u *ui) egressNewPage() webui.Page[FnArgs] {
 		Label: "Destination", Placeholder: "api.example.com",
 		Help: "A host name (api.example.com), every host under a domain (*.example.com), or an address (192.0.2.7). " +
 			"Add :port for a port other than 80 (http) and 443 (https).",
-		Rules: webui.StringRules{Required: true, MaxLen: 262},
-		Load:  func(e egressForm) string { return e.Entry }, Store: func(e *egressForm, v string) { e.Entry = v },
+		Required: true,
+		Rules:    webui.StringRules{MaxLen: 262},
+		Load:     func(e egressForm) string { return e.Entry }, Store: func(e *egressForm, v string) { e.Entry = v },
 	}
 	return webui.Page[FnArgs]{
 		Path:  EgressNewPath,
 		Guard: editPageGuard[FnArgs],
 		Body: webui.Form[egressForm]{
 			Title:  "Allow a destination",
-			Load:   func(context.Context) (egressForm, error) { return egressForm{}, nil },
+			Load:   func(context.Context) (egressForm, webui.Loaded) { return egressForm{}, webui.Ready() },
 			Fields: []webui.Accessor[egressForm]{entry},
 			Submit: webui.Action[egressForm]{
 				Label: "Allow", Role: webui.RolePrimary, Guard: editGuard[egressForm],

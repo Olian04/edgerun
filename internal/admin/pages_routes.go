@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"time"
 
 	"connectrpc.com/connect"
 
@@ -10,14 +11,14 @@ import (
 
 type routeRow struct {
 	ID, Host, Prefix, FunctionID, Function string
-	Created                                int
+	Created                                time.Time
 }
 
 var (
 	routeHost     = webui.String[routeRow]{Label: "Host", Load: func(r routeRow) string { return r.Host }}
 	routePrefix   = webui.String[routeRow]{Label: "Path prefix", Load: func(r routeRow) string { return r.Prefix }}
 	routeFunction = webui.String[routeRow]{Label: "Function", Load: func(r routeRow) string { return r.Function }}
-	routeCreated  = webui.Timestamp[routeRow]{Label: "Created", Load: func(r routeRow) int { return r.Created }, Format: when}
+	routeCreated  = webui.Time[routeRow]{Label: "Created", Load: func(r routeRow) time.Time { return r.Created }, Format: when}
 )
 
 // routesTable lists routes, all of them or those of one function. The filter
@@ -26,10 +27,10 @@ func (u *ui) routesTable(title string, onlyFunction func(context.Context) string
 	return webui.Table[routeRow]{
 		Title: title,
 		Key:   func(r routeRow) string { return r.ID },
-		Rows: func(ctx context.Context) ([]routeRow, error) {
+		Loader: webui.RowsLoader[routeRow]{Load: func(ctx context.Context) ([]routeRow, webui.Loaded) {
 			rs, err := u.c.Routes(ctx)
 			if err != nil {
-				return nil, err
+				return nil, webui.Failed(err)
 			}
 			only := ""
 			if onlyFunction != nil {
@@ -46,14 +47,14 @@ func (u *ui) routesTable(title string, onlyFunction func(context.Context) string
 					name = shortID(r.FunctionId)
 				}
 				rows = append(rows, routeRow{ID: r.Id, Host: r.HostPattern, Prefix: r.PathPrefix, FunctionID: r.FunctionId,
-					Function: name, Created: int(r.CreateTime.AsTime().Unix())})
+					Function: name, Created: r.CreateTime.AsTime()})
 			}
-			return rows, nil
-		},
+			return rows, webui.Ready()
+		}},
 		Columns: []webui.Accessor[routeRow]{routeHost, routePrefix, routeFunction, routeCreated},
 		RowClick: webui.Link[routeRow, FnArgs]{Page: FunctionPath,
 			Args: func(_ context.Context, r routeRow) FnArgs { return FnArgs{ID: r.FunctionID} }},
-		Actions: []webui.Action[routeRow]{{
+		Actions: []webui.Control[routeRow]{webui.Action[routeRow]{
 			Label: "Delete", Role: webui.RoleDestructive, Guard: editGuard[routeRow],
 			Confirm: "Delete this route? Requests it matched will go to the next most specific route, or get a 404.",
 			Run: func(ctx context.Context, r routeRow) (webui.Outcome, error) {
@@ -71,7 +72,7 @@ func (u *ui) routesPage() webui.Page[webui.NoArgs] {
 		Path: RoutesPath,
 		Nav:  webui.Nav{Label: "Routes", Icon: "route"},
 		Body: webui.Stack{
-			webui.Toolbar[webui.NoArgs]{Left: []webui.ToolbarItem[webui.NoArgs]{
+			webui.Toolbar{Left: []webui.ToolbarItem{
 				webui.Link[webui.NoArgs, RouteNewArgs]{Label: "New route", Role: webui.RolePrimary, Page: NewRoutePath,
 					Args: func(context.Context, webui.NoArgs) RouteNewArgs { return RouteNewArgs{} }},
 			}},
@@ -88,16 +89,18 @@ type newRoute struct {
 func (u *ui) newRoutePage() webui.Page[RouteNewArgs] {
 	host := webui.String[newRoute]{
 		Label: "Host", Placeholder: "api.example.com",
-		Help: "An exact host, a wildcard such as *.example.com (which does not match example.com itself), or * for every host.",
-		Rules: webui.StringRules{Required: true, MaxLen: 253, Pattern: &webui.PatternRule{
+		Help:     "An exact host, a wildcard such as *.example.com (which does not match example.com itself), or * for every host.",
+		Required: true,
+		Rules: webui.StringRules{MaxLen: 253, Pattern: &webui.PatternRule{
 			Expr: `\*|(\*\.)?[a-z0-9]([a-z0-9.\-]*[a-z0-9])?`, Message: "must be a lower-case host, *.suffix, or *"}},
 		Load: func(r newRoute) string { return r.Host }, Store: func(r *newRoute, v string) { r.Host = v },
 	}
 	prefix := webui.String[newRoute]{
 		Label: "Path prefix", Placeholder: "/",
-		Help:  "Requests whose path is this or below it, on whole segments: /api matches /api and /api/x but not /apiary.",
-		Rules: webui.StringRules{Required: true, StartsWith: "/", NotContains: " "},
-		Load:  func(r newRoute) string { return r.Prefix }, Store: func(r *newRoute, v string) { r.Prefix = v },
+		Help:     "Requests whose path is this or below it, on whole segments: /api matches /api and /api/x but not /apiary.",
+		Required: true,
+		Rules:    webui.StringRules{StartsWith: "/", NotContains: " "},
+		Load:     func(r newRoute) string { return r.Prefix }, Store: func(r *newRoute, v string) { r.Prefix = v },
 	}
 	function := webui.Select[newRoute]{
 		Label: "Function", Required: true,
@@ -120,12 +123,12 @@ func (u *ui) newRoutePage() webui.Page[RouteNewArgs] {
 		Guard: editPageGuard[RouteNewArgs],
 		Body: webui.Form[newRoute]{
 			Title: "New route",
-			Load: func(ctx context.Context) (newRoute, error) {
+			Load: func(ctx context.Context) (newRoute, webui.Loaded) {
 				r := newRoute{Prefix: "/"}
 				if f := webui.ArgsOf[RouteNewArgs](ctx).Function; f != "" {
 					r.Function = []string{f}
 				}
-				return r, nil
+				return r, webui.Ready()
 			},
 			Fields: []webui.Accessor[newRoute]{host, prefix, function},
 			Submit: webui.Action[newRoute]{

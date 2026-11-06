@@ -22,7 +22,7 @@ type HandlerConfig struct {
 	// MaxModuleBytes bounds uploads. Zero asks the orchestrator, falling back
 	// to 32 MiB if it cannot be reached.
 	MaxModuleBytes int64
-	// AutoRefresh reloads the read-only pages (overview, workers,
+	// AutoRefresh reloads the read-only panels (overview, workers,
 	// invocations) this often; zero turns it off.
 	AutoRefresh time.Duration
 	Log         *slog.Logger
@@ -57,7 +57,7 @@ func Handler(cfg HandlerConfig) (http.Handler, error) {
 		cancel()
 	}
 
-	site, err := App(Config{Control: cfg.Control, MaxModuleBytes: maxModule, Log: cfg.Log}).Compile("/admin")
+	site, err := App(Config{Control: cfg.Control, MaxModuleBytes: maxModule, AutoRefresh: cfg.AutoRefresh, Log: cfg.Log}).Compile("/admin")
 	if err != nil {
 		// A broken declaration must stop the process, not serve a page of
 		// compiler errors to operators.
@@ -69,7 +69,7 @@ func Handler(cfg HandlerConfig) (http.Handler, error) {
 	mux.Handle("/login", a.Login("/admin/"))
 	mux.Handle("/logout", a.Logout())
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok\n")) })
-	mux.Handle("/admin/", a.Require(autoRefresh(cfg.AutoRefresh, livePages("/admin"), site)))
+	mux.Handle("/admin/", a.Require(site))
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/admin/", http.StatusSeeOther)
 	})

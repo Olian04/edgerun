@@ -10,7 +10,7 @@ tool (
 require (
 	connectrpc.com/connect v1.21.1
 	connectrpc.com/otelconnect v0.12.0
-	github.com/Olian04/webui v1.0.0-22
+	github.com/Olian04/webui v1.0.0-30
 	github.com/exaring/otelpgx v0.13.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
@@ -35,6 +35,7 @@ require (
 require (
 	connectrpc.com/connect/v2 v2.0.0 // indirect
 	github.com/a-h/templ v0.3.1070 // indirect
+	github.com/andybalholm/brotli v1.2.6 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"time"
 
 	"connectrpc.com/connect"
 
@@ -43,7 +44,19 @@ type RouteNewArgs struct {
 type ui struct {
 	c         *Control
 	maxModule int64
+	refresh   time.Duration
 	log       *slog.Logger
+}
+
+// live ends the load of a read-only panel (overview, workers, invocations): it
+// asks to be loaded again after the auto-refresh interval, or is final when
+// that is off. webui replaces just that panel, so nothing is reloaded that is
+// not a view, and a form is never touched.
+func (u *ui) live() webui.Loaded {
+	if u.refresh <= 0 {
+		return webui.Ready()
+	}
+	return webui.Ready().RefreshAfter(u.refresh)
 }
 
 // Config configures the UI.
@@ -52,7 +65,11 @@ type Config struct {
 	// MaxModuleBytes bounds an uploaded module; it should match the
 	// orchestrator's limit (Control.Info reports it).
 	MaxModuleBytes int64
-	Log            *slog.Logger
+	// AutoRefresh reloads the read-only panels (overview, workers,
+	// invocations) this often; zero turns it off. webui rounds it up to at
+	// least a second.
+	AutoRefresh time.Duration
+	Log         *slog.Logger
 }
 
 // App returns the webui declaration. Compile it with the prefix it is mounted at.
@@ -63,7 +80,7 @@ func App(cfg Config) webui.App {
 	if cfg.Log == nil {
 		cfg.Log = slog.Default()
 	}
-	u := &ui{c: cfg.Control, maxModule: cfg.MaxModuleBytes, log: cfg.Log}
+	u := &ui{c: cfg.Control, maxModule: cfg.MaxModuleBytes, refresh: cfg.AutoRefresh, log: cfg.Log}
 	return webui.App{
 		Brand: webui.Brand{Name: "edgerun"},
 		Pages: webui.Pages{
