@@ -30,7 +30,7 @@ func TestFrontendConformance(t *testing.T) {
 	// What the suite says to configure (--print-config), in short:
 	//   orchestrator URL http://<suite>, ingress token conformance-ingress-token,
 	//   request timeout 3s, forwarded headers not trusted.
-	cmd := exec.Command(filepath.Join(env.bin, "edgerun-conformance"), "--role", "frontend", "--target", front, "--listen", suite, "--timeout", "5m")
+	cmd := exec.Command(filepath.Join(env.bin, "edgerun-conformance"), "--profile", "frontend", "--target", front, "--listen", suite, "--timeout", "5m")
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	if err := cmd.Start(); err != nil {

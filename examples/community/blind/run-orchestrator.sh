@@ -9,5 +9,5 @@ node orchestrator/main.js --listen 127.0.0.1:8081 --ingress-token conformance-in
   --heartbeat-interval 200ms > /tmp/orch-app.log 2>&1 &
 APP=$!
 sleep 1
-../../../bin/edgerun-conformance --role orchestrator --target 127.0.0.1:8081 "$@" > /tmp/orch-suite.log 2>&1
+../../../bin/edgerun-conformance --profile orchestrator --target 127.0.0.1:8081 "$@" > /tmp/orch-suite.log 2>&1
 kill $APP

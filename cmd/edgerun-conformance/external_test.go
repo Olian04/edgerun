@@ -204,3 +204,39 @@ func TestTheEgressSuiteJudgesTwoProcesses(t *testing.T) {
 	os.WriteFile(defaultPid, []byte(strconv.Itoa(def.cmd.Process.Pid)), 0o644)
 	suite.finish(t, 10*time.Minute)
 }
+
+func TestOneServiceOfAnOrchestratorProcessCanBeJudgedAlone(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs several processes")
+	}
+	port := freePort(t)
+	start(t, "orchestrator", "--listen", "127.0.0.1:"+port, "--database-url", testpg.DSN(t),
+		"--ingress-token", ingressToken, "--worker-token", workerToken, "--admin-token", adminToken,
+		"--network-token", networkToken, "--execution-token", executionToken,
+		"--secret-key", base64.StdEncoding.EncodeToString(orchtest.Key), "--heartbeat-interval", "200ms")
+	waitPort(t, "127.0.0.1:"+port, 60*time.Second)
+	for _, service := range []string{"membership", "records"} {
+		suite := start(t, "edgerun-conformance", "--service", service, "--target", "127.0.0.1:"+port)
+		suite.finish(t, 90*time.Second)
+		if out := suite.out.String(); !strings.Contains(out, strings.ToUpper(service[:1])+service[1:]+"Conformance") || strings.Contains(out, "CatalogConformance") {
+			t.Errorf("--service %s did not run just that service:\n%s", service, tail(out, 2000))
+		}
+	}
+}
+
+func TestAWorkerProcessCanBeJudgedAsAClientAlone(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs several processes")
+	}
+	suitePort, workerPort := freePort(t), freePort(t)
+	suite := start(t, "edgerun-conformance", "--service", "artifacts", "--client", "worker", "--target", "127.0.0.1:"+workerPort,
+		"--listen", "127.0.0.1:"+suitePort)
+	waitPort(t, "127.0.0.1:"+suitePort, 60*time.Second)
+	start(t, "worker", "--listen", "127.0.0.1:"+workerPort, "--advertise-url", "http://127.0.0.1:"+workerPort,
+		"--orchestrator-url", "http://127.0.0.1:"+suitePort, "--worker-token", workerToken,
+		"--execution-token", executionToken, "--egress-token", egressToken, "--max-concurrency", "2")
+	suite.finish(t, 5*time.Minute)
+	if out := suite.out.String(); !strings.Contains(out, "ArtifactsConformanceAsWorker") || strings.Contains(out, "ExecutionConformance") {
+		t.Errorf("--service artifacts --client worker did not run just that:\n%s", tail(out, 2000))
+	}
+}

@@ -219,18 +219,19 @@ error taxonomy and the frontend's HTTP mapping, deadlines, retry rules, capabili
 limits and the guest ABI. To write your own frontend, orchestrator or worker, start there.
 
 `internal/e2e` shows what a replacement must do: `swap_test.go` runs the unchanged orchestrator
-against a worker written from scratch against `worker.v1`. And every role has a black-box suite,
-`conformance/{frontend,orchestrator,worker,egress}`, that plays everything around the implementation and judges
+against a worker written from scratch against `worker.v1`. And every platform service has a black-box suite,
+`conformance/<service>`, that plays everything around the implementation and judges
 what crosses the wire: pass it and you can replace the in-repo component. They run from one executable that is
-pointed at an address and told the role:
+pointed at an address and told what to judge (one `--service`, or every service a component hosts, `--profile`):
 
 ```sh
 make conformance      # bin/edgerun-conformance, with the test guests compiled in
-bin/edgerun-conformance --role orchestrator --target 10.0.0.5:8080
-bin/edgerun-conformance --role worker --target 10.0.0.6:9000 --listen :7000 --advertise 10.0.0.2 --print-config
+bin/edgerun-conformance --profile orchestrator --target 10.0.0.5:8080
+bin/edgerun-conformance --service membership --target 10.0.0.5:8080
+bin/edgerun-conformance --profile worker --target 10.0.0.6:9000 --listen :7000 --advertise 10.0.0.2 --print-config
 ```
 
-`--print-config` says how to configure the implementation for the role (what the suite will present and require,
+`--print-config` says how to configure the implementation for what is judged (what the suite will present and require,
 and where the suite is). See "Conformance" in [`docs/protocol.md`](docs/protocol.md).
 
 ## Library

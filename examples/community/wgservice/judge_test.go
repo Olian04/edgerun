@@ -19,7 +19,7 @@ import (
 const portJudgeSite2 = 23033
 
 // TestJudge points edgerun's own conformance executable at wgservice
-// (`--role egress`), the way docs/protocol.md "Conformance" describes.
+// (`--profile network-service`), the way docs/protocol.md "Conformance" describes.
 //
 // The suite hosts its web servers on its own machine and expects the service
 // to reach them. A tunnel-only service cannot, so the test makes the machine a
@@ -76,7 +76,7 @@ func judge(t *testing.T, covers, allowNet string) {
 	stopCmd := func(p *process) string { return fmt.Sprintf("kill -TERM %d", p.cmd.Process.Pid) }
 
 	args := []string{
-		"--role", "egress", "--target", fmt.Sprintf("127.0.0.1:%d", portJudgeOpen), "--target-default", fmt.Sprintf("127.0.0.1:%d", portJudgeClose),
+		"--profile", "network-service", "--target", fmt.Sprintf("127.0.0.1:%d", portJudgeOpen), "--target-default", fmt.Sprintf("127.0.0.1:%d", portJudgeClose),
 		"--listen", fmt.Sprintf("127.0.0.1:%d", portSuite), "--advertise", "10.20.0.2",
 		"--stop-cmd", stopCmd(open), "--stop-cmd-default", stopCmd(closed), "--timeout", "10m",
 	}

@@ -17,7 +17,7 @@ start_worker() {
   echo $! >"$TMP/pid"
 }
 start_worker
-"$SUITE" --role worker --target "127.0.0.1:$WP" --listen "127.0.0.1:$SP" \
+"$SUITE" --profile worker --target "127.0.0.1:$WP" --listen "127.0.0.1:$SP" \
   --max-concurrency "$CONC" --stop-cmd "kill -TERM \$(cat $TMP/pid)" "$@"
 rc=$?
 exit $rc

@@ -39,7 +39,7 @@ build:
 	go build ./...
 
 # The conformance executable, with the test guests compiled into it so that it
-# needs no Go toolchain where it runs: bin/edgerun-conformance --role ROLE --target HOST:PORT
+# needs no Go toolchain where it runs: bin/edgerun-conformance --profile COMPONENT --target HOST:PORT (or --service SERVICE)
 conformance:
 	mkdir -p conformance/guest/prebuilt bin
 	GOOS=wasip1 GOARCH=wasm CGO_ENABLED=0 go build -trimpath -o conformance/guest/prebuilt/testguest.wasm ./conformance/guest/testguest
