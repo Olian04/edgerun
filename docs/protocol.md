@@ -908,32 +908,63 @@ only sees `-1`.
 
 ## Conformance
 
-Every role that implements a protocol surface has a conformance suite in [`conformance/`](../conformance).
-A suite is black-box: it judges an implementation that is already running, plays every other role itself
-using the generated protocol code and nothing else, and looks only at what crosses the wire. An
-implementation that passes its role's suite can replace any other that passes.
+Every platform service ([`services.md`](services.md)) has a conformance suite in
+[`conformance/<service>`](../conformance): `edge`, `ingress`, `execution`, `membership`, `artifacts`, `egress`,
+`catalog`, `routing`, `plans`, `records`. A suite is black-box: it judges an implementation that is already running,
+plays every other component itself using the generated protocol code and nothing else (a test enforces that the
+suites import no other package of this module), and looks only at what crosses the wire. An implementation that
+passes the suites of the services it hosts can replace any other that does.
 
-| Role | Suite | The suite plays |
+A suite judges one of two things, and the second is only offered where it can be done from outside:
+
+- **The host** of the service: `Run(t, Target)`. The suite is the client.
+- **A client** of the service, against a scripted host that the suite provides: the worker as a client of
+  Membership, Artifacts and Egress; the orchestrator as a client of Execution; the network service as a client of
+  Membership. Edge's suite also judges the frontend's duties as a client of Ingress, since it plays the orchestrator
+  behind the frontend, so Ingress has no client suite of its own.
+
+| Service | Host judged (the suite plays) | Client judged (the suite plays the host) |
 |---|---|---|
-| `frontend` | `conformance/frontend` | the orchestrator it forwards to, and an HTTP client |
-| `orchestrator` | `conformance/orchestrator` | frontends, operators, workers and network services |
-| `worker` | `conformance/worker` | the orchestrator it dials, and the network services it is routed to |
-| `egress` (a network service) | `conformance/egress` | the orchestrator it registers with, a worker, and the web servers it reaches |
+| Edge | frontend (an HTTP client; the orchestrator behind it) | |
+| Ingress | orchestrator (a frontend) | frontend, by the Edge suite |
+| Execution | worker (the orchestrator) | orchestrator (fake workers) |
+| Membership | orchestrator (workers, network services, an operator) | worker; network service (a scripted orchestrator) |
+| Artifacts | orchestrator (a worker) | worker |
+| Egress | network service (a worker, the web servers it reaches) | worker (scripted network services) |
+| Catalog, Routing, Plans, Records | orchestrator (an operator) | |
 
-The admin UI and the CLI only call `control.v1`; they implement no surface of their own, and so have no
-suite. What they must be able to do is what the orchestrator suite proves the orchestrator offers.
+The tests of the Edge suite name the rule they judge (`E7`, …). Rules not yet judged from outside are listed in the
+suite's source, so a gap is visible: the periodic re-read of the body limit (E1), the optional trusted-proxy mode
+(E7), the moment the budget starts (E9), forwarding an HTTP/1.0 request with no host (E11), a 304 without content
+(E13), and the case where the frontend's own deadline expires, whose request id finds the record (E16).
+
+The admin UI and the CLI host no service; they are clients of the orchestrator's, and what they must be able to do
+is what the orchestrator's suites prove it offers.
 
 ### The executable
 
 `edgerun-conformance` (`make conformance`, which also compiles the test guests into it, so it needs no Go
-toolchain where it runs) is pointed at an address and told which role to test. From a module that depends on
-edgerun, `go build github.com/Olian04/edgerun/cmd/edgerun-conformance` also works; without the guests compiled in
-it builds them with the local Go toolchain when a suite needs them (the worker and orchestrator suites; the egress
-and frontend suites need none).
+toolchain where it runs) is pointed at an address and told what to judge. From a module that depends on edgerun,
+`go build github.com/Olian04/edgerun/cmd/edgerun-conformance` also works; without the guests compiled in it builds
+them with the local Go toolchain when a suite needs them (the execution and orchestrator-hosted suites; the egress
+and edge suites need none).
 
 ```
-edgerun-conformance --role worker --target 10.0.0.5:9000 --listen :7000 --advertise 10.0.0.2
+edgerun-conformance --service execution --target 10.0.0.5:9000 --listen :7000 --advertise 10.0.0.2
+edgerun-conformance --service membership --client worker --target 10.0.0.5:9000 --listen :7000 --stop-cmd 'systemctl stop worker'
+edgerun-conformance --profile worker --target 10.0.0.5:9000 --listen :7000 --stop-cmd 'systemctl stop worker'
 ```
+
+- `--service S` judges the host of service `S` at `--target`.
+- `--service S --client C` judges component `C` as the client of `S` (`execution`: orchestrator; `membership`: worker
+  or network-service; `artifacts`: worker; `egress`: worker).
+- `--profile C` judges component `C`: every service it hosts, run in turn against the same process, then its
+  duties as a client. `frontend` runs `edge`; `orchestrator` runs ingress, membership, artifacts, catalog, routing,
+  plans and records, then execution as a client against fake workers; `worker` runs execution, then artifacts,
+  egress and membership as a client (membership last: it stops the worker); `network-service` runs egress, then
+  membership as a client (it stops the service). Because a profile runs its suites one after another, each starts a
+  fresh scripted orchestrator on the same `--listen` port and the component must register with it again; a
+  component that does not keep trying to register (as every component must) cannot pass a profile.
 
 **Judging a service that cannot reach the machine the suite runs on** (behind a tunnel, a proxy, another
 network): the suite's web servers must be reachable *from where the service makes its requests*. Give
@@ -945,20 +976,20 @@ suite also expects the service to refuse `localhost` by name (see "What a networ
 `Fetch`") and registers it at the `--target` address: a service that registers any other address "never
 registered".
 
-Because the suite plays the roles around the implementation, the implementation must be configured to reach
+Because the suite plays the components around the implementation, the implementation must be configured to reach
 the suite (a worker must be told the suite is its orchestrator), and the suite must be reachable from it.
-`--listen` says where the suite listens (a port is required for every role but `orchestrator`, since the
+`--listen` says where the suite listens (a port is required except when an orchestrator is judged, since the
 implementation is configured with it beforehand), `--advertise` the host the implementation reaches it at,
-and `--print-config` prints, for the role and the options given, exactly what to configure: the tokens the
+and `--print-config` prints, for what is judged and the options given, exactly what to configure: the tokens the
 suite will present and require, intervals, and where the suite is. Start the suite, then the implementation
 (or the other way round for a worker or network service, which keep trying).
 
-| Role | `--target` is | Notes |
+| Component under test | `--target` is | Notes |
 |---|---|---|
-| `frontend` | where it listens | it must ask the suite (its orchestrator) for its limits when it starts |
-| `orchestrator` | where it listens | must be new, empty and used by nothing else; it calls the suite's fake workers, so `--advertise` must be a host it can reach |
-| `worker` | the endpoint it advertises | `--stop-cmd` shuts it down as SIGTERM does, for the group that checks it drains and leaves |
-| `egress` | where it listens | it registers with the suite; `--target-default` is a second instance in its default configuration, for what a service refuses however it is asked; `--stop-cmd`, `--stop-cmd-default` likewise |
+| frontend | where it listens | it must ask the suite (its orchestrator) for its limits when it starts |
+| orchestrator | where it listens | must be new, empty and used by nothing else; it calls the suite's fake workers, so `--advertise` must be a host it can reach |
+| worker | the endpoint it advertises | `--stop-cmd` shuts it down as SIGTERM does, for the check that it drains and leaves |
+| network service | where it listens | it registers with the suite; `--target-default` is a second instance in its default configuration, for what a service refuses however it is asked; `--stop-cmd`, `--stop-cmd-default` likewise |
 
 `--run REGEX` selects groups and tests (`--run 'Network|Registration'`), `--timeout` bounds the run. The exit
 status is 0 if everything passed, 1 if anything failed, 2 for a usage error. The suites are also Go packages:

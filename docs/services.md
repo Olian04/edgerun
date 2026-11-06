@@ -137,8 +137,9 @@ judged on its own:
 
 Each service has its own suite in `conformance/<service>`, a package that depends on the generated protocol code and
 nothing else. A suite is black-box: it plays every other component itself and looks only at what crosses the wire.
-Run one service against a host with `edgerun-conformance --service <name> --target <address>`, or all of the services
-a kind of component hosts with `--profile <component>`; see [Conformance in `protocol.md`](protocol.md#conformance).
+Run one service against its host with `edgerun-conformance --service <name> --target <address>`, a component as the
+client of a service with `--client <component>`, or everything a kind of component hosts and then its client duties
+with `--profile <component>`; see [Conformance in `protocol.md`](protocol.md#conformance).
 Edge's suite judges a frontend against the numbered checklist, playing the orchestrator behind it, so it also
 proves the frontend's duties as a client of Ingress: there is no separate client suite for Ingress.
 
