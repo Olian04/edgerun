@@ -26,7 +26,7 @@ type Config struct {
 	Users           []auth.User
 	SessionKey      []byte
 	SecureCookies   bool
-	AutoRefresh     time.Duration // Read-only pages reload this often; 0 is off.
+	AutoRefresh     time.Duration // Read-only panels ask for themselves again this often (needs JavaScript); 0 is off.
 	ShutdownTimeout time.Duration // Default 30s.
 	Log             *slog.Logger
 }

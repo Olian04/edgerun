@@ -202,7 +202,7 @@ The orchestrator is stateless: run as many as you like against one database. Wha
 | `--users` | `EDGERUN_ADMIN_USERS` | | `name:role:bcrypt-hash` entries separated by `;`; role is `admin` or `viewer`. Make a hash with `admin hash-password`. |
 | `--session-key` | `EDGERUN_ADMIN_SESSION_KEY` | random | base64 of 32+ bytes. Set it to keep sessions across restarts or share them between instances. |
 | `--secure-cookies` | | off | Set when served over HTTPS. |
-| `--auto-refresh` | | `10s` | The read-only pages (overview, workers, invocations) reload themselves this often, server-side via the `Refresh` header; pages with forms never do. `0` disables. |
+| `--auto-refresh` | | `10s` | The read-only panels (overview, workers, invocations) ask for themselves again this often (webui's own refresh, which needs JavaScript and shows an Updating indicator and a Pause control; without script the panel says how long to wait); pages with forms never refresh. `0` disables. |
 
 webui has no authentication of its own, so the admin binary puts its own login in front of it:
 bcrypt passwords, signed expiring session cookies, a per-IP login limiter, and a read-only role.
