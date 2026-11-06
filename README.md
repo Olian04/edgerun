@@ -121,7 +121,7 @@ production: the tokens do not replace it.
 | Flag | Environment | Default | |
 |---|---|---|---|
 | `--database-url` | `EDGERUN_DATABASE_URL` | **required** | Postgres connection string. Migrations run at start under an advisory lock, so several instances may start together. |
-| `--listen` | `EDGERUN_ORCHESTRATOR_LISTEN` | `:8080` | Serves ingress, fleet, artifact and control, plus `/healthz`. |
+| `--listen` | `EDGERUN_ORCHESTRATOR_LISTEN` | `:8080` | Serves ingress, membership, artifacts and control, plus `/healthz`. |
 | `--ingress-token` | `EDGERUN_INGRESS_TOKEN` | | Presented by frontends. |
 | `--worker-token` | `EDGERUN_WORKER_TOKEN` | | Presented by workers. |
 | `--admin-token` | `EDGERUN_ADMIN_TOKEN` | | Presented by the admin UI and the CLI. |
@@ -236,7 +236,7 @@ and where the suite is). See "Conformance" in [`docs/protocol.md`](docs/protocol
 ## Library
 
 `github.com/Olian04/edgerun` is a Go client library over the generated protocols, for extending edgerun from
-outside: one typed client per seam (control, ingress, worker execution/fleet/artifacts, egress and its registry),
+outside: one typed client per seam (control, ingress, worker execution/artifacts, membership, egress),
 so a program of yours can be an operator, a frontend, a worker or a network service of its own.
 
 ```go

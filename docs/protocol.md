@@ -2,16 +2,18 @@
 
 edgerun is four cooperating components. They know each other **only** through the
 protocols below, so any one of them can be replaced by a different implementation (another
-language, another sandbox) as long as it keeps its side of the contract.
+language, another sandbox) as long as it keeps its side of the contract. What a component offers is a set of
+**platform services**, each one protocol with its own conformance suite; [`services.md`](services.md) is the
+catalogue and the place to start.
 
 ```
  client ──HTTP──▶ frontend ──ingress.v1──▶ orchestrator ──worker.v1──▶ worker
                                               ▲   ▲  │
-                         admin UI / CLI ─control.v1┘  └─ worker.v1 (Fleet, Artifact: worker dials in)
+                         admin UI / CLI ─control.v1┘  └─ membership.v1, worker.v1 Artifact (workers dial in)
                                                   ▼                     │
                                               Postgres  (orchestrator only)     ▼
                                                                   network services ◀─egress.v1─ worker
-                                                  (register with the orchestrator: egress.v1 RegistryService)
+                                                  (register with the orchestrator: membership.v1)
 ```
 
 The `.proto` files in [`proto/edgerun`](../proto/edgerun) define the message shapes and are the
@@ -25,10 +27,10 @@ seam and nothing else. Only the orchestrator talks to Postgres.
 |---|---|---|---|
 | Ingress | `edgerun.ingress.v1` | orchestrator | frontend |
 | Execution | `edgerun.worker.v1` `ExecutionService` | worker | orchestrator |
-| Fleet, Artifact | `edgerun.worker.v1` `FleetService`, `ArtifactService` | orchestrator | worker |
+| Membership | `edgerun.membership.v1` | orchestrator | worker, network service (and the operator, to list) |
+| Artifacts | `edgerun.worker.v1` `ArtifactService` | orchestrator | worker |
 | Control | `edgerun.control.v1` | orchestrator | admin UI, CLI |
 | Egress | `edgerun.egress.v1` `EgressService` | network service | worker |
-| Registration | `edgerun.egress.v1` `RegistryService` | orchestrator | network service |
 
 Shared vocabulary lives in `edgerun.common.v1`.
 
@@ -52,10 +54,10 @@ Every request carries `Authorization: Bearer <token>`. A token has one scope:
 | Scope | Allows |
 |---|---|
 | `ingress` | `IngressService` |
-| `worker` | `FleetService`, `ArtifactService` (when called *on* the orchestrator) |
-| `admin` | everything in `edgerun.control.v1` |
+| `worker` | `ArtifactService`, and the members calls of `MembershipService` for a **worker** (when called *on* the orchestrator) |
+| `admin` | everything in `edgerun.control.v1`, and `MembershipService.ListMembers` |
 | `egress` | `EgressService` (when called *on* a network service) |
-| `network` | `RegistryService` (when called *on* the orchestrator) |
+| `network` | the members calls of `MembershipService` for a **network service** (when called *on* the orchestrator) |
 | `execute` | `ExecutionService` (when called *on* a worker) |
 
 The orchestrator authenticates workers via the `worker` scope; workers authenticate the
@@ -63,7 +65,10 @@ orchestrator on `ExecutionService` with a separate shared secret configured on t
 network service authenticates workers via the `egress` scope, and the orchestrator authenticates network
 services that register via the `network` scope.
 Missing or invalid credentials fail with `UNAUTHENTICATED`; a valid token of the wrong scope
-fails with `PERMISSION_DENIED`. A server only knows the tokens it is configured with, so "valid" means
+fails with `PERMISSION_DENIED`. `MembershipService` is one service with several kinds of caller, so it is judged
+per call: a `worker` token may register, heartbeat and deregister workers and nothing else (a network service
+registration with it is `PERMISSION_DENIED`), a `network` token the same for network services, `ListMembers` is
+for `admin` only, and no scope may do more than its own. A server only knows the tokens it is configured with, so "valid" means
 valid *there*: a worker knows one token (`execute`), and presenting it any other, including a token that is
 valid on the orchestrator, is unknown to it and `UNAUTHENTICATED`. `PERMISSION_DENIED` is for servers that
 know several tokens of different scopes (the orchestrator, a network service that is also told the `network`
@@ -116,8 +121,8 @@ that do export can join one trace:
 | Constant | Value | Where |
 |---|---|---|
 | `MAX_REQUEST_BODY_BYTES` | 6 MiB (default; orchestrator reports its actual value in `ingress.DescribeResponse`) | request body; see below |
-| Heartbeat interval | 5 s (default; orchestrator dictates it in `RegisterResponse`) | fleet |
-| Worker liveness | 3 missed heartbeats | fleet |
+| Heartbeat interval | 5 s (default; orchestrator dictates it in `RegisterResponse`) | membership |
+| Member liveness | 3 missed heartbeats | membership |
 | Module size | reported in `control.DescribeResponse.max_module_bytes` | uploads |
 | Artifact chunk | ≤ 1 MiB | `GetArtifact` |
 | Request header block | bounded by the frontend (the reference frontend: 64 KiB); `431` beyond | frontend |
@@ -250,72 +255,77 @@ Every reason has one canonical Connect code. Peers branch on the reason, never o
 A malformed request (bad digest, bad environment variable name) is `invalid_argument` with no
 reason: it is a caller bug, and nothing should branch on it.
 
-## Frontend behaviour
+## The Edge contract (what a frontend does)
 
-A frontend serves HTTP and is an `ingress.v1` client; nothing calls it but the outside world. What
-makes one replaceable is that every frontend maps HTTP onto the protocol the same way.
+A frontend hosts the **Edge** service: plain HTTP, facing the outside world, and an `ingress.v1` client behind it.
+Nothing calls it but the outside world. What makes one replaceable is that every frontend maps HTTP onto the
+protocol the same way. There is no schema for HTTP, so the contract is this checklist: each rule is numbered
+(`E1`…), says what a frontend must do, and can be judged from outside by sending a request and looking at what the
+frontend answers and at what it asks of its orchestrator. A frontend conforms if it keeps every rule; the numbers are
+how a test, a review or a bug report names one. Rules are never renumbered: a rule that goes away leaves its number
+unused. ([`services.md`](services.md) says where Edge sits among the platform's services.)
 
 **Request.**
 
-- It reads `max_request_body_bytes` from `Describe` when it starts and again from time to time (6 MiB
+- **E1.** It reads `max_request_body_bytes` from `Describe` when it starts and again from time to time (6 MiB
   until the first answer), and answers 413 without calling `Invoke` to a request whose body is larger.
   That includes a body of undeclared length, which it must stop reading at the limit.
-- A request target that is not a path starting with `/` (`OPTIONS *`) is never forwarded: the frontend
+- **E2.** A request target that is not a path starting with `/` (`OPTIONS *`) is never forwarded: the frontend
   answers it itself, with a 2xx or a 4xx.
-- `HttpRequest` carries the method; `host` as the `Host` header arrived (for an absolute-form target, the authority of
+- **E3.** `HttpRequest` carries the method; `host` as the `Host` header arrived (for an absolute-form target, the authority of
   the target, which takes precedence over the header: RFC 9112 3.2.2); the `path`, **decoded** (percent-decoded once,
   by the frontend; dot segments and repeated slashes are kept, nothing is cleaned); `raw_query` as received, still
   encoded (the query without its `?`); the body; and `remote_addr`, the peer's `ip:port`. See "HTTP messages".
-- `CONNECT` is answered 405 and not forwarded: a function is not a tunnel.
-- A request whose target contains a byte outside printable ASCII (a space, a control character, DEL, or any byte of
+- **E4.** `CONNECT` is answered 405 and not forwarded: a function is not a tunnel.
+- **E5.** A request whose target contains a byte outside printable ASCII (a space, a control character, DEL, or any byte of
   0x80 and above), or whose path does not decode to text, is answered 400 and never forwarded. See "HTTP messages".
-- Header names are lower-cased and every value kept, in order, **as the bytes it arrived as**. Headers that describe one connection
+- **E6.** Header names are lower-cased and every value kept, in order, **as the bytes it arrived as**. Headers that describe one connection
   and not the message are dropped: `connection`, `keep-alive`, `proxy-authenticate`,
   `proxy-authorization`, `proxy-connection`, `te`, `trailer`, `transfer-encoding`, `upgrade`.
-- Who the client is comes from the connection, not from what the client claims: client-supplied
+- **E7.** Who the client is comes from the connection, not from what the client claims: client-supplied
   `x-forwarded-for`, `x-forwarded-proto`, `x-forwarded-host`, `forwarded` and `x-real-ip` are
   discarded, and the frontend sets `x-forwarded-for` (the peer's IP), `x-forwarded-proto` and
   `x-forwarded-host` itself. A frontend may offer a mode for running behind a proxy it trusts, in
   which those headers are kept and appended to; that mode is off by default.
-- `request_id` is the client's `X-Request-Id` if it is made of the bytes 0x21 to 0x7E (printable ASCII **without the
+- **E8.** `request_id` is the client's `X-Request-Id` if it is made of the bytes 0x21 to 0x7E (printable ASCII **without the
   space**) and is at most 128 of them, otherwise a fresh unique value. If the request carries several `X-Request-Id`
   headers the first is the one considered. It is echoed in the `X-Request-Id` header of every response, successful or
   not (a request the HTTP stack refuses before any application code runs, an undecodable path for instance, may carry
   none: that is a limit of the stack, not of the rule), and it is the platform's: a function that writes its own `X-Request-Id` (or `X-Edgerun-Invocation-Id`) header
   in its response does not get it through; the frontend's value replaces it. (A frontend built on an HTTP stack that
   refuses some requests before application code sees them can only echo a fresh id for those: that is allowed.)
-- `Invoke` is called with the frontend's whole-request budget as its deadline, with the ingress
+- **E9.** `Invoke` is called with the frontend's whole-request budget as its deadline, with the ingress
   token, and is cancelled if the client goes away. The budget starts when the call is made, that is, once the
   frontend has read the request (reading a slow upload is bounded by the frontend's own read timeouts, not by the
   budget).
-- **Trace context** (see "Observability"): a `traceparent` the client sent is considered only if it is well formed (not
+- **E10.** **Trace context** (see "Observability"): a `traceparent` the client sent is considered only if it is well formed (not
   all zeros; when there are several, the first); the call to the orchestrator then continues its trace and may carry
   `tracestate`. None of `traceparent`, `tracestate` and `baggage` is in `HttpRequest.headers`. A frontend that is
   given no trace need not start one.
-- The `Host` header is carried in `host` and is **not repeated** in `headers`; every other header, `content-length`
+- **E11.** The `Host` header is carried in `host` and is **not repeated** in `headers`; every other header, `content-length`
   included, is forwarded as received (a worker replaces it by the measured length). A request without a `Host` header
   is answered 400 if it is HTTP/1.1 (RFC 9112); a frontend may forward an HTTP/1.0 one with `host` empty.
 
 **Response.**
 
-- A head with a header whose name is not a token or whose value has a control character other than tab (see "HTTP
+- **E12.** A head with a header whose name is not a token or whose value has a control character other than tab (see "HTTP
   messages") is a violation of the protocol by the orchestrator: it is answered 502 as a whole, and no part of the
   offending header reaches the client.
-- A function's response is forwarded as it wrote it: the frontend invents no `Content-Type` for a response that has none,
+- **E13.** A function's response is forwarded as it wrote it: the frontend invents no `Content-Type` for a response that has none,
   and a 205 is answered without content (RFC 9110 15.3.6; 204 and 304 likewise).
-- The head's status must be 200–599; anything else is a platform fault and is answered 502. Headers
+- **E14.** The head's status must be 200–599; anything else is a platform fault and is answered 502. Headers
   are forwarded as given, repeated ones included, except the connection-level ones above and
   `content-length`: the frontend frames the response itself.
-- Chunks are written to the client, and flushed, as they arrive.
-- The invocation the response belongs to is named in an `X-Edgerun-Invocation-Id` header: with the head's
+- **E15.** Chunks are written to the client, and flushed, as they arrive.
+- **E16.** The invocation the response belongs to is named in an `X-Edgerun-Invocation-Id` header: with the head's
   `invocation_id`, and on a platform error with the `invocation_id` of its `ErrorInfo`, when there is one (an
   error for a request that was not routed has none, and the header is absent). It is the way from a response, or
   a failure, to its record (`GetInvocation`), whoever the client is. A failure the frontend declares on its own,
   its deadline expiring while the orchestrator is still working, has no invocation id to give: the request id
   finds the record (`ListInvocations` with a `request_id`). Like the request id it is an identifier,
   never a place for a message.
-- A function's own error statuses, 500 included, are forwarded as they are.
-- A platform error before the head is answered with the status in the table above, a generic body
+- **E17.** A function's own error statuses, 500 included, are forwarded as they are.
+- **E18.** A platform error before the head is answered with the status in the table above, a generic body
   and `Retry-After: 1` where the table says so. An error with no `ErrorInfo` is classified by what
   can be seen: an expired deadline is 504; a call that is cancelled *because the client went away* (the request's own context has ended) needs no answer, but
   an error that merely says "cancelled" while the client is still waiting (a worker that died mid-call is reported that
@@ -323,8 +333,8 @@ makes one replaceable is that every frontend maps HTTP onto the protocol the sam
   413 (the transport's size cap); `unavailable` (the orchestrator cannot be reached) is 503 with
   `Retry-After: 1`; `unauthenticated` and `permission_denied` (the frontend's own credentials) are 502;
   anything else is 500.
-- A stream that ends cleanly without a head is 502.
-- A stream that fails *after* the head has been sent cannot change its status. The frontend aborts
+- **E19.** A stream that ends cleanly without a head is 502.
+- **E20.** A stream that fails *after* the head has been sent cannot change its status. The frontend aborts
   the client's connection, so the client sees a failed transfer and not a complete, truncated
   response.
 
@@ -378,10 +388,9 @@ shorter than requested does not mean it is the last: only an empty `next_page_to
 Following the tokens yields every item exactly once while nothing is written. Functions are ordered
 by name, routes by `(host_pattern, path_prefix)`, invocations newest first.
 
-**Network services.** `ListNetworkServices` returns every registered service ordered by endpoint, with
-the coverage it declared (canonical), its state and whether it is alive, and `SetEgress` stores the
-function's allow list in canonical form without asking whether any service carries it: services may
-come and go, and the list is the operator's intent.
+**Network services.** `SetEgress` stores the function's allow list in canonical form without asking whether any
+service carries it: services may come and go, and the list is the operator's intent. What has registered is read
+with `MembershipService.ListMembers` (see "Membership semantics").
 
 **Read your writes.** When a call that changes routing (a route, an activation, an environment
 variable, a deleted function) returns, an `Invoke` sent to *the same orchestrator endpoint* behaves
@@ -400,7 +409,7 @@ failed one in the `ErrorInfo` of its error (`invocation_id`, set exactly when a 
 every failure after the request was routed). `GetInvocation` returns the record with that id: `not_found` if there is
 none *yet* (a record is written after the call ends, so a lookup right after a failure may have to be repeated
 briefly), none any more (records are removed after the retention period), or never (an id that is not one).
-`ListInvocations` can be restricted to one `request_id` (the one the frontend echoed), alone or with `function_id`;
+`ListInvocations` (`RecordsService`) can be restricted to one `request_id` (the one the frontend echoed), alone or with `function_id`;
 more than one record can carry a request id, since a client may send the same `X-Request-Id` twice. How many workers
 an invocation was offered to is not in the record: that is a measurement, and is exported as telemetry
 ([`observability.md`](observability.md)), where it is kept once.
@@ -558,20 +567,41 @@ committed, so a plan that validates is applied exactly as it was validated, unle
   rolling back is another one), and a plan can be long, so a tool that wants to hold a plan back until its version
   has proved itself applies the plan in stages.
 
-## Fleet and artifact semantics
+## Membership semantics
 
-Workers dial in to the orchestrator (`FleetService`, `ArtifactService`, scope `worker`).
+Workers and network services dial in to the orchestrator and **register**; the orchestrator never has to be told
+where they are. `edgerun.membership.v1` `MembershipService` is the one protocol for both, and a member is of one
+**kind**: `WORKER` or `NETWORK_SERVICE`. The kind is what the caller registers (the `info` it sends), and the
+token must be of that kind's scope (see "Authentication"): a worker token cannot make a network service, nor the
+other way round, and it can only heartbeat or deregister members of its own kind (another kind's id is unknown to
+it).
 
-- `Register` needs an `http(s)` endpoint and a `WorkerInfo` with at least one ABI and a positive
-  `max_concurrency`; anything else is `invalid_argument`. It returns a fresh `worker_id` and the
-  heartbeat interval the worker must keep. Registering an endpoint that is already known replaces
-  that entry (the worker restarted).
-- `Heartbeat` states are `READY` or `DRAINING` (anything else is `invalid_argument`). For an unknown
-  `worker_id` it answers `reregister = true`, and the worker must register again, unless it is draining: a
-  worker that is leaving does not register again, since it would be listed as ready.
-- A worker that has not heartbeated for three intervals is not alive and receives no work. One that
-  reports `DRAINING` receives no new work either, and stays listed.
+- `Register` needs an `http(s)` endpoint and the kind's info, and returns a fresh `member_id` and the heartbeat
+  interval the member must keep. A worker's `WorkerInfo` has at least one ABI and a positive `max_concurrency`; a
+  network service's `ServiceInfo` has a coverage of 1 to 64 entries (see "What a network service carries"), stored
+  in canonical form. An endpoint that is not an `http(s)` URL, a missing or empty info, or anything else malformed
+  is `invalid_argument` and leaves nothing registered. Registering an endpoint that is already known replaces that
+  entry (the member restarted) and gives it a new id, so the old one is unknown from then on. Endpoints are
+  compared as the exact text given: `http://h:1` and `http://h:1/` are two endpoints, so a restarted member must
+  register with the same text it used before.
+- `Heartbeat` states are `READY` or `DRAINING` (anything else is `invalid_argument`), and a worker also reports
+  how many invocations are in flight. For an unknown `member_id` it answers `reregister = true`, and the member must
+  register again, unless it is draining: a member that is leaving does not register again, since it would be listed
+  as ready.
+- A member that has not heartbeated for three intervals is not alive and is given nothing. One that reports
+  `DRAINING` is given nothing new either, and stays listed.
 - `Deregister` is idempotent: an unknown id is not an error.
+- `ListMembers` (scope `admin`) returns the members ordered by kind (workers first), then endpoint, with their
+  state, whether they are alive, when they last heartbeated and what they declared; `kind` restricts it to one
+  kind.
+- A member keeps trying to register until it succeeds, and a refused registration (`invalid_argument`,
+  `permission_denied`, `unauthenticated`) is reported to its operator, not retried silently forever. When asked to
+  stop it reports `DRAINING`, finishes what it is doing, and deregisters.
+
+## Artifact semantics
+
+Workers pull modules from the orchestrator (`ArtifactService`, scope `worker`).
+
 - `GetArtifact` streams the module in chunks of at most 1 MiB. A digest that is well-formed but
   unknown is `ARTIFACT_NOT_FOUND`; one that is not a digest at all is `ARTIFACT_NOT_FOUND` as well,
   since nothing is stored under it.
@@ -682,29 +712,18 @@ function's allow list (the canonical, sorted order).
 
 ### Registration
 
-Services register with the orchestrator, as workers do (`egress.v1` `RegistryService`, scope `network`):
+Services register with the orchestrator through `MembershipService` (scope `network`), exactly as workers do;
+"Membership semantics" is the whole of it. What is particular to a network service:
 
-- `Register` takes the service's base URL (`http` or `https`; the URL workers reach it at) and a
-  `ServiceInfo` with its coverage. A malformed endpoint, or a coverage that is empty, malformed or longer
-  than 64 entries, is `invalid_argument`, and leaves nothing registered. The orchestrator stores the coverage
-  in canonical form (lower-cased, ranges as their networks, deduplicated, sorted) and returns a fresh
-  `service_id` and the heartbeat interval. Registering an endpoint that is already known replaces the
-  earlier registration (the service restarted). Endpoints are compared as the exact text given: `http://h:1` and
-  `http://h:1/` are two endpoints, so a restarted service must register with the same text it used before.
-  In a coverage an IPv6 address is written **bare**, as the canonical form stores it (`2001:db8::/32`, `::1`),
-  not in brackets: brackets belong to allow-list entries, where a port can follow.
-- `Heartbeat` states are `READY` or `DRAINING` (anything else is `invalid_argument`). For an unknown
-  `service_id` it answers `reregister = true`, and the service registers again.
-- A service that has not heartbeated for three intervals is not alive and is given nothing; neither is
-  one that reports `DRAINING`, which stays listed. `Deregister` is idempotent.
-- A service keeps trying to register until it succeeds, and a refused registration is reported to its
-  operator, not retried silently forever. When it is asked to stop it reports `DRAINING`, finishes what it is
-  doing, and deregisters.
-- `control.v1` `ListNetworkServices` shows the operator what has registered, with its coverage and state.
+- The `ServiceInfo` carries its coverage. A coverage that is empty, malformed or longer than 64 entries is
+  `invalid_argument`. The orchestrator stores it in canonical form (lower-cased, ranges as their networks,
+  deduplicated, sorted). In a coverage an IPv6 address is written **bare**, as the canonical form stores it
+  (`2001:db8::/32`, `::1`), not in brackets: brackets belong to allow-list entries, where a port can follow.
 - A service registers its coverage **in canonical form itself** (lower-cased, ranges as their networks,
   deduplicated, sorted by the byte order of the text), and `Describe` reports the same `covers`, non-zero
   limits, and requires the `egress` token like every other call. Heartbeats that come late are tolerated up
   to three intervals.
+- `ListMembers` (kind `NETWORK_SERVICE`) shows the operator what has registered, with its coverage and state.
 - **Draining.** Grants are made when an invocation *starts*, so a service that has said `DRAINING` can still
   receive `Fetch` calls from invocations that began earlier, for as long as their budget. It keeps answering for
   at least one heartbeat interval after reporting `DRAINING` (so every orchestrator has stopped granting it), and

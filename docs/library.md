@@ -11,16 +11,17 @@ go get github.com/Olian04/edgerun
 
 ## One idea
 
-edgerun is roles joined by seams; each seam is a proto package (`proto/edgerun/*/v1`), specified in
-[`protocol.md`](protocol.md). The library gives you **the other side of each seam, and nothing else**:
+edgerun is components joined by seams; each seam is a proto package (`proto/edgerun/*/v1`), specified in
+[`protocol.md`](protocol.md), and the services each component hosts are catalogued in [`services.md`](services.md). The library gives you **the other side of each seam, and nothing else**:
 
 | You are | You talk to | Client | Protocol | Token scope |
 |---|---|---|---|---|
 | an operator | an orchestrator | `NewControl` | `control.v1` | `ScopeAdmin` |
+| an operator | an orchestrator | `NewMembership` (`ListMembers`) | `membership.v1` | `ScopeAdmin` |
 | a frontend | an orchestrator | `NewIngress` | `ingress.v1` | `ScopeIngress` |
-| a worker | an orchestrator | `NewFleet`, `NewArtifacts` | `worker.v1` | `ScopeWorker` |
+| a worker | an orchestrator | `NewMembership`, `NewArtifacts` | `membership.v1`, `worker.v1` | `ScopeWorker` |
 | a scheduler | a worker | `NewExecution` | `worker.v1` | `ScopeExecute` |
-| a network service | an orchestrator | `NewRegistry` | `egress.v1` | `ScopeNetwork` |
+| a network service | an orchestrator | `NewMembership` | `membership.v1` | `ScopeNetwork` |
 | a worker | a network service | `NewEgress` | `egress.v1` | `ScopeEgress` |
 
 Every client has one method per RPC, named as the RPC, taking and returning the generated messages. Nothing
