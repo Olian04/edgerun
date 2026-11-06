@@ -109,7 +109,7 @@ func (s *Service) Describe(context.Context, *connect.Request[ingressv1.DescribeR
 	return connect.NewResponse(&ingressv1.DescribeResponse{
 		Implementation: &commonv1.Implementation{
 			Name: "edgerun-orchestrator", Version: s.cfg.Version,
-			Protocols: []string{"edgerun.ingress.v1", "edgerun.control.v1", "edgerun.worker.v1"},
+			Protocols: []string{"edgerun.ingress.v1", "edgerun.membership.v1", "edgerun.worker.v1", "edgerun.control.v1"},
 		},
 		MaxRequestBodyBytes: s.cfg.MaxRequestBodyBytes,
 	}), nil

@@ -189,7 +189,8 @@ type functions struct{ s *Service }
 func (f functions) Describe(context.Context, *connect.Request[controlv1.DescribeRequest]) (*connect.Response[controlv1.DescribeResponse], error) {
 	return connect.NewResponse(&controlv1.DescribeResponse{
 		Implementation: &commonv1.Implementation{
-			Name: "edgerun-orchestrator", Version: f.s.cfg.Version, Protocols: []string{"edgerun.control.v1"},
+			Name: "edgerun-orchestrator", Version: f.s.cfg.Version,
+			Protocols: []string{"edgerun.ingress.v1", "edgerun.membership.v1", "edgerun.worker.v1", "edgerun.control.v1"},
 		},
 		MaxModuleBytes: f.s.cfg.MaxModuleBytes,
 	}), nil
