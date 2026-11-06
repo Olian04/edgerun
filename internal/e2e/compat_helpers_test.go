@@ -210,7 +210,12 @@ func newRawServer(t *testing.T) *rawServer {
 	t.Helper()
 	s := &rawServer{t: t, mux: http.NewServeMux(), calls: map[string]int{}, last: map[string][]byte{}}
 	s.mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
-	s.srv = httptest.NewServer(s.mux)
+	s.srv = httptest.NewUnstartedServer(s.mux)
+	var protocols http.Protocols // HTTP/1.1 and h2c, as the real components serve
+	protocols.SetHTTP1(true)
+	protocols.SetUnencryptedHTTP2(true)
+	s.srv.Config.Protocols = &protocols
+	s.srv.Start()
 	t.Cleanup(s.srv.Close)
 	return s
 }

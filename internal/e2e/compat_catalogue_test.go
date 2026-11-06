@@ -26,6 +26,7 @@ import (
 	ingressv1 "github.com/Olian04/edgerun/gen/edgerun/ingress/v1"
 	workerv1 "github.com/Olian04/edgerun/gen/edgerun/worker/v1"
 	egressapp "github.com/Olian04/edgerun/internal/egress/app"
+	orchapp "github.com/Olian04/edgerun/internal/orchestrator/app"
 )
 
 // cenv is a running system with everything an RPC of any seam needs.
@@ -43,11 +44,14 @@ type cenv struct {
 	egressSrv            *egressapp.Server
 }
 
-func newCEnv(t *testing.T) *cenv {
+func newCEnv(t *testing.T) *cenv { return newCEnvWith(t, nil) }
+
+// newCEnvWith is newCEnv with the orchestrator's configuration adjusted.
+func newCEnvWith(t *testing.T, adjust func(*orchapp.Config)) *cenv {
 	t.Helper()
 	e := &cenv{t: t}
 	var sink *logSink
-	e.s, sink = newCStack(t, nil)
+	e.s, sink = newCStack(t, adjust)
 	e.orchLog = sink
 	wlog, wsink := newSink()
 	e.s.workerLog, e.workerLog = wlog, wsink

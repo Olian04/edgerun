@@ -360,12 +360,19 @@ type fakeWorker struct {
 // orchestrator and keeps it alive.
 func startFakeWorker(t *testing.T, s *stack, srv *rawServer, abi string, maxConcurrency uint32) *fakeWorker {
 	t.Helper()
+	return startFakeWorkerAt(t, s, srv, srv.URL(), abi, maxConcurrency)
+}
+
+// startFakeWorkerAt registers endpoint (which may be a proxy in front of srv) as
+// the address of the scripted worker.
+func startFakeWorkerAt(t *testing.T, s *stack, srv *rawServer, endpoint, abi string, maxConcurrency uint32) *fakeWorker {
+	t.Helper()
 	fleet := edgerun.NewFleet("http://"+s.addr, workerToken)
 	info := &workerv1.WorkerInfo{Implementation: &commonv1.Implementation{Name: "scripted-worker", Version: "9", Protocols: []string{"edgerun.worker.v1"}},
 		Abis: []string{abi}, MaxConcurrency: maxConcurrency}
 	fw := &fakeWorker{srv: srv, stop: make(chan struct{})}
 	reg := func() {
-		r, err := fleet.Register(context.Background(), &workerv1.RegisterRequest{Endpoint: srv.URL(), Info: info})
+		r, err := fleet.Register(context.Background(), &workerv1.RegisterRequest{Endpoint: endpoint, Info: info})
 		if err != nil {
 			t.Errorf("register: %v", err)
 			return
