@@ -143,7 +143,7 @@ func (e *cenv) wireClients(hc *http.Client, opts []connect.ClientOption) wireCli
 	}
 }
 
-func sha(b []byte) string {
+func wireSum(b []byte) string {
 	h := sha256.Sum256(b)
 	return hex.EncodeToString(h[:8]) + fmt.Sprintf("/%d", len(b))
 }
@@ -185,7 +185,7 @@ func wireCalls() []wireCall {
 				return "", err
 			}
 			body, err := res.ReadAll()
-			return headersOf(res.Head) + " " + sha(body), err
+			return headersOf(res.Head) + " " + wireSum(body), err
 		}},
 		{"ingress.Invoke (compressible body)", func(e *cenv, c wireClients, n int) (string, error) {
 			res, err := c.ing.Invoke(ctx, &ingressv1.InvokeRequest{RequestId: "wire", Request: &commonv1.HttpRequest{Method: "POST", Host: "compat.test", Path: "/echo", Body: compressible}})
@@ -193,7 +193,7 @@ func wireCalls() []wireCall {
 				return "", err
 			}
 			body, err := res.ReadAll()
-			return headersOf(res.Head) + " " + sha(body), err
+			return headersOf(res.Head) + " " + wireSum(body), err
 		}},
 		{"ingress.Invoke (bytes in a response header)", func(e *cenv, c wireClients, n int) (string, error) {
 			res, err := c.ing.Invoke(ctx, &ingressv1.InvokeRequest{RequestId: "wire", Request: &commonv1.HttpRequest{Method: "GET", Host: "compat.test", Path: "/rawheaders"}})
@@ -201,7 +201,7 @@ func wireCalls() []wireCall {
 				return "", err
 			}
 			body, err := res.ReadAll()
-			return headersOf(res.Head) + " " + sha(body), err
+			return headersOf(res.Head) + " " + wireSum(body), err
 		}},
 		{"control.GetFunction", func(e *cenv, c wireClients, n int) (string, error) {
 			r, err := c.ctl.GetFunction(ctx, &controlv1.GetFunctionRequest{FunctionId: e.fid})
@@ -266,7 +266,7 @@ func wireCalls() []wireCall {
 		}},
 		{"artifact.GetArtifact (the module, verified)", func(e *cenv, c wireClients, n int) (string, error) {
 			b, err := c.art.GetArtifact(ctx, e.digest)
-			return sha(b), err
+			return wireSum(b), err
 		}},
 		{"registry.Register/Heartbeat/Deregister", func(e *cenv, c wireClients, n int) (string, error) {
 			rr, err := c.reg.Register(ctx, &egressv1.RegisterRequest{Endpoint: fmt.Sprintf("http://127.0.0.1:%d", 40000+n),
@@ -298,7 +298,7 @@ func wireCalls() []wireCall {
 				return "", err
 			}
 			body, err := res.ReadAll()
-			return headersOf(res.Head) + " " + sha(body), err
+			return headersOf(res.Head) + " " + wireSum(body), err
 		}},
 		{"egress.Describe", func(e *cenv, c wireClients, n int) (string, error) {
 			r, err := c.eg.Describe(ctx, &egressv1.DescribeRequest{})
@@ -321,7 +321,7 @@ func wireCalls() []wireCall {
 				}
 			}
 			sort.Strings(hs)
-			return fmt.Sprint(h.Status, hs, sha(body)), err
+			return fmt.Sprint(h.Status, hs, wireSum(body)), err
 		}},
 	}
 }
@@ -355,7 +355,7 @@ func TestWireEveryServiceOverEveryProtocol(t *testing.T) {
 					continue
 				}
 				if got != want[c.name] {
-					t.Errorf("%s differs from the reference\n  want %s\n  got  %s", c.name, trunc(want[c.name]), trunc(got))
+					t.Errorf("%s differs from the reference\n  want %s\n  got  %s", c.name, wireTrunc(want[c.name]), wireTrunc(got))
 				}
 			}
 			wantMajor := 1
@@ -400,7 +400,7 @@ func sortedKeys(m map[string]bool) []string {
 	return out
 }
 
-func trunc(s string) string {
+func wireTrunc(s string) string {
 	if len(s) > 400 {
 		return s[:400] + "..."
 	}
